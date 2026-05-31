@@ -20,7 +20,8 @@
   },
   "scripts": {
     "compile": "tsc -p ./extension",
-    "release": "cargo build --release"
+    "build:server": "cargo build --release",
+    "release": "npm run compile && npm run build:server && node ./dist.js"
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.0"
@@ -28,6 +29,6 @@
   "devDependencies": {
     "@types/node": "^25.9.1",
     "@types/vscode": "^1.120.0",
-    "typescript": "^6.0.3"
+    "typescript": "^5.4.5"
   }
 }

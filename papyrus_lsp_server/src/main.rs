@@ -1,9 +1,4 @@
-use std::{
-    collections::HashMap,
-    fs,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{collections::HashMap, path::PathBuf};
 
 use tokio::sync::RwLock;
 use tower_lsp::{Client, LanguageServer, LspService, Server, jsonrpc::Result, lsp_types::*};
@@ -84,7 +79,7 @@ fn collect_errors(tree: &Tree) -> Vec<Diagnostic> {
 }
 
 fn extract_functions(src: &str, tree: &Tree, file: PathBuf) -> HashMap<String, Vec<Symbol>> {
-    let mut map = HashMap::new();
+    let mut map: HashMap<String, Vec<Symbol>> = HashMap::new();
     let root = tree.root_node();
 
     let mut cursor = root.walk();
@@ -102,7 +97,7 @@ fn extract_functions(src: &str, tree: &Tree, file: PathBuf) -> HashMap<String, V
             }
 
             if let Some(name) = name {
-                map.entry(name).or_default().push(Symbol {
+                map.entry(name.clone()).or_default().push(Symbol {
                     name,
                     file: file.clone(),
                     line: node.start_position().row,
@@ -114,12 +109,32 @@ fn extract_functions(src: &str, tree: &Tree, file: PathBuf) -> HashMap<String, V
     map
 }
 
+fn position_to_offset(text: &str, pos: Position) -> usize {
+    let mut line = 0;
+    let mut col = 0;
+
+    for (i, ch) in text.char_indices() {
+        if line == pos.line as usize && col == pos.character as usize {
+            return i;
+        }
+
+        if ch == '\n' {
+            line += 1;
+            col = 0;
+        } else {
+            col += 1;
+        }
+    }
+
+    text.len()
+}
+
 /* =========================================================
- * FORMATTER（簡易）
+ * FORMATTER
  * ========================================================= */
 
 fn format_papyrus(src: &str) -> String {
-    let mut indent = 0;
+    let mut indent: u64 = 0;
     let mut out = String::new();
 
     for line in src.lines() {
@@ -129,7 +144,7 @@ fn format_papyrus(src: &str) -> String {
             indent = indent.saturating_sub(1);
         }
 
-        out.push_str(&"  ".repeat(indent));
+        out.push_str(&"  ".repeat(indent as usize));
         out.push_str(t);
         out.push('\n');
 
@@ -176,13 +191,24 @@ impl LanguageServer for Backend {
         let mut parser = self.parser.write().await;
         let tree = parser.parse(&text, None).unwrap();
 
-        let docs = Document {
-            text: text.clone(),
-            tree: tree.clone(),
-        };
+        let symbols = extract_functions(&text, &tree, PathBuf::from(uri.clone()));
+
+        {
+            let mut sym = self.symbols.write().await;
+
+            for (name, list) in symbols {
+                sym.entry(name).or_default().extend(list);
+            }
+        }
 
         let mut cache = self.docs.write().await;
-        cache.insert(uri.clone(), docs);
+        cache.insert(
+            uri.clone(),
+            Document {
+                text: text.clone(),
+                tree: tree.clone(),
+            },
+        );
 
         let diags = collect_errors(&tree);
 
@@ -236,30 +262,46 @@ impl LanguageServer for Backend {
             .text_document
             .uri
             .to_string();
+        let pos = params.text_document_position_params.position;
 
         let docs = self.docs.read().await;
-
         let doc = match docs.get(&uri) {
             Some(d) => d,
             None => return Ok(None),
         };
 
-        let pos = params.text_document_position_params.position;
+        let offset = position_to_offset(&doc.text, pos);
 
-        let word = doc
-            .text
-            .split_whitespace()
-            .find(|w| w.contains("Function"))
-            .unwrap_or("Function");
+        let node = match doc
+            .tree
+            .root_node()
+            .descendant_for_byte_range(offset, offset)
+        {
+            Some(n) => n,
+            None => return Ok(None),
+        };
+
+        let mut n = node;
+        while n.kind() != "identifier" {
+            match n.parent() {
+                Some(p) => n = p,
+                None => break,
+            }
+        }
+
+        let name = doc.text[n.byte_range()].to_string();
 
         let symbols = self.symbols.read().await;
 
-        if let Some(list) = symbols.get(word) {
+        if let Some(list) = symbols.get(&name) {
             let s = &list[0];
 
             return Ok(Some(GotoDefinitionResponse::Scalar(Location {
                 uri: Url::from_file_path(&s.file).unwrap(),
-                range: Range::default(),
+                range: Range {
+                    start: Position::new(s.line as u32, 0),
+                    end: Position::new(s.line as u32, 0),
+                },
             })));
         }
 
@@ -287,7 +329,7 @@ impl LanguageServer for Backend {
     }
 
     async fn shutdown(&self) -> Result<()> {
-     
+        std::process::exit(0);
     }
 }
 

@@ -1,0 +1,20 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "npm: compile",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "compile"],
+      "problemMatcher": []
+    },
+    {
+      "label": "npm: release",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "release"],
+      "dependsOn": ["npm: compile"],
+      "problemMatcher": []
+    }
+  ]
+}

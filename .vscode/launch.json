@@ -7,8 +7,8 @@
       "request": "launch",
       "runtimeExecutable": "${execPath}",
       "args": ["--extensionDevelopmentPath=${workspaceFolder}"],
-      "preLaunchTask": "tsc: build - extension/tsconfig.json",
-      "outFiles": ["${workspaceFolder}/out/**/*.js"]
+      "preLaunchTask": "npm: release",
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"]
     }
   ]
 }
