@@ -1,178 +1,385 @@
-/*
-This file is part of auto-lsp.
-Copyright (C) 2025 CLAUZEL Adrien
+use std::{collections::HashMap, path::PathBuf};
 
-auto-lsp is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
+use tokio::sync::RwLock;
+use tower_lsp::{Client, LanguageServer, LspService, Server, jsonrpc::Result, lsp_types::*};
 
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
+use tree_sitter::{Parser, Tree};
 
-You should have received a copy of the GNU General Public License
-along with this program.  If not, see <http://www.gnu.org/licenses/>
-*/
+use tree_sitter_papyrus_sse;
 
-use auto_lsp::default::db::{BaseDatabase, BaseDb};
-use auto_lsp::default::server::capabilities::{
-    TEXT_DOCUMENT_SYNC, WORKSPACE_PROVIDER, semantic_tokens_provider,
-};
-use auto_lsp::default::server::file_events::{
-    change_text_document, changed_watched_files, open_text_document,
-};
-use auto_lsp::default::server::workspace_init::WorkspaceInit;
-use auto_lsp::lsp_server::{self, Connection};
-use auto_lsp::lsp_types::notification::{
-    Cancel, DidChangeTextDocument, DidChangeWatchedFiles, DidCloseTextDocument,
-    DidOpenTextDocument, DidSaveTextDocument, LogTrace, SetTrace,
-};
-use auto_lsp::lsp_types::request::{
-    CodeActionRequest, CodeLensRequest, Completion, DocumentDiagnosticRequest,
-    DocumentSymbolRequest, FoldingRangeRequest, HoverRequest, InlayHintRequest,
-    SelectionRangeRequest, SemanticTokensFullRequest, WorkspaceDiagnosticRequest,
-    WorkspaceSymbolRequest,
-};
-use auto_lsp::lsp_types::{
-    CodeActionProviderCapability, CodeLensOptions, CompletionOptions, DiagnosticOptions,
-    DiagnosticServerCapabilities, HoverProviderCapability, OneOf, ServerCapabilities,
-};
-use auto_lsp::server::Session;
-use auto_lsp::server::notification_registry::NotificationRegistry;
-use auto_lsp::server::options::InitOptions;
-use auto_lsp::server::request_registry::RequestRegistry;
-use auto_lsp::server::vendored::intent::ThreadIntent;
-use papyrus_ast::capabilities::code_actions::code_actions;
-use papyrus_ast::capabilities::code_lenses::code_lenses;
-use papyrus_ast::capabilities::completion_items::completion_items;
-use papyrus_ast::capabilities::diagnostics::diagnostics;
-use papyrus_ast::capabilities::document_symbols::document_symbols;
-use papyrus_ast::capabilities::folding_ranges::folding_ranges;
-use papyrus_ast::capabilities::hover::hover;
-use papyrus_ast::capabilities::inlay_hints::inlay_hints;
-use papyrus_ast::capabilities::selection_ranges::selection_ranges;
-use papyrus_ast::capabilities::semantic_tokens::{
-    SUPPORTED_MODIFIERS, SUPPORTED_TYPES, semantic_tokens_full,
-};
-use papyrus_ast::capabilities::workspace_diagnostics::workspace_diagnostics;
-use papyrus_ast::capabilities::workspace_symbols::workspace_symbols;
-use papyrus_ast::db::PARSERS;
-use std::error::Error;
-use std::panic::RefUnwindSafe;
+/* =========================================================
+ * AST CACHE
+ * ========================================================= */
 
-fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
-    let (connection, io_threads) = Connection::stdio();
-    let db = BaseDb::default();
+#[derive(Clone)]
+struct Document {
+    text: String,
+    tree: Tree,
+}
 
-    stderrlog::new()
-        .modules([module_path!(), "auto_lsp"])
-        .verbosity(4)
-        .init()
-        .unwrap();
+/* =========================================================
+ * SYMBOL
+ * ========================================================= */
 
-    let (mut session, params) = Session::create(
-        InitOptions {
-            parsers: &PARSERS,
+#[derive(Clone)]
+struct Symbol {
+    #[expect(unused)]
+    name: String,
+    file: PathBuf,
+    start_pos: Position,
+    end_pos: Position,
+}
+
+impl Symbol {
+    fn to_location(&self) -> Location {
+        Location {
+            uri: Url::from_file_path(&self.file).unwrap(),
+            range: Range {
+                start: self.start_pos,
+                end: self.end_pos,
+            },
+        }
+    }
+}
+
+fn point_to_position(point: tree_sitter::Point) -> Position {
+    Position {
+        line: point.row as u32,
+        character: point.column as u32,
+    }
+}
+
+impl From<&Symbol> for Location {
+    #[inline]
+    fn from(value: &Symbol) -> Self {
+        value.to_location()
+    }
+}
+
+/* =========================================================
+ * STATE
+ * ========================================================= */
+
+struct Backend {
+    client: Client,
+    parser: RwLock<Parser>,
+    docs: RwLock<HashMap<String, Document>>,
+    symbols: RwLock<HashMap<String, Vec<Symbol>>>,
+}
+
+/* =========================================================
+ * INIT PARSER
+ * ========================================================= */
+
+fn new_parser() -> Parser {
+    let mut p = Parser::new();
+    p.set_language(&tree_sitter_papyrus_sse::LANGUAGE.into())
+        .expect("grammar load failed");
+    p
+}
+
+/* =========================================================
+ * TREE HELPERS
+ * ========================================================= */
+
+fn collect_errors(tree: &Tree) -> Vec<Diagnostic> {
+    let mut out = vec![];
+    let root = tree.root_node();
+
+    let mut cursor = root.walk();
+    for node in root.children(&mut cursor) {
+        if node.is_error() || node.has_error() {
+            let r = node.range();
+
+            out.push(Diagnostic {
+                range: Range {
+                    start: Position::new(r.start_point.row as u32, r.start_point.column as u32),
+                    end: Position::new(r.end_point.row as u32, r.end_point.column as u32),
+                },
+                severity: Some(DiagnosticSeverity::ERROR),
+                message: "syntax error".into(),
+                ..Default::default()
+            });
+        }
+    }
+
+    out
+}
+
+fn extract_functions(src: &str, tree: &Tree, file: PathBuf) -> HashMap<String, Vec<Symbol>> {
+    let mut map: HashMap<String, Vec<Symbol>> = HashMap::new();
+    let root = tree.root_node();
+
+    let mut cursor = root.walk();
+    for node in root.children(&mut cursor) {
+        if node.kind().contains("function") {
+            let mut name = None;
+
+            let mut c = node.walk();
+            for ch in node.children(&mut c) {
+                if ch.kind() == "identifier" {
+                    name = src
+                        .get(ch.start_byte()..ch.end_byte())
+                        .map(|s| s.to_string());
+                }
+            }
+
+            if let Some(name) = name {
+                map.entry(name.clone()).or_default().push(Symbol {
+                    name,
+                    file: file.clone(),
+                    start_pos: point_to_position(node.start_position()),
+                    end_pos: point_to_position(node.end_position()),
+                });
+            }
+        }
+    }
+
+    map
+}
+
+fn position_to_offset(text: &str, pos: Position) -> usize {
+    let mut line = 0;
+    let mut col = 0;
+
+    for (i, ch) in text.char_indices() {
+        if line == pos.line as usize && col == pos.character as usize {
+            return i;
+        }
+
+        if ch == '\n' {
+            line += 1;
+            col = 0;
+        } else {
+            col += 1;
+        }
+    }
+
+    text.len()
+}
+
+/* =========================================================
+ * FORMATTER
+ * ========================================================= */
+
+fn format_papyrus(src: &str) -> String {
+    let mut indent: u64 = 0;
+    let mut out = String::new();
+
+    for line in src.lines() {
+        let t = line.trim();
+
+        if t.starts_with("End") {
+            indent = indent.saturating_sub(1);
+        }
+
+        out.push_str(&"  ".repeat(indent as usize));
+        out.push_str(t);
+        out.push('\n');
+
+        if t.starts_with("Function") || t.starts_with("If") || t.starts_with("While") {
+            indent += 1;
+        }
+    }
+
+    out
+}
+
+/* =========================================================
+ * LSP
+ * ========================================================= */
+
+#[tower_lsp::async_trait]
+impl LanguageServer for Backend {
+    async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
+        Ok(InitializeResult {
+            server_info: Some(ServerInfo {
+                name: "papyrus-lsp".into(),
+                version: Some("0.2".into()),
+            }),
             capabilities: ServerCapabilities {
-                text_document_sync: TEXT_DOCUMENT_SYNC.clone(),
-                workspace: WORKSPACE_PROVIDER.clone(),
-                diagnostic_provider: Some(DiagnosticServerCapabilities::Options(
-                    DiagnosticOptions {
-                        workspace_diagnostics: true,
-                        ..Default::default()
-                    },
-                )),
-                code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
-                code_lens_provider: Some(CodeLensOptions {
-                    resolve_provider: Some(false),
-                }),
-                inlay_hint_provider: Some(OneOf::Left(true)),
-                semantic_tokens_provider: semantic_tokens_provider(
-                    false,
-                    Some(SUPPORTED_TYPES),
-                    Some(SUPPORTED_MODIFIERS),
-                ),
-                document_symbol_provider: Some(OneOf::Left(true)),
-                workspace_symbol_provider: Some(OneOf::Left(true)),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
-                completion_provider: Some(CompletionOptions {
-                    resolve_provider: Some(false),
-                    trigger_characters: Some(vec![".".to_string()]),
-                    ..Default::default()
-                }),
+                completion_provider: Some(CompletionOptions::default()),
+                definition_provider: Some(OneOf::Left(true)),
+                document_formatting_provider: Some(OneOf::Left(true)),
                 ..Default::default()
             },
-            server_info: None,
-        },
-        connection,
-        db,
-    )?;
-
-    // Initialize the session with the client's initialization options.
-    // This will also add all documents, parse and send diagnostics.
-    let init_results = session.init_workspace(params)?;
-    if !init_results.is_empty() {
-        init_results.into_iter().for_each(|result| {
-            if let Err(err) = result {
-                eprintln!("{}", err);
-            }
-        });
-    };
-
-    let mut request_registry = RequestRegistry::<BaseDb>::default();
-    let mut notification_registry = NotificationRegistry::<BaseDb>::default();
-
-    // Run the server and wait for the two threads to end (typically by trigger LSP Exit event).
-    session.main_loop(
-        on_requests(&mut request_registry),
-        on_notifications(&mut notification_registry),
-    )?;
-    io_threads.join()?;
-
-    // Shut down gracefully.
-    eprintln!("Shutting down server");
-    Ok(())
-}
-
-fn on_requests<Db: BaseDatabase + Clone + RefUnwindSafe>(
-    registry: &mut RequestRegistry<Db>,
-) -> &mut RequestRegistry<Db> {
-    registry
-        .on::<DocumentDiagnosticRequest, _>(ThreadIntent::Worker, diagnostics)
-        .on::<DocumentSymbolRequest, _>(ThreadIntent::Worker, document_symbols)
-        .on::<FoldingRangeRequest, _>(ThreadIntent::Worker, folding_ranges)
-        .on::<HoverRequest, _>(ThreadIntent::Worker, hover)
-        .on::<SemanticTokensFullRequest, _>(ThreadIntent::Worker, semantic_tokens_full)
-        .on::<SelectionRangeRequest, _>(ThreadIntent::Worker, selection_ranges)
-        .on::<WorkspaceSymbolRequest, _>(ThreadIntent::Worker, workspace_symbols)
-        .on::<WorkspaceDiagnosticRequest, _>(ThreadIntent::Worker, workspace_diagnostics)
-        .on::<InlayHintRequest, _>(ThreadIntent::Worker, inlay_hints)
-        .on::<CodeActionRequest, _>(ThreadIntent::Worker, code_actions)
-        .on::<CodeLensRequest, _>(ThreadIntent::Worker, code_lenses)
-        .on::<Completion, _>(ThreadIntent::Worker, completion_items)
-}
-
-fn on_notifications<Db: BaseDatabase + Clone + RefUnwindSafe>(
-    registry: &mut NotificationRegistry<Db>,
-) -> &mut NotificationRegistry<Db> {
-    registry
-        .on_mut::<DidOpenTextDocument, _>(|s, p| Ok(open_text_document(s, p)?))
-        .on_mut::<DidChangeTextDocument, _>(|s, p| Ok(change_text_document(s, p)?))
-        .on_mut::<DidChangeWatchedFiles, _>(|s, p| Ok(changed_watched_files(s, p)?))
-        .on_mut::<Cancel, _>(|s, p| {
-            let id: lsp_server::RequestId = match p.id {
-                auto_lsp::lsp_types::NumberOrString::Number(id) => id.into(),
-                auto_lsp::lsp_types::NumberOrString::String(id) => id.into(),
-            };
-            if let Some(response) = s.req_queue.incoming.cancel(id) {
-                s.connection.sender.send(response.into())?;
-            }
-            Ok(())
         })
-        .on::<DidSaveTextDocument, _>(ThreadIntent::Worker, |_s, _p| Ok(()))
-        .on::<DidCloseTextDocument, _>(ThreadIntent::Worker, |_s, _p| Ok(()))
-        .on::<SetTrace, _>(ThreadIntent::Worker, |_s, _p| Ok(()))
-        .on::<LogTrace, _>(ThreadIntent::Worker, |_s, _p| Ok(()))
+    }
+
+    async fn initialized(&self, _: InitializedParams) {
+        self.client
+            .log_message(MessageType::INFO, "Papyrus LSP ready")
+            .await;
+    }
+
+    async fn did_open(&self, params: DidOpenTextDocumentParams) {
+        let uri = params.text_document.uri.to_string();
+        let text = params.text_document.text;
+
+        let mut parser = self.parser.write().await;
+        let tree = parser.parse(&text, None).unwrap();
+
+        let symbols = extract_functions(&text, &tree, PathBuf::from(uri.clone()));
+
+        {
+            let mut sym = self.symbols.write().await;
+
+            for (name, list) in symbols {
+                sym.entry(name).or_default().extend(list);
+            }
+        }
+
+        let mut cache = self.docs.write().await;
+        cache.insert(
+            uri.clone(),
+            Document {
+                text: text.clone(),
+                tree: tree.clone(),
+            },
+        );
+
+        let diags = collect_errors(&tree);
+
+        self.client
+            .publish_diagnostics(params.text_document.uri, diags, None)
+            .await;
+    }
+
+    async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
+        let uri = params
+            .text_document_position_params
+            .text_document
+            .uri
+            .to_string();
+        let docs = self.docs.read().await;
+
+        let doc = match docs.get(&uri) {
+            Some(d) => d,
+            None => return Ok(None),
+        };
+
+        let contents = HoverContents::Markup(MarkupContent {
+            kind: MarkupKind::Markdown,
+            value: format!("```papyrus\n{}\n```", doc.text),
+        });
+
+        Ok(Some(Hover {
+            contents,
+            range: None,
+        }))
+    }
+
+    async fn completion(&self, _: CompletionParams) -> Result<Option<CompletionResponse>> {
+        let symbols = self.symbols.read().await;
+
+        let mut items = vec![];
+
+        for k in symbols.keys() {
+            items.push(CompletionItem {
+                label: k.clone(),
+                kind: Some(CompletionItemKind::FUNCTION),
+                detail: Some("function".to_string()),
+                ..Default::default()
+            });
+        }
+
+        Ok(Some(CompletionResponse::Array(items)))
+    }
+
+    async fn goto_definition(
+        &self,
+        params: GotoDefinitionParams,
+    ) -> Result<Option<GotoDefinitionResponse>> {
+        let uri = params
+            .text_document_position_params
+            .text_document
+            .uri
+            .to_string();
+        let pos = params.text_document_position_params.position;
+
+        let docs = self.docs.read().await;
+        let doc = match docs.get(&uri) {
+            Some(d) => d,
+            None => return Ok(None),
+        };
+
+        let offset = position_to_offset(&doc.text, pos);
+
+        let node = match doc
+            .tree
+            .root_node()
+            .descendant_for_byte_range(offset, offset)
+        {
+            Some(n) => n,
+            None => return Ok(None),
+        };
+
+        let mut n = node;
+        while n.kind() != "identifier" {
+            match n.parent() {
+                Some(p) => n = p,
+                None => break,
+            }
+        }
+
+        let name = doc.text[n.byte_range()].to_string();
+
+        let symbols = self.symbols.read().await;
+
+        if let Some(symbols) = symbols.get(&name) {
+            return Ok(Some(GotoDefinitionResponse::Scalar(
+                symbols[0].to_location(),
+            )));
+        }
+
+        Ok(None)
+    }
+
+    async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
+        let uri = params.text_document.uri.to_string();
+        let docs = self.docs.read().await;
+
+        let doc = match docs.get(&uri) {
+            Some(d) => d,
+            None => return Ok(None),
+        };
+
+        let formatted = format_papyrus(&doc.text);
+
+        Ok(Some(vec![TextEdit {
+            range: Range {
+                start: Position::new(0, 0),
+                end: Position::new(u32::MAX, 0),
+            },
+            new_text: formatted,
+        }]))
+    }
+
+    async fn shutdown(&self) -> Result<()> {
+        std::process::exit(0);
+    }
+}
+
+/* =========================================================
+ * MAIN
+ * ========================================================= */
+
+#[tokio::main]
+async fn main() {
+    let stdin = tokio::io::stdin();
+    let stdout = tokio::io::stdout();
+
+    let (service, socket) = LspService::new(|client| {
+        let parser = new_parser();
+
+        Backend {
+            client,
+            parser: RwLock::new(parser),
+            docs: RwLock::new(HashMap::new()),
+            symbols: RwLock::new(HashMap::new()),
+        }
+    });
+
+    Server::new(stdin, stdout, socket).serve(service).await;
 }

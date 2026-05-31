@@ -5,9 +5,6 @@ edition = "2024"
 
 [dependencies]
 tree-sitter-papyrus-sse = { workspace = true }
-auto-lsp = { workspace = true }
 
 [build-dependencies]
 tree-sitter-papyrus-sse = { workspace = true }
-auto-lsp = { workspace = true }
-auto-lsp-codegen = { workspace = true }

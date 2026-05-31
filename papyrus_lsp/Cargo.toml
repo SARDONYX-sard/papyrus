@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-auto-lsp = { workspace = true, features = ["lsp_server"] }
-papyrus_ast = { path = "../papyrus_ast" }
-stderrlog = "0.6.0"
+futures = "0.3.32"
+tower-lsp = "0.20"
+tokio = { version = "1", features = ["full"] }
+tree-sitter = "0.26.9"
+tree-sitter-papyrus-sse = { workspace = true }
