@@ -5,7 +5,7 @@ import { LanguageClient, LanguageClientOptions, ServerOptions } from "vscode-lan
 
 let client: LanguageClient;
 
-export function activate(context: vscode.ExtensionContext) {
+export async function activate(context: vscode.ExtensionContext) {
   const serverPath = context.asAbsolutePath(path.join("dist", "papyrus_lsp.exe"));
   if (!fs.existsSync(serverPath)) {
     vscode.window.showErrorMessage(`LSP not found: ${serverPath}`);
@@ -18,11 +18,18 @@ export function activate(context: vscode.ExtensionContext) {
 
   const clientOptions: LanguageClientOptions = {
     documentSelector: [{ scheme: "file", language: "papyrus" }],
+    synchronize: {
+      fileEvents: vscode.workspace.createFileSystemWatcher("**/*.psc"),
+    },
   };
 
   client = new LanguageClient("papyrus-lsp", "Papyrus LSP", serverOptions, clientOptions);
 
-  client.start();
+  try {
+    await client.start();
+  } catch (error) {
+    client.error(`Start failed`, error, "force");
+  }
 
   context.subscriptions.push(client);
 }

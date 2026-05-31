@@ -3,6 +3,11 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace]
-default-members = ["papyrus_lsp_server"]
-members = ["papyrus_lsp_server", "papyrus_common"]
+default-members = ["papyrus_lsp"]
+members = ["papyrus_lsp", "papyrus_ast"]
 resolver = "3"
+
+[workspace.dependencies]
+tree-sitter-papyrus-sse = { git = "https://github.com/SARDONYX-forks/tree-sitter-papyrus-sse", rev = "262f701" }
+auto-lsp = { git = "https://github.com/SARDONYX-forks/auto-lsp", rev = "89393ed" }
+auto-lsp-codegen = { git = "https://github.com/SARDONYX-forks/auto-lsp", rev = "89393ed" }
