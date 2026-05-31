@@ -1,0 +1,33 @@
+{
+  "name": "papyrus-lsp",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "activationEvents": [
+    "onLanguage:papyrus"
+  ],
+  "main": "dist/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "papyrus",
+        "extensions": [
+          ".psc"
+        ]
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./extension",
+    "release": "cargo build --release"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "@types/vscode": "^1.120.0",
+    "typescript": "^6.0.3"
+  }
+}

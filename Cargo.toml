@@ -1,0 +1,8 @@
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+default-members = ["papyrus_lsp_server"]
+members = ["papyrus_lsp_server", "papyrus_common"]
+resolver = "3"
