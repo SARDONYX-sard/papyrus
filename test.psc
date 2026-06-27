@@ -1,10 +1,12 @@
+/* Test! */
 Scriptname TestPlayerScript extends Actor
 
 Function OnInit()
     Debug.Trace("LSP test init")
 EndFunction
 
-Function AddNumbers(Int a, Int b) Global Int
+; add a, b
+Int Function AddNumbers(Int a, Int b) Global
     Return a + b
 EndFunction
 
