@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: (C) 2025 russo-2025
+// SPDX-License-Identifier: MIT
 use crate::{Error, pex::*};
 
 pub struct Writer {

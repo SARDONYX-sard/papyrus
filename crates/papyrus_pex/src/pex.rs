@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: (C) 2025 russo-2025
+// SPDX-License-Identifier: MIT
 pub const EMPTY_STATE_NAME: &str = "";
 
 #[inline]

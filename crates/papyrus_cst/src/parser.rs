@@ -1,3 +1,6 @@
+//! Concrete Syntax Tree parser
+//! - Ref: https://matklad.github.io/2023/05/21/resilient-ll-parsing-tutorial.html
+//! - Inspired: https://github.com/matklad/resilient-ll-parsing/blob/master/src/lib.rs#L44
 use std::cell::Cell;
 
 use papyrus_token::{
@@ -151,17 +154,14 @@ impl Parser {
         self.pos >= self.tokens.len()
     }
 
-    fn current_token(&self) -> Option<&Token> {
+    /// Peek current token
+    pub fn peek(&self) -> Option<&Token> {
         self.check_fuel();
         self.tokens.get(self.pos)
     }
 
-    pub fn peek(&self) -> Option<&Token> {
-        self.current_token()
-    }
-
     pub fn at(&self, kind: TokenKind) -> bool {
-        self.current_token().is_some_and(|t| t.kind == kind)
+        self.peek().is_some_and(|t| t.kind == kind)
     }
 
     /// Returns true if the current token can begin a type.
@@ -182,8 +182,7 @@ impl Parser {
     }
 
     pub fn at_any(&self, kinds: &[TokenKind]) -> bool {
-        self.current_token()
-            .is_some_and(|t| kinds.contains(&t.kind))
+        self.peek().is_some_and(|t| kinds.contains(&t.kind))
     }
 
     /// Look `n` tokens ahead (0 = current).
@@ -220,7 +219,7 @@ impl Parser {
             true
         } else {
             let got = self
-                .current_token()
+                .peek()
                 .map(|t| format!("{:?}", t.kind))
                 .unwrap_or_else(|| "EOF".to_string());
             self.push_error(format!("expected {kind:?}, got {got}"));
@@ -278,7 +277,12 @@ impl Parser {
 
     fn check_fuel(&self) {
         let f = self.fuel.get();
-        assert!(f > 0, "parser is stuck: fuel exhausted at pos {}", self.pos);
+        assert!(
+            f > 0,
+            "parser is stuck: fuel exhausted at pos {}. {:#?}",
+            self.pos,
+            self.tokens.get(self.pos)
+        );
         self.fuel.set(f - 1);
     }
 }
@@ -324,6 +328,14 @@ impl CompletedMarker {
 //     emits an Error node).
 //   - Functions that can fail return `Option<CompletedMarker>`.
 
+/// Lex `src`, run the parser, and return `(root_tree, errors)`.
+pub fn parse_papyrus(src: &str) -> (Tree, Vec<ParseError>) {
+    let tokens = papyrus_token::TokenStream::from(src).into_tokens();
+    let mut p = Parser::new(tokens);
+    file(&mut p);
+    p.build_tree()
+}
+
 /// Parse an entire source file.
 pub fn file(p: &mut Parser) {
     let m = p.open();
@@ -338,16 +350,54 @@ pub fn file(p: &mut Parser) {
 fn top_level(p: &mut Parser) {
     match p.peek().map(|t| t.kind) {
         Some(TokenKind::ScriptName) => script(p),
+        Some(TokenKind::Import) => import(p),
         Some(TokenKind::Event) => event(p),
-        Some(TokenKind::State) => state(p),
         Some(TokenKind::Eof) | None => {}
 
+        Some(TokenKind::State) => state(p),
         Some(TokenKind::Property) => property(p),
         Some(TokenKind::Function) => function(p),
-        _ if p.at_type_start() && p.nth(1) == Some(TokenKind::Property) => property(p),
-        _ if p.at_type_start() && p.nth(1) == Some(TokenKind::Function) => function(p),
+
+        _ if start_state(p) => state(p),
+        _ if next_after_type(p, TokenKind::Property) => property(p),
+        _ if next_after_type(p, TokenKind::Function) => function(p),
         _ => stmt(p), // Variable declarations or bare expressions at file scope (unusual in Papyrus but we handle them gracefully).
     }
+}
+
+/// Is `auto State`
+fn start_state(p: &Parser) -> bool {
+    matches!(
+        p.peek().map(|t| t.kind),
+        Some(TokenKind::Auto | TokenKind::AutoReadOnly)
+    ) && p.nth(1) == Some(TokenKind::State)
+}
+
+/// Is `<Type> <KeyWord>` tokens?
+fn next_after_type(p: &Parser, kind: TokenKind) -> bool {
+    let mut peek_n = 0;
+    if p.at_type_start() {
+        peek_n += 1; // type name
+    } else {
+        return false;
+    }
+
+    // `[]`, `[][]`
+    while matches!(p.nth(peek_n), Some(TokenKind::LBracket))
+        && matches!(p.nth(peek_n + 1), Some(TokenKind::RBracket))
+    {
+        peek_n += 2;
+    }
+
+    p.nth(peek_n) == Some(kind)
+}
+
+/// `import <Name>`
+fn import(p: &mut Parser) {
+    let m = p.open();
+    p.expect(TokenKind::Import);
+    name(p);
+    p.close(m, TreeKind::Import);
 }
 
 /// `ScriptName <Name> [Extends <Name>] [Native] [Hidden] [Conditional]`
@@ -366,24 +416,7 @@ fn script(p: &mut Parser) {
 
     // Body: functions, events, properties, states.
     while !p.eof() {
-        match p.peek().map(|t| t.kind) {
-            Some(TokenKind::Function)
-            | Some(TokenKind::Event)
-            | Some(TokenKind::Property)
-            | Some(TokenKind::State) => top_level(p),
-
-            // Has return type function
-            Some(TokenKind::Int)
-            | Some(TokenKind::Float)
-            | Some(TokenKind::Bool)
-            | Some(TokenKind::StringTy)
-            | Some(TokenKind::Identifier)
-                if p.nth(1) == Some(TokenKind::Function) =>
-            {
-                function(p);
-            }
-            _ => break,
-        }
+        top_level(p);
     }
 
     p.close(m, TreeKind::Script);
@@ -420,12 +453,16 @@ fn function_impl(
     kind: TreeKind,
     begin: TokenKind,
     end: TokenKind,
-    has_return_type: bool,
+    has_return_type: bool, // Function: true, Event: false
 ) {
     let m = p.open();
 
-    if has_return_type && p.at_type_start() {
-        type_expr(p);
+    if p.at_type_start() {
+        if has_return_type {
+            type_expr(p);
+        } else {
+            p.error_with("Cannot specify a return value for an `Event`.");
+        }
     }
 
     p.expect(begin);
@@ -476,58 +513,13 @@ fn state_body(p: &mut Parser) {
 
             // function | <Type> function
             Some(TokenKind::Function) => function(p),
-            _ if p.at_type_start() && p.nth(1) == Some(TokenKind::Function) => function(p),
+            _ if next_after_type(p, TokenKind::Function) => function(p),
 
             _ => stmt(p),
         }
     }
 
     p.close(m, TreeKind::Block);
-}
-
-/// `<LineProperty> | <PropertyBlock>`
-fn property(p: &mut Parser) {
-    // lookahead only, no consumption logic here
-    if is_property_line(p) {
-        property_line(p);
-    } else {
-        property_block(p);
-    }
-}
-
-/// Is `<Type> "Property" <Name> "="`
-fn is_property_line(p: &Parser) -> bool {
-    matches!(
-        (p.nth(1), p.nth(3)),
-        (Some(TokenKind::Property), Some(TokenKind::Assign))
-    )
-}
-
-/// `<Type> Property <Name> ["=" <Expr>] [Auto | AutoReadOnly]`
-fn property_line(p: &mut Parser) {
-    loop {
-        if !p.at_type_start() {
-            break;
-        }
-
-        // like var_decl_stmt
-        let m = p.open();
-
-        type_expr(p);
-        p.expect(TokenKind::Property);
-        name(p);
-
-        if p.eat(TokenKind::Assign) {
-            expr(p);
-        }
-
-        if flags_line(p) {
-            p.close(m, TreeKind::Property);
-        } else {
-            // invalid recovery
-            p.close(m, TreeKind::Error);
-        }
-    }
 }
 
 /// - Auto pattern
@@ -541,13 +533,23 @@ fn property_line(p: &mut Parser) {
 ///   [Function …]
 /// EndProperty
 /// ```
-fn property_block(p: &mut Parser) {
+fn property(p: &mut Parser) {
     let m = p.open();
 
     // <Type> Property <Name>
     type_expr(p);
     p.expect(TokenKind::Property);
     name(p);
+
+    // property line
+    if p.eat(TokenKind::Assign) {
+        expr(p);
+        // Auto / AutoReadOnly shorthand – no explicit getter/setter.
+        if flags_line(p) {
+            p.close(m, TreeKind::Property);
+            return;
+        }
+    }
 
     // Auto / AutoReadOnly shorthand – no explicit getter/setter.
     if flags_line(p) {
@@ -558,8 +560,7 @@ fn property_block(p: &mut Parser) {
     // Full property: optional getter and/or setter functions.
     // - function get()
     // - bool function get()
-    while p.at(TokenKind::Function) || (p.at_type_start() && p.nth(1) == Some(TokenKind::Function))
-    {
+    while p.at(TokenKind::Function) || next_after_type(p, TokenKind::Function) {
         function(p);
     }
 
@@ -569,7 +570,7 @@ fn property_block(p: &mut Parser) {
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
-/// `( [<Param> [, <Param>]*] )`
+/// - `( [<Param> [\] [, <Param>]*] )`
 fn param_list(p: &mut Parser) {
     let m = p.open();
 
@@ -627,9 +628,8 @@ fn type_expr(p: &mut Parser) {
     } else {
         p.push_error("expected a type name".to_string());
     }
-
-    // Optional array suffix.
-    if p.at(TokenKind::LBracket) {
+    // Optional n detention array suffix.
+    while p.at(TokenKind::LBracket) {
         p.bump();
         p.expect(TokenKind::RBracket);
     }
@@ -656,9 +656,15 @@ fn name(p: &mut Parser) {
 ///
 /// Returns has_auto
 fn flags_line(p: &mut Parser) -> bool {
+    let m = p.open();
     let mut has_auto = false;
 
     loop {
+        // newline boundary (trivia)
+        if p.eof() || has_newline_before_next(p) {
+            break;
+        }
+
         match p.peek().map(|t| t.kind) {
             // reserved flags
             Some(TokenKind::Auto | TokenKind::AutoReadOnly) => {
@@ -673,17 +679,14 @@ fn flags_line(p: &mut Parser) -> bool {
             }
             _ => break, // keywords and others
         }
-
-        // newline boundary (trivia)
-        if has_newline_before_next(p) {
-            break;
-        }
     }
+
+    p.close(m, TreeKind::Flag);
     has_auto
 }
 
 fn has_newline_before_next(p: &Parser) -> bool {
-    let Some(tok) = p.current_token() else {
+    let Some(tok) = p.peek() else {
         return true;
     };
 
@@ -741,13 +744,13 @@ fn stmt(p: &mut Parser) {
             var_decl_stmt(p)
         }
 
-        // `Identifier Identifier` → variable declaration (e.g. `Actor akTarget`)
-        // `Identifier [` → array type declaration (e.g. `Int[] arr`)
+        // `Identifier Identifier` -> variable declaration (e.g. `Actor akTarget`)
+        // `Identifier [` -> array type declaration (e.g. `Int[] arr`)
         Some(TokenKind::Identifier)
-            if matches!(p.nth(1), Some(TokenKind::Identifier))
-                || matches!(p.nth(1), Some(TokenKind::LBracket))
+            if matches!(p.nth(1), Some(TokenKind::Identifier)) // Type varName
+                || (matches!(p.nth(1), Some(TokenKind::LBracket)) // [] varName
                     && p.nth(2) == Some(TokenKind::RBracket)
-                    && p.nth(3) == Some(TokenKind::Identifier) =>
+                    && p.nth(3) == Some(TokenKind::Identifier)) =>
         {
             var_decl_stmt(p)
         }
@@ -764,16 +767,23 @@ fn var_decl_stmt(p: &mut Parser) {
     if p.eat(TokenKind::Assign) {
         expr(p);
     }
+    flags_line(p);
+
     p.close(m, TreeKind::StmtExpr); // reuse StmtExpr; add StmtVarDecl to TreeKind if desired
 }
 
+/// `return [<Expr>]`
 fn return_stmt(p: &mut Parser) {
     let m = p.open();
 
     p.expect(TokenKind::Return);
 
     // Optional return value: absent when we're at a terminator or EOF.
-    if !p.eof() && !p.at_any(BLOCK_TERMINATORS) && !p.at(TokenKind::Eof) {
+    if !p.eof()
+        && !p.at_any(BLOCK_TERMINATORS)
+        && !p.at(TokenKind::Eof)
+        && !has_newline_before_next(p)
+    {
         expr(p);
     }
 
@@ -872,7 +882,22 @@ fn expr_bp(p: &mut Parser, min_bp: u8) {
                 Some(TokenKind::Dot) => {
                     let m = lhs.precede(p);
                     p.bump(); // `.`
-                    name(p);
+
+                    // member access: Identifier / pseudo-properties like Length
+                    match p.peek().map(|t| t.kind) {
+                        Some(TokenKind::Identifier) => {
+                            p.bump();
+                        }
+                        // If lexer produces dedicated tokens like Length, allow them here
+                        Some(TokenKind::Length) => {
+                            p.bump();
+                        }
+
+                        _ => {
+                            p.push_error("expected member name after '.'".to_string());
+                        }
+                    }
+
                     lhs = p.close(m, TreeKind::ExprMember);
                 }
 
@@ -1058,260 +1083,464 @@ fn arg(p: &mut Parser) {
     p.close(m, TreeKind::Arg);
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
-    use papyrus_token::{span::TextSpan, token::Token, token::TokenKind};
+    use crate::display_error::display_errors;
 
     use super::*;
-    use crate::cst::TreeKind;
 
-    // ── Token builder helpers ─────────────────────────────────────────────────
+    /// Assert there are no parse errors; print them if there are.
+    fn assert_no_errors(src: &str, tree: &Tree, errors: &[ParseError], path: Option<&str>) {
+        std::fs::write(
+            "../../target/tokens.log",
+            format!("{:#?}", papyrus_token::TokenStream::from(src).into_tokens()),
+        )
+        .unwrap();
+        std::fs::write(
+            "../../target/tree.log",
+            crate::debug::dump_tree_tokens_with_trivia(tree, src),
+        )
+        .unwrap();
 
-    fn tok(kind: TokenKind) -> Token {
-        Token::new(kind, TextSpan::empty(0))
+        if !errors.is_empty() {
+            let path = path.unwrap_or("test.psc");
+            let readable_errors = display_errors(src, path, errors);
+            std::fs::write("../../target/error.log", &readable_errors).unwrap();
+            panic!("unexpected parse errors in:\n{readable_errors}");
+        }
     }
 
-    fn parse_tokens(tokens: Vec<Token>) -> (Tree, Vec<ParseError>) {
-        // Always terminate with Eof.
-        let mut ts = tokens;
-        ts.push(tok(TokenKind::Eof));
-        let mut p = Parser::new(ts);
-        file(&mut p);
-        p.build_tree()
-    }
-
-    fn ident() -> Token {
-        tok(TokenKind::Identifier)
-    }
-
-    // ── Helpers ───────────────────────────────────────────────────────────────
-
-    fn assert_root_kind(tree: &Tree, kind: TreeKind) {
-        assert_eq!(tree.kind, kind, "root kind mismatch");
-    }
-
-    fn first_child_tree(tree: &Tree) -> &Tree {
-        tree.child_trees().next().expect("no child tree")
-    }
-
-    // ── Tests ─────────────────────────────────────────────────────────────────
+    // ── Smoke test: full fixture file ─────────────────────────────────────────
 
     #[test]
-    fn empty_file() {
-        let (tree, errors) = parse_tokens(vec![]);
-        assert_root_kind(&tree, TreeKind::File);
-        assert!(errors.is_empty());
-        assert_eq!(tree.children.len(), 0);
+    fn full_fixture() {
+        // let src = include_str!("../../../test.psc");
+        let src = include_str!(
+            "../../../tests/fixtures/papyrus-compiler-test-sources/psc_deps/T02QuestScript.psc"
+        );
+        let path = Some("tests/fixtures/papyrus-compiler-test-sources/psc_deps/T02QuestScript.psc");
+        let (tree, errors) = parse_papyrus(src);
+        assert_no_errors(src, &tree, &errors, path);
+        assert_eq!(tree.kind, TreeKind::File);
     }
+
+    // ── ScriptName ────────────────────────────────────────────────────────────
 
     #[test]
     fn scriptname_no_extends() {
-        let tokens = vec![tok(TokenKind::ScriptName), ident()];
-        let (tree, errors) = parse_tokens(tokens);
-        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
-        let script = first_child_tree(&tree);
+        let src = "ScriptName Foo";
+        let (tree, errors) = parse_papyrus(src);
+        assert_no_errors(src, &tree, &errors, None);
+        let script = tree.child_trees().next().expect("expected Script node");
         assert_eq!(script.kind, TreeKind::Script);
     }
 
     #[test]
     fn scriptname_with_extends() {
-        let tokens = vec![
-            tok(TokenKind::ScriptName),
-            ident(),
-            tok(TokenKind::Extends),
-            ident(),
-        ];
-        let (tree, errors) = parse_tokens(tokens);
-        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
-        let script = first_child_tree(&tree);
+        let src = "ScriptName Foo Extends Bar";
+        let (tree, errors) = parse_papyrus(src);
+        assert_no_errors(src, &tree, &errors, None);
+        let script = tree.child_trees().next().unwrap();
         assert_eq!(script.kind, TreeKind::Script);
+        // Should have consumed all four tokens with no error.
+        assert!(errors.is_empty());
     }
 
     #[test]
+    fn scriptname_with_prop() {
+        let src = "
+scriptname Foo extends Bar
+
+Actor property Hi auto
+";
+        let (tree, errors) = parse_papyrus(src);
+        assert_no_errors(src, &tree, &errors, None);
+        let script = tree.child_trees().next().unwrap();
+        assert_eq!(script.kind, TreeKind::Script);
+        // Should have consumed all four tokens with no error.
+        assert!(errors.is_empty());
+    }
+
+    // ── Functions ─────────────────────────────────────────────────────────────
+
+    #[test]
     fn empty_function() {
-        let tokens = vec![
-            tok(TokenKind::Function),
-            ident(),
-            tok(TokenKind::LParen),
-            tok(TokenKind::RParen),
-            tok(TokenKind::EndFunction),
-        ];
-        let (tree, errors) = parse_tokens(tokens);
-        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
-        let func = first_child_tree(&tree);
+        let src = "Function Noop()\nEndFunction";
+        let (tree, errors) = parse_papyrus(src);
+        assert_no_errors(src, &tree, &errors, None);
+        let func = tree.child_trees().next().unwrap();
         assert_eq!(func.kind, TreeKind::Function);
+        // Must have a ParamList and a Block child.
+        assert!(
+            func.find_child(TreeKind::ParamList).is_some(),
+            "no ParamList"
+        );
+        assert!(func.find_child(TreeKind::Block).is_some(), "no Block");
     }
 
     #[test]
     fn function_with_return_type() {
-        let tokens = vec![
-            tok(TokenKind::Function),
-            ident(),
-            tok(TokenKind::LParen),
-            tok(TokenKind::RParen),
-            tok(TokenKind::Colon),
-            tok(TokenKind::Int),
-            tok(TokenKind::EndFunction),
-        ];
-        let (tree, errors) = parse_tokens(tokens);
-        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
-        let func = first_child_tree(&tree);
+        let src = "Int Function GetValue() \n    Return 42\nEndFunction";
+        let (tree, errors) = parse_papyrus(src);
+        assert_no_errors(src, &tree, &errors, None);
+        let func = tree.child_trees().next().unwrap();
         assert_eq!(func.kind, TreeKind::Function);
+        let block = func.find_child(TreeKind::Block).unwrap();
+        let ret = block
+            .find_child(TreeKind::StmtReturn)
+            .expect("no StmtReturn");
+        assert!(
+            ret.find_child(TreeKind::ExprLiteral).is_some(),
+            "no literal in return"
+        );
+    }
+
+    #[test]
+    fn function_with_return_array_type() {
+        let src = "
+Int[] Function GetValue()
+    Return myArray
+EndFunction";
+        let (tree, errors) = parse_papyrus(src);
+        assert_no_errors(src, &tree, &errors, None);
+        let func = tree.child_trees().next().unwrap();
+        assert_eq!(func.kind, TreeKind::Function);
+        let block = func.find_child(TreeKind::Block).unwrap();
+        let ret = block
+            .find_child(TreeKind::StmtReturn)
+            .expect("no StmtReturn");
+        assert!(
+            ret.find_child(TreeKind::ExprName).is_some(),
+            "no literal in return"
+        );
     }
 
     #[test]
     fn function_with_params() {
-        let tokens = vec![
-            tok(TokenKind::Function),
-            ident(), // name
-            tok(TokenKind::LParen),
-            tok(TokenKind::Int), // param type
-            ident(),             // param name
-            tok(TokenKind::Comma),
-            tok(TokenKind::Bool), // param type
-            ident(),              // param name
-            tok(TokenKind::RParen),
-            tok(TokenKind::EndFunction),
-        ];
-        let (tree, errors) = parse_tokens(tokens);
-        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
-        let func = first_child_tree(&tree);
-        assert_eq!(func.kind, TreeKind::Function);
+        let src = "Int Function Add(Int a, Int b)\n    Return a\nEndFunction";
+        let (tree, errors) = parse_papyrus(src);
+        assert_no_errors(src, &tree, &errors, None);
+        let func = tree.child_trees().next().unwrap();
+        let params = func.find_child(TreeKind::ParamList).unwrap();
+        let param_count = params.find_children(TreeKind::Param).count();
+        assert_eq!(param_count, 2, "expected 2 params, got {param_count}");
     }
 
     #[test]
-    fn return_with_value() {
-        let tokens = vec![
-            tok(TokenKind::Function),
-            ident(),
-            tok(TokenKind::LParen),
-            tok(TokenKind::RParen),
-            tok(TokenKind::Return),
-            tok(TokenKind::Number),
-            tok(TokenKind::EndFunction),
-        ];
-        let (tree, errors) = parse_tokens(tokens);
-        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
-        let func = first_child_tree(&tree);
-        assert_eq!(func.kind, TreeKind::Function);
-        // Block → StmtReturn should exist somewhere inside.
-        let block = func.find_child(TreeKind::Block).expect("no Block");
-        let ret = block
-            .find_child(TreeKind::StmtReturn)
-            .expect("no StmtReturn");
-        assert!(ret.find_child(TreeKind::ExprLiteral).is_some());
+    fn function_with_default_param() {
+        let src = "Function Greet(String name = \"World\")\nEndFunction";
+        let (tree, errors) = parse_papyrus(src);
+        assert_no_errors(src, &tree, &errors, None);
+        let func = tree.child_trees().next().unwrap();
+        let params = func.find_child(TreeKind::ParamList).unwrap();
+        assert!(params.find_child(TreeKind::Param).is_some());
     }
+
+    #[test]
+    fn native_global_function() {
+        let src = "Function Log(String msg) Global Native";
+        let (tree, errors) = parse_papyrus(src);
+        assert_no_errors(src, &tree, &errors, None);
+        let func = tree.child_trees().next().unwrap();
+        assert_eq!(func.kind, TreeKind::Function);
+        // Native functions have no Block.
+        assert!(
+            func.find_child(TreeKind::Block).is_none(),
+            "native function must not have a Block"
+        );
+    }
+
+    // ── Events ────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn event_declaration() {
+        let src = "Event OnActivate(ObjectReference akActionRef)\nEndEvent";
+        let (tree, errors) = parse_papyrus(src);
+        assert_no_errors(src, &tree, &errors, None);
+        let ev = tree.child_trees().next().unwrap();
+        assert_eq!(ev.kind, TreeKind::Event);
+    }
+
+    // ── Properties ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn inline_auto_property() {
+        let src = "bool property isOpen = false Auto conditional";
+        let (tree, errors) = parse_papyrus(src);
+        assert_no_errors(src, &tree, &errors, None);
+        let prop = tree.child_trees().next().unwrap();
+        assert_eq!(prop.kind, TreeKind::Property);
+    }
+
+    #[test]
+    fn auto_property() {
+        let src = "
+; comment
+Actor Property Level Auto";
+        let (tree, errors) = parse_papyrus(src);
+        assert_no_errors(src, &tree, &errors, None);
+        let prop = tree.child_trees().next().unwrap();
+        assert_eq!(prop.kind, TreeKind::Property);
+    }
+
+    #[test]
+    fn property_with_array_fn() {
+        let src = "
+int property PhaseCounts hidden
+	int[] function get()
+		return Phases
+	endFunction
+endProperty
+";
+        let (tree, errors) = parse_papyrus(src);
+        assert_no_errors(src, &tree, &errors, None);
+        let prop = tree.child_trees().next().unwrap();
+        assert_eq!(prop.kind, TreeKind::Property);
+        let funcs: Vec<_> = prop.find_children(TreeKind::Function).collect();
+        assert_eq!(funcs.len(), 1, "expected getter + setter");
+    }
+
+    #[test]
+    fn full_property() {
+        let src = "\
+String Property Name
+    String Function Get()
+        Return \"\"
+    EndFunction
+    Function Set(String val)
+    EndFunction
+EndProperty";
+        let (tree, errors) = parse_papyrus(src);
+        assert_no_errors(src, &tree, &errors, None);
+        let prop = tree.child_trees().next().unwrap();
+        assert_eq!(prop.kind, TreeKind::Property);
+        let funcs: Vec<_> = prop.find_children(TreeKind::Function).collect();
+        assert_eq!(funcs.len(), 2, "expected getter + setter");
+    }
+
+    // ── States ────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn state_declaration() {
+        let src = "State Busy\nEndState";
+        let (tree, errors) = parse_papyrus(src);
+        assert_no_errors(src, &tree, &errors, None);
+        let s = tree.child_trees().next().unwrap();
+        assert_eq!(s.kind, TreeKind::State);
+    }
+
+    #[test]
+    fn state_with_event() {
+        let src = "\
+State Active
+    Event OnBeginState()
+    EndEvent
+EndState";
+        let (tree, errors) = parse_papyrus(src);
+        assert_no_errors(src, &tree, &errors, None);
+        let state = tree.child_trees().next().unwrap();
+        let block = state.find_child(TreeKind::Block).unwrap();
+        assert!(block.find_child(TreeKind::Event).is_some());
+    }
+
+    // ── Var ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn global_var_decl_with_init() {
+        let src = "
+        Bool property Prop1 = false auto
+        ; Comment
+        ; Comment
+        Bool ignoreOpen = false";
+        let (tree, errors) = parse_papyrus(src);
+        assert_no_errors(src, &tree, &errors, None);
+        let global_var = tree.child_trees().next().unwrap(); // StmtExpr
+        assert!(global_var.find_child(TreeKind::ExprName).is_some());
+    }
+
+    // ── Statements ────────────────────────────────────────────────────────────
 
     #[test]
     fn if_elseif_else() {
-        let tokens = vec![
-            tok(TokenKind::Function),
-            ident(),
-            tok(TokenKind::LParen),
-            tok(TokenKind::RParen),
-            // if True
-            tok(TokenKind::If),
-            tok(TokenKind::True),
-            // elseif False
-            tok(TokenKind::ElseIf),
-            tok(TokenKind::False),
-            // else
-            tok(TokenKind::Else),
-            tok(TokenKind::EndIf),
-            tok(TokenKind::EndFunction),
-        ];
-        let (tree, errors) = parse_tokens(tokens);
-        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
-        let func = first_child_tree(&tree);
+        let src = "\
+Function F(Bool b)
+    If b
+        Return
+    ElseIf b == False
+        Return
+    Else
+        Return
+    EndIf
+EndFunction";
+        let (tree, errors) = parse_papyrus(src);
+        assert_no_errors(src, &tree, &errors, None);
+        let func = tree.child_trees().next().unwrap();
         let block = func.find_child(TreeKind::Block).unwrap();
-        let if_stmt = block.find_child(TreeKind::StmtIf).unwrap();
-        assert!(if_stmt.find_child(TreeKind::StmtElseIf).is_some());
-        assert!(if_stmt.find_child(TreeKind::StmtElse).is_some());
+        let if_node = block.find_child(TreeKind::StmtIf).expect("no StmtIf");
+        assert!(
+            if_node.find_child(TreeKind::StmtElseIf).is_some(),
+            "no ElseIf"
+        );
+        assert!(if_node.find_child(TreeKind::StmtElse).is_some(), "no Else");
     }
 
     #[test]
     fn while_loop() {
-        let tokens = vec![
-            tok(TokenKind::Function),
-            ident(),
-            tok(TokenKind::LParen),
-            tok(TokenKind::RParen),
-            tok(TokenKind::While),
-            tok(TokenKind::True),
-            tok(TokenKind::EndWhile),
-            tok(TokenKind::EndFunction),
-        ];
-        let (tree, errors) = parse_tokens(tokens);
-        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
-        let func = first_child_tree(&tree);
+        let src = "\
+Function Count(Int n)
+    Int i = 0
+    While i < n
+        i += 1
+    EndWhile
+EndFunction";
+        let (tree, errors) = parse_papyrus(src);
+        assert_no_errors(src, &tree, &errors, None);
+        let func = tree.child_trees().next().unwrap();
         let block = func.find_child(TreeKind::Block).unwrap();
         assert!(block.find_child(TreeKind::StmtWhile).is_some());
     }
 
     #[test]
-    fn binary_expr_precedence() {
-        // Parses `1 + 2 * 3`; the `*` subtree should be nested inside `+`.
-        let tokens = vec![
-            tok(TokenKind::Function),
-            ident(),
-            tok(TokenKind::LParen),
-            tok(TokenKind::RParen),
-            tok(TokenKind::Number), // 1
-            tok(TokenKind::Plus),
-            tok(TokenKind::Number), // 2
-            tok(TokenKind::Star),
-            tok(TokenKind::Number), // 3
-            tok(TokenKind::EndFunction),
-        ];
-        let (tree, errors) = parse_tokens(tokens);
-        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
-        let func = first_child_tree(&tree);
+    fn return_no_value() {
+        let src = "Function F()\n    Return\nEndFunction";
+        let (tree, errors) = parse_papyrus(src);
+        assert_no_errors(src, &tree, &errors, None);
+        let func = tree.child_trees().next().unwrap();
+        let block = func.find_child(TreeKind::Block).unwrap();
+        let ret = block.find_child(TreeKind::StmtReturn).unwrap();
+        // No expression child expected.
+        assert!(ret.find_child(TreeKind::ExprLiteral).is_none());
+        assert!(ret.find_child(TreeKind::ExprName).is_none());
+    }
+
+    #[test]
+    fn var_decl_with_init() {
+        let src = "Function F()\n    Int x = 42\nEndFunction";
+        let (tree, errors) = parse_papyrus(src);
+        assert_no_errors(src, &tree, &errors, None);
+        let func = tree.child_trees().next().unwrap();
+        let block = func.find_child(TreeKind::Block).unwrap();
+        // Variable declarations are wrapped in StmtExpr for now.
+        assert!(block.find_child(TreeKind::StmtExpr).is_some());
+    }
+
+    // ── Expressions ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn binary_precedence_add_mul() {
+        // `a + b * c` — multiplication must be nested under addition.
+        let src = "Function F()\n    a + b * c\nEndFunction";
+        let (tree, errors) = parse_papyrus(src);
+        assert_no_errors(src, &tree, &errors, None);
+        let func = tree.child_trees().next().unwrap();
         let block = func.find_child(TreeKind::Block).unwrap();
         let stmt = block.find_child(TreeKind::StmtExpr).unwrap();
-        // The outer binary expression is `+`.
-        let outer_bin = stmt.find_child(TreeKind::ExprBinary).unwrap();
-        // Its right-hand operand should be another ExprBinary (`*`).
+        let outer = stmt
+            .find_child(TreeKind::ExprBinary)
+            .expect("no outer ExprBinary");
         assert!(
-            outer_bin.find_child(TreeKind::ExprBinary).is_some(),
-            "multiplication should be nested under addition"
+            outer.find_child(TreeKind::ExprBinary).is_some(),
+            "inner ExprBinary (mul) should be nested under outer (add)"
         );
     }
 
     #[test]
-    fn member_access_and_call() {
-        // Parses `foo.Bar()`
-        let tokens = vec![
-            tok(TokenKind::Function),
-            ident(),
-            tok(TokenKind::LParen),
-            tok(TokenKind::RParen),
-            ident(), // foo
-            tok(TokenKind::Dot),
-            ident(), // Bar
-            tok(TokenKind::LParen),
-            tok(TokenKind::RParen),
-            tok(TokenKind::EndFunction),
-        ];
-        let (tree, errors) = parse_tokens(tokens);
-        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
-        let func = first_child_tree(&tree);
+    fn unary_negation() {
+        let src = "Function F()\n    -x\nEndFunction";
+        let (tree, errors) = parse_papyrus(src);
+        assert_no_errors(src, &tree, &errors, None);
+        let func = tree.child_trees().next().unwrap();
         let block = func.find_child(TreeKind::Block).unwrap();
         let stmt = block.find_child(TreeKind::StmtExpr).unwrap();
-        assert!(stmt.find_child(TreeKind::ExprCall).is_some());
+        assert!(stmt.find_child(TreeKind::ExprUnary).is_some());
     }
 
     #[test]
+    fn member_access() {
+        let src = "Function F()\n    akActor.IsDead()\nEndFunction";
+        let (tree, errors) = parse_papyrus(src);
+        assert_no_errors(src, &tree, &errors, None);
+        let func = tree.child_trees().next().unwrap();
+        let block = func.find_child(TreeKind::Block).unwrap();
+        let stmt = block.find_child(TreeKind::StmtExpr).unwrap();
+        assert!(
+            stmt.find_child(TreeKind::ExprCall).is_some(),
+            "expected ExprCall"
+        );
+    }
+
+    #[test]
+    fn index_expression() {
+        let src = "Function F()\n    arr[0]\nEndFunction";
+        let (tree, errors) = parse_papyrus(src);
+        assert_no_errors(src, &tree, &errors, None);
+        let func = tree.child_trees().next().unwrap();
+        let block = func.find_child(TreeKind::Block).unwrap();
+        let stmt = block.find_child(TreeKind::StmtExpr).unwrap();
+        assert!(stmt.find_child(TreeKind::ExprIndex).is_some());
+    }
+
+    #[test]
+    fn new_array() {
+        let src = "Function F()\n    new Int[10]\nEndFunction";
+        let (tree, errors) = parse_papyrus(src);
+        assert_no_errors(src, &tree, &errors, None);
+        let func = tree.child_trees().next().unwrap();
+        let block = func.find_child(TreeKind::Block).unwrap();
+        let stmt = block.find_child(TreeKind::StmtExpr).unwrap();
+        assert!(stmt.find_child(TreeKind::ExprLiteral).is_some());
+    }
+
+    #[test]
+    fn cast_with_as() {
+        let src = "Function F()\n    x as Int\nEndFunction";
+        let (tree, errors) = parse_papyrus(src);
+        assert_no_errors(src, &tree, &errors, None);
+        let func = tree.child_trees().next().unwrap();
+        let block = func.find_child(TreeKind::Block).unwrap();
+        let stmt = block.find_child(TreeKind::StmtExpr).unwrap();
+        assert!(
+            stmt.find_child(TreeKind::ExprBinary).is_some(),
+            "`as` should produce ExprBinary"
+        );
+    }
+
+    #[test]
+    fn self_and_parent() {
+        let src = "Function F()\n    Self.Foo()\n    Parent.Bar()\nEndFunction";
+        let (tree, errors) = parse_papyrus(src);
+        assert_no_errors(src, &tree, &errors, None);
+        let func = tree.child_trees().next().unwrap();
+        let block = func.find_child(TreeKind::Block).unwrap();
+        let calls: Vec<_> = block.find_children(TreeKind::StmtExpr).collect();
+        assert_eq!(calls.len(), 2);
+    }
+
+    #[test]
+    fn assignment_operators() {
+        let src = "\
+Function F()
+    x = 1
+    x += 2
+    x -= 3
+    x *= 4
+    x /= 5
+    x %= 6
+EndFunction";
+        let (tree, errors) = parse_papyrus(src);
+        assert_no_errors(src, &tree, &errors, None);
+        let func = tree.child_trees().next().unwrap();
+        let block = func.find_child(TreeKind::Block).unwrap();
+        let stmts: Vec<_> = block.find_children(TreeKind::StmtExpr).collect();
+        assert_eq!(stmts.len(), 6, "expected 6 assignment statements");
+    }
+
+    // ── Error recovery ────────────────────────────────────────────────────────
+
+    #[test]
     fn missing_end_function_emits_error() {
-        let tokens = vec![
-            tok(TokenKind::Function),
-            ident(),
-            tok(TokenKind::LParen),
-            tok(TokenKind::RParen),
-            // EndFunction intentionally omitted.
-        ];
-        let (_tree, errors) = parse_tokens(tokens);
+        let src = "Function Broken()\n    Return\n; EndFunction intentionally missing";
+        let (_tree, errors) = parse_papyrus(src);
         assert!(
             !errors.is_empty(),
             "expected at least one error for missing EndFunction"
@@ -1319,25 +1548,33 @@ mod tests {
     }
 
     #[test]
-    fn state_declaration() {
-        let tokens = vec![tok(TokenKind::State), ident(), tok(TokenKind::EndState)];
-        let (tree, errors) = parse_tokens(tokens);
-        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
-        let s = first_child_tree(&tree);
-        assert_eq!(s.kind, TreeKind::State);
+    fn missing_endif_emits_error() {
+        let src = "Function F()
+If True
+Return
+; EndIf missing
+EndFunction";
+        let (_tree, errors) = parse_papyrus(src);
+        assert!(!errors.is_empty(), "expected error for missing EndIf");
     }
 
     #[test]
-    fn auto_property() {
-        let tokens = vec![
-            tok(TokenKind::Property),
-            tok(TokenKind::Int),
-            ident(), // name
-            tok(TokenKind::Auto),
-        ];
-        let (tree, errors) = parse_tokens(tokens);
-        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
-        let prop = first_child_tree(&tree);
-        assert_eq!(prop.kind, TreeKind::Property);
+    fn parser_recovers_after_error() {
+        // The second function should still parse cleanly even though the first
+        // is broken.
+        let src = "\
+Function Broken(
+; missing RParen and EndFunction
+
+Function Ok()
+EndFunction";
+        let (tree, _errors) = parse_papyrus(src);
+        // We don't assert no errors, but the tree must be File-rooted and we
+        // should find at least one Function node somewhere.
+        assert_eq!(tree.kind, TreeKind::File);
+        assert!(
+            tree.child_trees().any(|c| c.kind == TreeKind::Function),
+            "should have recovered and parsed at least one Function"
+        );
     }
 }

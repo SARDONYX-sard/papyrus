@@ -14,8 +14,10 @@ pub mod trivia;
 pub const RULES: &[Rule] = &[
     trivia::whitespace,
     trivia::newline,
-    comment::line,
+    comment::line_continuation,
+    comment::bracket,
     comment::block,
+    comment::line,
     identifier::parse,
     number::parse,
     string::parse,

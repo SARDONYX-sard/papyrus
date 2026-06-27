@@ -72,14 +72,14 @@ pub enum TokenKind {
     //
     // Delimiters
     //
-    LParen,
-    RParen,
+    LParen, // (
+    RParen, // )
 
-    LBracket,
-    RBracket,
+    LBracket, // [
+    RBracket, // ]
 
-    LBrace,
-    RBrace,
+    LBrace, // comment block start: {
+    RBrace, // comment block end: }
 
     Dot,
     Comma,
@@ -241,6 +241,7 @@ pub enum TriviaKind {
     Newline,
     LineComment,
     BlockComment,
+    LineContinuation, // `\` immediately followed by `\n`
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

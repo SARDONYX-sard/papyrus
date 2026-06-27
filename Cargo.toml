@@ -1,10 +1,14 @@
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+authors = ["SARDONYX"]
+repository = "https://github.com/SARDONYX-sard/papyrus"
+rust-version = "1.96"
 
 [workspace]
 default-members = ["crates/papyrus_lsp"]
 members = [
+  "crates/auto_charset",  #
   "crates/papyrus_cst",   #
   "crates/papyrus_lsp",
   "crates/papyrus_pex",

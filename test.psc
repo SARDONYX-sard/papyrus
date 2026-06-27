@@ -1,4 +1,4 @@
-/* Test! */
+;/ Test! /;
 Scriptname TestPlayerScript extends Actor
 
 Function OnInit()
