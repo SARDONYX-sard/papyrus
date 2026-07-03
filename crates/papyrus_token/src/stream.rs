@@ -125,7 +125,7 @@ mod tests {
 
     #[test]
     fn debug_tokens() {
-        let src = include_str!("../../../test.psc");
+        let src = include_str!("../../../tests/simple/test.psc");
         let tokens = TokenStream::from(src).into_tokens();
         std::fs::write("../../target/tokens.log", format!("{tokens:#?}")).unwrap();
     }

@@ -96,7 +96,7 @@ fn dump_tree_tokens_inner(
 ) {
     let _ = writeln!(
         out,
-        "{:indent$}{:?} [{}..{}]",
+        "{:indent$}{:?}(tree) [{}..{}]",
         "",
         tree.kind,
         tree.span.start,
@@ -126,7 +126,7 @@ fn dump_token(token: &Token, source: &str, indent: usize, show_trivia: bool, out
 
     let _ = writeln!(
         out,
-        "{:indent$}{:?} [{}..{}] {:?}",
+        "{:indent$}{:?}(token) [{}..{}] {:?}",
         "",
         token.kind,
         token.span.start,

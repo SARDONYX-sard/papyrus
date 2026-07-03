@@ -1,5 +1,5 @@
 mod cursor;
-mod keyword;
+pub mod keyword;
 mod rules;
 mod scanner;
 pub mod span;

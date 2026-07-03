@@ -3,7 +3,7 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
 
-    use papyrus_cst::{display_error::display_errors, parse_papyrus};
+    use papyrus_cst::{display_error, parse_papyrus};
     use rayon::prelude::*;
 
     #[derive(Debug)]
@@ -37,15 +37,10 @@ mod tests {
             let (_tree, errors) = parse_papyrus(&src);
 
             if !errors.is_empty() {
-                let path = path.canonicalize().unwrap_or(path.to_path_buf());
-                let mut path_s = path.display().to_string();
-
-                if path_s.starts_with(r"\\?\") {
-                    path_s.drain(0..4);
-                }
-                let msg = display_errors(&src, &path_s, &errors);
+                let path_s = display_error::to_filename(path);
+                let msg = display_error::display_errors(&src, &path_s, &errors);
                 return TestResult {
-                    path,
+                    path: path.to_path_buf(),
                     status: Status::ParseError,
                     message: Some(msg),
                 };
@@ -127,7 +122,7 @@ mod tests {
         let report = format_results(&results);
 
         fs::create_dir_all("../../target/tests").unwrap();
-        fs::write("../../target/tests/results.txt", &report).unwrap();
+        fs::write("../../target/integration_results.log", &report).unwrap();
 
         let failed = results
             .iter()

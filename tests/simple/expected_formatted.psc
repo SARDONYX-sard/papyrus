@@ -1,16 +1,18 @@
-;/ Test! /;
-Scriptname TestPlayerScript extends Actor
+;/ script docs /;
+ScriptName TestPlayerScript extends Actor
 
-Function OnInit()
+;/ event docs /;
+Event OnInit()
     Debug.Trace("LSP test init")
-EndFunction
+EndEvent
 
-; add a, b
+; fn docs: add a, b
 Int Function AddNumbers(Int a, Int b) Global
-    Return a + b
+    Return a + b ; add a + b(expected same line comment)
 EndFunction
 
 Function LoopTest()
+    ; var docs
     Int i = 0
     While i < 10
         Debug.Trace("i = " + i)

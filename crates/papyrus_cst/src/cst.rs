@@ -63,11 +63,11 @@ pub enum TreeKind {
 
 // ── Tree ─────────────────────────────────────────────────────────────────────
 
-/// A node in the concrete syntax tree.
+/// A node in the concrete syntax span tree.
 ///
 /// Every node owns its children.  Tokens are preserved exactly as the lexer
 /// emitted them (including whitespace and error tokens stored as trivia).
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Tree {
     pub kind: TreeKind,
     /// Byte span in the source file that this node covers.
@@ -127,7 +127,7 @@ impl Tree {
 // ── Child ─────────────────────────────────────────────────────────────────────
 
 /// One child of a [`Tree`]: either a nested sub-tree or a leaf token.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Child {
     Token(Token),
     Tree(Tree),

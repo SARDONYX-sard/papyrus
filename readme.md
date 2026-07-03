@@ -16,3 +16,4 @@ Inspired:
 - [ ] Linter
 - [ ] Language server
 - [ ] Compiler
+- [ ] Papyrus Virtual Machine(For unit test)

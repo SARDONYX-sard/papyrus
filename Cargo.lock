@@ -474,6 +474,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "papyrus_fmt"
+version = "0.1.0"
+dependencies = [
+ "papyrus_cst",
+ "papyrus_token",
+]
+
+[[package]]
 name = "papyrus_lsp"
 version = "0.1.0"
 dependencies = [

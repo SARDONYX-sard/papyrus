@@ -671,7 +671,9 @@ fn flags_line(p: &mut Parser) -> bool {
                 has_auto = true;
                 p.bump();
             }
-            Some(TokenKind::Native | TokenKind::Global) => {
+            Some(
+                TokenKind::Conditional | TokenKind::Global | TokenKind::Hidden | TokenKind::Native,
+            ) => {
                 p.bump();
             }
             Some(TokenKind::Identifier) => {
@@ -1114,11 +1116,8 @@ mod tests {
 
     #[test]
     fn full_fixture() {
-        // let src = include_str!("../../../test.psc");
-        let src = include_str!(
-            "../../../tests/fixtures/papyrus-compiler-test-sources/psc_deps/T02QuestScript.psc"
-        );
-        let path = Some("tests/fixtures/papyrus-compiler-test-sources/psc_deps/T02QuestScript.psc");
+        let src = include_str!("../../../tests/simple/test.psc");
+        let path = Some("../../../tests/simple/test.psc");
         let (tree, errors) = parse_papyrus(src);
         assert_no_errors(src, &tree, &errors, path);
         assert_eq!(tree.kind, TreeKind::File);

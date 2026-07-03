@@ -51,9 +51,10 @@ pub enum TokenKind {
 
     Auto,
     AutoReadOnly,
-
-    Native,
+    Conditional,
     Global,
+    Hidden,
+    Native,
 
     New,
     None,

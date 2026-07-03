@@ -10,6 +10,21 @@
 
 use crate::parser::ParseError;
 
+pub fn to_filename<P>(path: P) -> String
+where
+    P: AsRef<std::path::Path>,
+{
+    let path = path.as_ref();
+    let path = path.canonicalize().unwrap_or(path.to_path_buf());
+    let mut path_s = path.display().to_string();
+
+    // Since rust-analyzer cannot read canonicalized windows paths, remove them.
+    if path_s.starts_with(r"\\?\") {
+        path_s.drain(0..4);
+    }
+    path_s
+}
+
 /// Format all `errors` into a human-readable string.
 ///
 /// `src` is the original source text (used to render the offending line).

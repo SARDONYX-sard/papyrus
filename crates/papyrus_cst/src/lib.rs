@@ -1,3 +1,4 @@
+pub mod ast;
 pub mod cst;
 pub mod debug;
 pub mod display_error;
