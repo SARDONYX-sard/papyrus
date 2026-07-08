@@ -3,9 +3,20 @@ name = "papyrus_lsp"
 version = "0.1.0"
 edition.workspace = true
 
+[[bin]]
+name = "papyrus_lsp"
+path = "src/main.rs"
+
 [dependencies]
-futures = "0.3.32"
-tower-lsp = "0.20"
-tokio = { version = "1", features = ["full"] }
-tree-sitter = "0.26.9"
-tree-sitter-papyrus-sse = { workspace = true }
+papyrus_cst = { path = "../papyrus_cst" }
+papyrus_fmt = { path = "../papyrus_fmt" }
+
+anyhow = "1.0.103"
+lsp-server = "0.8.0"
+lsp-types = "0.97"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+log = "0.4"
+env_logger = "0.11"

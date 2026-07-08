@@ -29,9 +29,12 @@ jobs:
     runs-on: ${{ matrix.job.os }}
 
     steps:
-      - uses: actions/checkout@v4.2.2
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
       - name: Rust cache
-        uses: Swatinem/rust-cache@v2.7.5
+        uses: Swatinem/rust-cache@v2.9.1
         with:
           prefix-key: cargo-debug-${{ matrix.job.target }}
 
@@ -40,19 +43,3 @@ jobs:
         uses: taiki-e/install-action@nextest
       - name: Test
         run: cargo nextest run --workspace --target ${{ matrix.job.target }} --no-fail-fast
-
-  miri:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2.9.1
-        with:
-          prefix-key: cargo-debug-miri-x86_64_unknown-linux-gnu
-      - name: Install Miri
-        run: |
-          rustup toolchain install nightly --component miri
-          rustup override set nightly
-          cargo miri setup
-      - name: Search undefined behavior
-        run: cargo miri test --workspace

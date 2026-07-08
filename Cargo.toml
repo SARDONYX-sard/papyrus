@@ -8,6 +8,7 @@ rust-version = "1.96"
 [workspace]
 default-members = ["crates/papyrus_lsp"]
 members = [
+  "crates/papyrus_analysis",
   "crates/auto_charset",
   "crates/papyrus_cst",
   "crates/papyrus_fmt",
