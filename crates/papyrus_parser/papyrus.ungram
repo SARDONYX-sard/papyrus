@@ -58,6 +58,9 @@ Name =
 // When using
 NameRef =
     '#ident'
+  | 'Self'
+  // Use this when calling methods on the parent of a script that has been extended.
+  | 'Parent'
 
 
 // === Types ================================================================

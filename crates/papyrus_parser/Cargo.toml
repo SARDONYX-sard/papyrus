@@ -1,19 +1,32 @@
 [package]
 name = "papyrus_parser"
 version = "0.0.0"
+repository.workspace = true
+description = "The Rust parser for rust-analyzer."
+
+authors.workspace = true
 edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+doctest = false
 
 [dependencies]
-memchr = "2.6.1"
-rowan = "0.16.0"
-thiserror = "2.0.0"
+drop_bomb = "0.1.5"
+rustc-literal-escaper.workspace = true
+tracing.workspace = true
+
+papyrus_lexer.workspace = true
 
 [dev-dependencies]
-ariadne = "0.6.0"
-indexmap = "2.0.0"
-anyhow = "1.0.103"
-pretty_assertions = "1.3.0"
-annotate-snippets = "0.12.0"
-expect-test = "1.4"
-unindent = "0.2.1"
-criterion = "0.8.0"
+expect-test = "1.5.1"
+
+stdx.workspace = true
+
+[features]
+default = []
+in-rust-tree = []
+
+[lints]
+workspace = true

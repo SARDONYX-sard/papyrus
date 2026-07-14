@@ -82,7 +82,7 @@ pub(crate) fn generate_kinds(kinds: KindsSrc) -> Result<String> {
 
             pub fn from_keyword(ident: &str) -> Option<SyntaxKind> {
                 let kw = match ident {
-                    #(#full_keywords_values => #full_keywords,)*
+                    #(_ if ident.eq_ignore_ascii_case(#full_keywords_values) => #full_keywords,)*
                     _ => return None,
                 };
                 Some(kw)

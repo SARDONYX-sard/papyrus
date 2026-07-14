@@ -26,12 +26,11 @@ pub(crate) fn generate() -> Result<()> {
     let grammar: Grammar = grammar_src.parse().unwrap();
     let cst = lower(&grammar);
 
-    let syntax_kind_path =
-        root_path().join("crates/papyrus_parser/src/parser/generated/syntax_kind.rs");
+    let syntax_kind_path = root_path().join("crates/papyrus_parser/src/syntax_kind/generated.rs");
     let syntax_kinds = generate_kinds(KINDS_SRC);
     ensure_file_contents(syntax_kind_path.as_path(), &syntax_kinds?)?;
 
-    let cst_nodes_file = project_root().join("crates/papyrus_parser/src/cst/generated/nodes.rs");
+    let cst_nodes_file = project_root().join("crates/papyrus_syntax/src/generated/nodes.rs");
     let contents = generate_nodes(KINDS_SRC, &cst)?;
     ensure_file_contents(cst_nodes_file.as_path(), &contents)?;
     Ok(())
@@ -115,9 +114,9 @@ fn lower_rule(acc: &mut Vec<Field>, grammar: &Grammar, label: Option<&String>, r
                 let name = label.cloned().unwrap_or_else(|| pluralize(&to_lower_snake_case(&ty)));
                 let field = Field::Node { name, ty, cardinality: Cardinality::Many };
                 acc.push(field);
-                return;
+                // return;
             }
-            todo!("{:?}", rule)
+            // todo!("{:?}", rule)
         }
         Rule::Labeled { label: l, rule } => {
             assert!(label.is_none());

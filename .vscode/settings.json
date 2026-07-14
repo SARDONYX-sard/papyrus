@@ -6,6 +6,18 @@
   "rust-analyzer.cargo.targetDir": true,
   "rust-analyzer.check.command": "clippy",
   "rust-analyzer.linkedProjects": ["Cargo.toml"],
-  "rust-analyzer.runnables.extraTestBinaryArgs": ["--show-output", "--nocapture"],
-  "cSpell.words": ["codegen", "Peekable", "punct", "ungrammar", "xflags", "xtask"]
+  "rust-analyzer.runnables.extraTestBinaryArgs": [
+    "--show-output",
+    "--nocapture"
+  ],
+  "cSpell.words": [
+    "codegen",
+    "conv",
+    "Peekable",
+    "punct",
+    "trivias",
+    "ungrammar",
+    "xflags",
+    "xtask"
+  ]
 }

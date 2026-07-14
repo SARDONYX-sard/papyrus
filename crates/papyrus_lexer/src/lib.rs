@@ -87,8 +87,6 @@ pub enum TokenKind {
     /// See [LiteralKind] for more details.
     Literal { kind: LiteralKind, suffix_start: u32 },
 
-    /// `;`
-    Semi,
     /// `,`
     Comma,
     /// `.`
@@ -97,26 +95,10 @@ pub enum TokenKind {
     OpenParen,
     /// `)`
     CloseParen,
-    /// `{`
-    OpenBrace,
-    /// `}`
-    CloseBrace,
     /// `[`
     OpenBracket,
     /// `]`
     CloseBracket,
-    /// `@`
-    At,
-    /// `#`
-    Pound,
-    /// `~`
-    Tilde,
-    /// `?`
-    Question,
-    /// `:`
-    Colon,
-    /// `$`
-    Dollar,
     /// `=`
     Eq,
     /// `!`
@@ -137,10 +119,11 @@ pub enum TokenKind {
     Star,
     /// `/`
     Slash,
-    /// `^`
-    Caret,
     /// `%`
     Percent,
+    /// `\`
+    /// Statements in Papyrus are separated by line breaks, but you can use `\` to join them together.
+    BackSlash,
 
     /// Unknown token, not expected by the lexer, e.g. "№"
     Unknown,
@@ -409,21 +392,12 @@ impl<'a> Cursor<'a> {
             }
 
             // One-symbol tokens.
-            // ';' => Semi,
             ',' => Comma,
             '.' => Dot,
             '(' => OpenParen,
             ')' => CloseParen,
-            // '{' => OpenBrace,
-            '}' => CloseBrace,
             '[' => OpenBracket,
             ']' => CloseBracket,
-            '@' => At,
-            '#' => Pound,
-            '~' => Tilde,
-            '?' => Question,
-            ':' => Colon,
-            '$' => Dollar,
             '=' => Eq,
             '!' => Bang,
             '<' => Lt,
@@ -433,8 +407,8 @@ impl<'a> Cursor<'a> {
             '|' => Or,
             '+' => Plus,
             '*' => Star,
-            '^' => Caret,
             '%' => Percent,
+            '\\' => BackSlash,
 
             // String literal.
             '"' => {
