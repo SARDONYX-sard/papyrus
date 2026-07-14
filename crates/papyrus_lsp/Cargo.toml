@@ -8,8 +8,8 @@ name = "papyrus_lsp"
 path = "src/main.rs"
 
 [dependencies]
-papyrus_cst = { path = "../papyrus_cst" }
-papyrus_fmt = { path = "../papyrus_fmt" }
+# papyrus_cst = { path = "../papyrus_cst" }
+# papyrus_fmt = { path = "../papyrus_fmt" }
 
 anyhow = "1.0.103"
 lsp-server = "0.8.0"

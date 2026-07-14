@@ -80,7 +80,7 @@ fn name_ref_expr(p: &mut Parser<'_>) -> Option<CompletedMarker> {
     if matches!(p.current(), T![ident] | T![Self] | T![Parent]) {
         let m = p.start();
         p.bump_any();
-        Some(m.complete(p, NameRef))
+        Some(m.complete(p, NAME_REF))
     } else {
         p.err_and_bump("expected identifier, `self` or `parent`");
         None
@@ -104,7 +104,7 @@ pub(crate) fn literal(p: &mut Parser<'_>) -> Option<CompletedMarker> {
     }
     let m = p.start();
     p.bump_any();
-    Some(m.complete(p, Literal))
+    Some(m.complete(p, LITERAL))
 }
 
 fn paren_expr(p: &mut Parser<'_>) -> CompletedMarker {
@@ -118,7 +118,7 @@ fn paren_expr(p: &mut Parser<'_>) -> CompletedMarker {
 
     p.expect(T![')']);
 
-    m.complete(p, ParenExpr)
+    m.complete(p, PAREN_EXPR)
 }
 
 fn new_expr(p: &mut Parser<'_>) -> CompletedMarker {
@@ -130,5 +130,5 @@ fn new_expr(p: &mut Parser<'_>) -> CompletedMarker {
 
     types::ty(p);
 
-    m.complete(p, NewExpr)
+    m.complete(p, NEW_EXPR)
 }

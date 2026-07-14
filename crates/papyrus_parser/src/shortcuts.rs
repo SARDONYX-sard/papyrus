@@ -192,7 +192,7 @@ impl Builder<'_, '_> {
         match text.split_once('.') {
             Some((left, right)) => {
                 assert!(!left.is_empty());
-                (self.sink)(StrStep::Enter { kind: SyntaxKind::NameRef });
+                (self.sink)(StrStep::Enter { kind: SyntaxKind::NAME_REF });
                 (self.sink)(StrStep::Token { kind: SyntaxKind::INT_NUMBER, text: left });
                 (self.sink)(StrStep::Exit);
 
@@ -206,7 +206,7 @@ impl Builder<'_, '_> {
                     self.state = State::Normal;
                 } else {
                     assert!(!right.is_empty(), "{left}.{right}");
-                    (self.sink)(StrStep::Enter { kind: SyntaxKind::NameRef });
+                    (self.sink)(StrStep::Enter { kind: SyntaxKind::NAME_REF });
                     (self.sink)(StrStep::Token { kind: SyntaxKind::INT_NUMBER, text: right });
                     (self.sink)(StrStep::Exit);
 
@@ -238,7 +238,7 @@ fn n_attached_trivias<'a>(
     trivias: impl Iterator<Item = (SyntaxKind, &'a str)>,
 ) -> usize {
     match kind {
-        Function | Import => {
+        FUNCTION | IMPORT => {
             let mut res = 0;
             let mut trivias = trivias.enumerate().peekable();
 

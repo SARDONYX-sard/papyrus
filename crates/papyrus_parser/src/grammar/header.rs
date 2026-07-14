@@ -16,7 +16,7 @@ pub(super) fn header(p: &mut Parser<'_>) {
 
     flags(p);
 
-    m.complete(p, Header);
+    m.complete(p, HEADER);
 }
 
 /// `"ScriptName" <ident> extends <ident>`
@@ -26,7 +26,7 @@ fn script_name_decl(p: &mut Parser<'_>) {
     p.expect(T![ScriptName]);
     name(p);
 
-    m.complete(p, ScriptNameDecl);
+    m.complete(p, SCRIPT_NAME_DECL);
 }
 
 fn extends_clause(p: &mut Parser<'_>) {
@@ -35,5 +35,5 @@ fn extends_clause(p: &mut Parser<'_>) {
     p.expect(T![Extends]);
     name_r(p, ITEM_RECOVERY_SET);
 
-    m.complete(p, ExtendsClause);
+    m.complete(p, EXTENDS_CLAUSE);
 }

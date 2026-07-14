@@ -30,7 +30,7 @@ pub(crate) fn generate() -> Result<()> {
     let syntax_kinds = generate_kinds(KINDS_SRC);
     ensure_file_contents(syntax_kind_path.as_path(), &syntax_kinds?)?;
 
-    let cst_nodes_file = project_root().join("crates/papyrus_syntax/src/generated/nodes.rs");
+    let cst_nodes_file = project_root().join("crates/papyrus_syntax/src/ast/generated/nodes.rs");
     let contents = generate_nodes(KINDS_SRC, &cst)?;
     ensure_file_contents(cst_nodes_file.as_path(), &contents)?;
     Ok(())

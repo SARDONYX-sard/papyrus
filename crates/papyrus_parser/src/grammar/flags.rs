@@ -18,7 +18,7 @@ fn flag_modifier(p: &mut Parser<'_>) {
         }
     }
 
-    m.complete(p, FlagModifier);
+    m.complete(p, FLAG_MODIFIER);
 }
 
 fn at_flag_modifier(p: &Parser<'_>) -> bool {

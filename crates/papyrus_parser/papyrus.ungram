@@ -40,7 +40,8 @@ ExtendsClause =
 Item =
       Import
     | VarDeclStmt
-    | Property
+    | InlineProperty
+    | FullProperty
     | State
     | Function
     | Event
@@ -105,15 +106,11 @@ FlagModifier =
 
 // === Properties ===========================================================
 
-Property =
-      InlinePropertyStmt
-    | FullPropertyStmt
-
-InlinePropertyStmt =
+InlineProperty =
     Type 'Property' Name Initializer? FlagModifier*
 
 // At least one get/set method is required.: https://ck.uesp.net/wiki/Property_Reference
-FullPropertyStmt =
+FullProperty =
     Type 'Property' Name FlagModifier*
     PropertyMember
     PropertyMember*
@@ -266,9 +263,6 @@ NewExpr =
 
 
 // === Misc =================================================================
-
-Ident =
-    '#ident'
 
 Literal =
     value:(

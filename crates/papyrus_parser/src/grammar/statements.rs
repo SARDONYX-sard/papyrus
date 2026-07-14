@@ -9,7 +9,7 @@ pub(crate) fn block(p: &mut Parser<'_>) {
         stmt(p);
     }
 
-    m.complete(p, Block);
+    m.complete(p, BLOCK);
 }
 
 fn at_block_end(p: &Parser<'_>) -> bool {
@@ -57,13 +57,13 @@ pub(super) fn var_decl_stmt(p: &mut Parser<'_>, m: Marker) {
         initializer(p);
     }
 
-    m.complete(p, VarDeclStmt);
+    m.complete(p, VAR_DECL_STMT);
 }
 
 fn expr_stmt(p: &mut Parser<'_>, m: Marker) {
     expressions::expr(p);
 
-    m.complete(p, ExprStmt);
+    m.complete(p, EXPR_STMT);
 }
 
 fn return_stmt(p: &mut Parser<'_>, m: Marker) {
@@ -73,7 +73,7 @@ fn return_stmt(p: &mut Parser<'_>, m: Marker) {
         expressions::expr(p);
     }
 
-    m.complete(p, ReturnStmt);
+    m.complete(p, RETURN_STMT);
 }
 
 fn if_stmt(p: &mut Parser<'_>, m: Marker) {
@@ -94,7 +94,7 @@ fn if_stmt(p: &mut Parser<'_>, m: Marker) {
 
     p.expect(T![EndIf]);
 
-    m.complete(p, IfStmt);
+    m.complete(p, IF_STMT);
 }
 
 fn elseif_branch(p: &mut Parser<'_>) {
@@ -107,7 +107,7 @@ fn elseif_branch(p: &mut Parser<'_>) {
 
     block(p);
 
-    m.complete(p, ElseIfBranch);
+    m.complete(p, ELSE_IF_BRANCH);
 }
 
 fn else_branch(p: &mut Parser<'_>) {
@@ -118,7 +118,7 @@ fn else_branch(p: &mut Parser<'_>) {
 
     block(p);
 
-    m.complete(p, ElseBranch);
+    m.complete(p, ELSE_BRANCH);
 }
 
 fn while_stmt(p: &mut Parser<'_>, m: Marker) {
@@ -131,5 +131,5 @@ fn while_stmt(p: &mut Parser<'_>, m: Marker) {
 
     p.expect(T![EndWhile]);
 
-    m.complete(p, WhileStmt);
+    m.complete(p, WHILE_STMT);
 }

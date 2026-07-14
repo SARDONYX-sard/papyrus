@@ -50,7 +50,7 @@ fn lhs(p: &mut Parser<'_>) -> Option<CompletedMarker> {
 
         expr_bp(p, PREFIX_BP);
 
-        return Some(m.complete(p, PrefixExpr));
+        return Some(m.complete(p, PREFIX_EXPR));
     }
 
     atom::atom_expr(p)
@@ -80,7 +80,7 @@ fn call_expr(p: &mut Parser<'_>, lhs: CompletedMarker) -> CompletedMarker {
     assert!(p.at(T!['(']));
     let m = lhs.precede(p);
     arg_list(p);
-    m.complete(p, CallExpr)
+    m.complete(p, CALL_EXPR)
 }
 
 // test index_expr
@@ -94,7 +94,7 @@ fn index_expr(p: &mut Parser<'_>, lhs: CompletedMarker) -> CompletedMarker {
 
     expr(p);
     p.expect(T![']']);
-    m.complete(p, IndexExpr)
+    m.complete(p, INDEX_EXPR)
 }
 
 fn cast_expr(p: &mut Parser<'_>, lhs: CompletedMarker) -> CompletedMarker {
@@ -103,7 +103,7 @@ fn cast_expr(p: &mut Parser<'_>, lhs: CompletedMarker) -> CompletedMarker {
     p.bump(T![As]);
 
     types::ty(p);
-    m.complete(p, CastExpr)
+    m.complete(p, CAST_EXPR)
 }
 
 // test field_expr
@@ -121,7 +121,7 @@ fn field_expr(p: &mut Parser<'_>, lhs: CompletedMarker) -> CompletedMarker {
 
     name_ref_or_self(p);
 
-    m.complete(p, FieldExpr)
+    m.complete(p, FIELD_EXPR)
 }
 
 /// Returns the binary operator at the current parser position.
@@ -136,36 +136,36 @@ fn field_expr(p: &mut Parser<'_>, lhs: CompletedMarker) -> CompletedMarker {
 ///   operators such as `|` from `||`.
 fn current_op(p: &Parser<'_>) -> Option<(u8, u8, SyntaxKind, SyntaxKind)> {
     Some(match p.current() {
-        T![|] if p.at(T![||]) => (1, 2, T![||], BinExpr),
-        T![&] if p.at(T![&&]) => (3, 4, T![&&], BinExpr),
+        T![|] if p.at(T![||]) => (1, 2, T![||], BIN_EXPR),
+        T![&] if p.at(T![&&]) => (3, 4, T![&&], BIN_EXPR),
 
-        T![=] if p.at(T![==]) => (5, 6, T![==], BinExpr),
-        T![!] if p.at(T![!=]) => (5, 6, T![!=], BinExpr),
+        T![=] if p.at(T![==]) => (5, 6, T![==], BIN_EXPR),
+        T![!] if p.at(T![!=]) => (5, 6, T![!=], BIN_EXPR),
 
-        T![<] if p.at(T![<=]) => (7, 8, T![<=], BinExpr),
-        T![<] if p.at(T![<<]) => (13, 14, T![<<], BinExpr),
-        T![<] => (7, 8, T![<], BinExpr),
+        T![<] if p.at(T![<=]) => (7, 8, T![<=], BIN_EXPR),
+        T![<] if p.at(T![<<]) => (13, 14, T![<<], BIN_EXPR),
+        T![<] => (7, 8, T![<], BIN_EXPR),
 
-        T![>] if p.at(T![>=]) => (7, 8, T![>=], BinExpr),
-        T![>] if p.at(T![>>]) => (13, 14, T![>>], BinExpr),
-        T![>] => (7, 8, T![>], BinExpr),
+        T![>] if p.at(T![>=]) => (7, 8, T![>=], BIN_EXPR),
+        T![>] if p.at(T![>>]) => (13, 14, T![>>], BIN_EXPR),
+        T![>] => (7, 8, T![>], BIN_EXPR),
 
-        T![|] => (9, 10, T![|], BinExpr),
-        T![&] => (11, 12, T![&], BinExpr),
+        T![|] => (9, 10, T![|], BIN_EXPR),
+        T![&] => (11, 12, T![&], BIN_EXPR),
 
-        T![+] => (15, 16, T![+], BinExpr),
-        T![-] => (15, 16, T![-], BinExpr),
+        T![+] => (15, 16, T![+], BIN_EXPR),
+        T![-] => (15, 16, T![-], BIN_EXPR),
 
-        T![*] => (17, 18, T![*], BinExpr),
-        T![/] => (17, 18, T![/], BinExpr),
-        T![%] => (17, 18, T![%], BinExpr),
+        T![*] => (17, 18, T![*], BIN_EXPR),
+        T![/] => (17, 18, T![/], BIN_EXPR),
+        T![%] => (17, 18, T![%], BIN_EXPR),
 
-        T![=] => (0, 0, T![=], AssignStmt),
-        T![+=] => (0, 0, T![+=], AssignStmt),
-        T![-=] => (0, 0, T![-=], AssignStmt),
-        T![*=] => (0, 0, T![*=], AssignStmt),
-        T![/=] => (0, 0, T![/=], AssignStmt),
-        T![%=] => (0, 0, T![%=], AssignStmt),
+        T![=] => (0, 0, T![=], ASSIGN_STMT),
+        T![+=] => (0, 0, T![+=], ASSIGN_STMT),
+        T![-=] => (0, 0, T![-=], ASSIGN_STMT),
+        T![*=] => (0, 0, T![*=], ASSIGN_STMT),
+        T![/=] => (0, 0, T![/=], ASSIGN_STMT),
+        T![%=] => (0, 0, T![%=], ASSIGN_STMT),
 
         _ => return None,
     })
@@ -191,7 +191,7 @@ mod tests {
         check_expr(
             "foo",
             expect![[r#"
-                NameRef
+                NAME_REF
                   IDENT "foo"
             "#]],
         );
@@ -204,7 +204,7 @@ mod tests {
             expect![[r#"
                 PrefixExpr
                   MINUS "-"
-                  NameRef
+                  NAME_REF
                     IDENT "foo"
             "#]],
         );
@@ -215,7 +215,7 @@ mod tests {
         check_expr(
             "1 + 2",
             expect![[r#"
-BinExpr
+BIN_EXPR
   Literal
     INT_NUMBER "1"
   WHITESPACE " "
@@ -232,13 +232,13 @@ BinExpr
         check_expr(
             "1 + 2 * 3",
             expect![[r#"
-                BinExpr
+                BIN_EXPR
                   Literal
                     INT_NUMBER "1"
                   WHITESPACE " "
                   PLUS "+"
                   WHITESPACE " "
-                  BinExpr
+                  BIN_EXPR
                     Literal
                       INT_NUMBER "2"
                     WHITESPACE " "
@@ -255,10 +255,10 @@ BinExpr
         check_expr(
             "(1 + 2) * 3",
             expect![[r#"
-BinExpr
+BIN_EXPR
   ParenExpr
     L_PAREN "("
-    BinExpr
+    BIN_EXPR
       Literal
         INT_NUMBER "1"
       WHITESPACE " "
@@ -282,10 +282,10 @@ BinExpr
             "foo.bar",
             expect![[r#"
 FieldExpr
-  NameRef
+  NAME_REF
     IDENT "foo"
   DOT "."
-  NameRef
+  NAME_REF
     IDENT "bar"
 "#]],
         );
@@ -298,13 +298,13 @@ FieldExpr
             expect![[r#"
 FieldExpr
   FieldExpr
-    NameRef
+    NAME_REF
       IDENT "foo"
     DOT "."
-    NameRef
+    NAME_REF
       IDENT "bar"
   DOT "."
-  NameRef
+  NAME_REF
     IDENT "baz"
 "#]],
         );
@@ -315,10 +315,10 @@ FieldExpr
         check_expr(
             "foo(1, 2)",
             expect![[r#"
-CallExpr
-  NameRef
+CALL_EXPR
+  NAME_REF
     IDENT "foo"
-  ArgList
+  ARG_LIST
     L_PAREN "("
     Literal
       INT_NUMBER "1"
@@ -336,14 +336,14 @@ CallExpr
         check_expr(
             "foo()(1)",
             expect![[r#"
-CallExpr
-  CallExpr
-    NameRef
+CALL_EXPR
+  CALL_EXPR
+    NAME_REF
       IDENT "foo"
-    ArgList
+    ARG_LIST
       L_PAREN "("
       R_PAREN ")"
-  ArgList
+  ARG_LIST
     L_PAREN "("
     Literal
       INT_NUMBER "1"
@@ -358,7 +358,7 @@ CallExpr
             "arr[0]",
             expect![[r#"
 IndexExpr
-  NameRef
+  NAME_REF
     IDENT "arr"
   L_BRACK "["
   Literal
@@ -375,7 +375,7 @@ IndexExpr
             expect![[r#"
 IndexExpr
   IndexExpr
-    NameRef
+    NAME_REF
       IDENT "arr"
     L_BRACK "["
     Literal
@@ -395,7 +395,7 @@ IndexExpr
             "foo As Int",
             expect![[r#"
 CastExpr
-  NameRef
+  NAME_REF
     IDENT "foo"
   WHITESPACE " "
   As_KW "As"
@@ -416,10 +416,10 @@ CastExpr
 CastExpr
   FieldExpr
     IndexExpr
-      CallExpr
-        NameRef
+      CALL_EXPR
+        NAME_REF
           IDENT "foo"
-        ArgList
+        ARG_LIST
           L_PAREN "("
           R_PAREN ")"
       L_BRACK "["
@@ -427,7 +427,7 @@ CastExpr
         INT_NUMBER "1"
       R_BRACK "]"
     DOT "."
-    NameRef
+    NAME_REF
       IDENT "bar"
   WHITESPACE " "
   As_KW "As"
@@ -445,19 +445,19 @@ CastExpr
         check_expr(
             "a || b && c",
             expect![[r#"
-BinExpr
-  NameRef
+BIN_EXPR
+  NAME_REF
     IDENT "a"
   WHITESPACE " "
   PIPE2 "||"
   WHITESPACE " "
-  BinExpr
-    NameRef
+  BIN_EXPR
+    NAME_REF
       IDENT "b"
     WHITESPACE " "
     AMP2 "&&"
     WHITESPACE " "
-    NameRef
+    NAME_REF
       IDENT "c"
 "#]],
         );
@@ -468,25 +468,25 @@ BinExpr
         check_expr(
             "a + b < c * d",
             expect![[r#"
-BinExpr
-  BinExpr
-    NameRef
+BIN_EXPR
+  BIN_EXPR
+    NAME_REF
       IDENT "a"
     WHITESPACE " "
     PLUS "+"
     WHITESPACE " "
-    NameRef
+    NAME_REF
       IDENT "b"
   WHITESPACE " "
   LT "<"
   WHITESPACE " "
-  BinExpr
-    NameRef
+  BIN_EXPR
+    NAME_REF
       IDENT "c"
     WHITESPACE " "
     STAR "*"
     WHITESPACE " "
-    NameRef
+    NAME_REF
       IDENT "d"
 "#]],
         );
@@ -497,8 +497,8 @@ BinExpr
         check_expr_errors(
             "foo +",
             expect![[r#"
-BinExpr
-  NameRef
+BIN_EXPR
+  NAME_REF
     IDENT "foo"
   WHITESPACE " "
   PLUS "+"
@@ -514,7 +514,7 @@ error 5: expected expression
             "arr[",
             expect![[r#"
 IndexExpr
-  NameRef
+  NAME_REF
     IDENT "arr"
   L_BRACK "["
   ERROR
@@ -530,7 +530,7 @@ error 4: expected R_BRACK
             "foo.",
             expect![[r#"
 FieldExpr
-  NameRef
+  NAME_REF
     IDENT "foo"
   DOT "."
   ERROR
@@ -544,10 +544,10 @@ error 4: expected identifier, `self` or `parent`
         check_expr_errors(
             "foo(,)",
             expect![[r#"
-CallExpr
-  NameRef
+CALL_EXPR
+  NAME_REF
     IDENT "foo"
-  ArgList
+  ARG_LIST
     L_PAREN "("
     ERROR
       COMMA ","

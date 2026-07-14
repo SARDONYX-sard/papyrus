@@ -30,7 +30,7 @@ pub(crate) fn generate_nodes(kinds: KindsSrc, grammar: &CstSrc) -> Result<String
 
                 if field.is_many() {
                     quote! {
-                        pub fn #method_name(&self) -> CstChildren<#ty> {
+                        pub fn #method_name(&self) -> AstChildren<#ty> {
                             support::children(&self.syntax)
                         }
                     }
@@ -63,7 +63,7 @@ pub(crate) fn generate_nodes(kinds: KindsSrc, grammar: &CstSrc) -> Result<String
                     }
                 },
                 quote! {
-                    impl CstNode for #name {
+                    impl AstNode for #name {
                         fn can_cast(kind: SyntaxKind) -> bool {
                             kind == #kind
                         }
@@ -92,11 +92,12 @@ pub(crate) fn generate_nodes(kinds: KindsSrc, grammar: &CstSrc) -> Result<String
                 quote!(impl cst::#trait_name for #name {})
             });
 
-            let cst_node = if en.name == "Stmt" {
-                quote! {}
-            } else {
+            let cst_node = {
+                // if en.name == "Stmt" {
+                //     quote! {}
+                // } else {
                 quote! {
-                    impl CstNode for #name {
+                    impl AstNode for #name {
                         fn can_cast(kind: SyntaxKind) -> bool {
                             matches!(kind, #(#kinds)|*)
                         }
@@ -162,8 +163,8 @@ pub(crate) fn generate_nodes(kinds: KindsSrc, grammar: &CstSrc) -> Result<String
         #![allow(non_snake_case)]
         use crate::{
             SyntaxNode, SyntaxToken, SyntaxKind::{self, *},
-            cst::{CstNode, CstChildren, support},
-            S,
+            ast::{AstNode, AstChildren, support},
+            T as S,
         };
 
         #(#node_defs)*

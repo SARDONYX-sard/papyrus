@@ -18,7 +18,7 @@ pub(super) fn param_list(p: &mut Parser<'_>) {
         },
     );
 
-    m.complete(p, ParamList);
+    m.complete(p, PARAM_LIST);
 }
 
 fn param(p: &mut Parser<'_>) {
@@ -32,7 +32,7 @@ fn param(p: &mut Parser<'_>) {
         expressions::expr(p);
     }
 
-    m.complete(p, Param);
+    m.complete(p, PARAM);
 }
 
 pub(super) fn arg_list(p: &mut Parser<'_>) {
@@ -51,5 +51,5 @@ pub(super) fn arg_list(p: &mut Parser<'_>) {
         },
     );
 
-    m.complete(p, ArgList);
+    m.complete(p, ARG_LIST);
 }

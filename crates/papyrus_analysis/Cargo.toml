@@ -1,8 +1,0 @@
-[package]
-name = "papyrus_analysis"
-version = "0.1.0"
-edition.workspace = true
-
-[dependencies]
-papyrus_cst = { path = "../papyrus_cst" }
-papyrus_token = { path = "../papyrus_token" }

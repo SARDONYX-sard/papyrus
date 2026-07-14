@@ -1,0 +1,29 @@
+[package]
+name = "papyrus_syntax"
+version = "0.0.0"
+edition.workspace = true
+description = "Concrete syntax tree definitions for papyrus."
+
+[lib]
+doctest = false
+
+[dependencies]
+either.workspace = true
+itertools.workspace = true
+rowan.workspace = true
+rustc-hash.workspace = true
+rustc-literal-escaper.workspace = true
+smol_str.workspace = true
+triomphe.workspace = true
+tracing.workspace = true
+smallvec.workspace = true
+
+papyrus_parser.workspace = true
+stdx.workspace = true
+
+[dev-dependencies]
+rayon.workspace = true
+expect-test = "1.5.1"
+rustc_apfloat = "0.2.3"
+
+# test-utils.workspace = true

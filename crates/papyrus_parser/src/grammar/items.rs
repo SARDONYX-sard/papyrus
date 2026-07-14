@@ -11,7 +11,7 @@ pub(crate) fn source_file(p: &mut Parser<'_>) {
 
     p.expect(EOF);
 
-    m.complete(p, SourceFile);
+    m.complete(p, SOURCE_FILE);
 }
 
 fn mod_contents(p: &mut Parser<'_>) {
@@ -59,7 +59,7 @@ fn opt_item(p: &mut Parser<'_>, m: Marker) -> Result<(), Marker> {
         T![Event] => event(p, m),
         T![Function] => function(p, m),
 
-        _ if at_property(p) => property_stmt(p, m),
+        _ if at_property(p) => property(p, m),
         _ if at_var_decl(p) => var_decl_stmt(p, m),
 
         _ => return Err(m),
@@ -72,7 +72,7 @@ fn import(p: &mut Parser<'_>, m: Marker) {
     p.bump(T![Import]);
     name_r(p, ITEM_RECOVERY_SET);
 
-    m.complete(p, Import);
+    m.complete(p, IMPORT);
 }
 
 // int function foo()
@@ -97,7 +97,7 @@ fn function(p: &mut Parser<'_>, m: Marker) {
         p.expect(T![EndFunction]);
     }
 
-    m.complete(p, Function);
+    m.complete(p, FUNCTION);
 }
 
 fn event(p: &mut Parser<'_>, m: Marker) {
@@ -115,7 +115,7 @@ fn event(p: &mut Parser<'_>, m: Marker) {
 
     p.expect(T![EndEvent]);
 
-    m.complete(p, Event);
+    m.complete(p, EVENT);
 }
 
 fn state_stmt(p: &mut Parser<'_>, m: Marker) {
@@ -131,7 +131,7 @@ fn state_stmt(p: &mut Parser<'_>, m: Marker) {
 
     p.expect(T![EndState]);
 
-    m.complete(p, State);
+    m.complete(p, STATE);
 }
 
 /// Peek `<Type> "Property"`
@@ -143,7 +143,7 @@ fn at_property(p: &Parser<'_>) -> bool {
     p.nth_at(1, T![Property])
 }
 
-fn property_stmt(p: &mut Parser<'_>, m: Marker) {
+fn property(p: &mut Parser<'_>, m: Marker) {
     types::ty(p);
 
     p.expect(T![Property]);
@@ -154,7 +154,7 @@ fn property_stmt(p: &mut Parser<'_>, m: Marker) {
         initializer(p);
         flags(p);
 
-        m.complete(p, InlinePropertyStmt);
+        m.complete(p, INLINE_PROPERTY);
         return;
     }
 
@@ -164,7 +164,7 @@ fn property_stmt(p: &mut Parser<'_>, m: Marker) {
 
     p.expect(T![EndProperty]);
 
-    m.complete(p, FullPropertyStmt);
+    m.complete(p, FULL_PROPERTY);
 }
 
 fn property_members(p: &mut Parser<'_>) {
@@ -178,7 +178,7 @@ fn property_member(p: &mut Parser<'_>) {
     let fn_m = p.start();
     function(p, fn_m);
 
-    m.complete(p, PropertyMember);
+    m.complete(p, PROPERTY_MEMBER);
 }
 
 fn at_var_decl(p: &Parser<'_>) -> bool {
@@ -198,5 +198,5 @@ fn var_decl_stmt(p: &mut Parser<'_>, m: Marker) {
         initializer(p);
     }
 
-    m.complete(p, VarDeclStmt);
+    m.complete(p, VAR_DECL_STMT);
 }

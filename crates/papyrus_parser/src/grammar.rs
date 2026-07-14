@@ -42,12 +42,29 @@ use crate::{
     parser::{CompletedMarker, Marker, Parser},
 };
 
+pub(crate) fn reparser(
+    node: SyntaxKind,
+    first_child: Option<SyntaxKind>,
+    parent: Option<SyntaxKind>,
+) -> Option<fn(&mut Parser<'_>)> {
+    let _ = first_child;
+    let _ = parent;
+
+    let res = match node {
+        BLOCK => statements::block,
+        ARG_LIST => self::params::arg_list,
+        _ => return None,
+    };
+
+    Some(res)
+}
+
 /// If a return type is defined, return true.
 fn opt_return_type(p: &mut Parser<'_>) -> bool {
     if types::at_type(p) {
         let m = p.start();
         types::ty(p);
-        m.complete(p, ReturnType);
+        m.complete(p, RETURN_TYPE);
         true
     } else {
         false
@@ -59,7 +76,7 @@ fn name_r(p: &mut Parser<'_>, recovery: TokenSet) {
     if p.at(IDENT) {
         let m = p.start();
         p.bump(IDENT);
-        m.complete(p, Name);
+        m.complete(p, NAME);
     } else {
         p.err_recover("expected a name", recovery);
     }
@@ -75,7 +92,7 @@ fn name_ref_or_self(p: &mut Parser<'_>) {
     if matches!(p.current(), T![ident] | T![Self] | T![Parent]) {
         let m = p.start();
         p.bump_any();
-        m.complete(p, NameRef);
+        m.complete(p, NAME_REF);
     } else {
         p.err_and_bump("expected identifier, `self` or `parent`");
     }
@@ -88,7 +105,7 @@ fn initializer(p: &mut Parser<'_>) {
     p.expect(T![=]);
     expressions::expr(p);
 
-    m.complete(p, Initializer);
+    m.complete(p, INITIALIZER);
 }
 
 /// The `parser` passed this is required to at least consume one token if it returns `true`.

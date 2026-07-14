@@ -17,7 +17,7 @@ pub(crate) fn ty(p: &mut Parser<'_>) {
         array_suffix(p);
     }
 
-    m.complete(p, Type);
+    m.complete(p, TYPE);
 }
 
 fn base_type(p: &mut Parser<'_>) {
@@ -33,7 +33,7 @@ fn base_type(p: &mut Parser<'_>) {
         }
     }
 
-    m.complete(p, BaseType);
+    m.complete(p, BASE_TYPE);
 }
 
 fn primitive_type(p: &mut Parser<'_>) {
@@ -45,7 +45,7 @@ fn primitive_type(p: &mut Parser<'_>) {
         _ => p.error("expected primitive type"),
     }
 
-    m.complete(p, PrimitiveType);
+    m.complete(p, PRIMITIVE_TYPE);
 }
 
 const TYPE_RECOVERY_SET: TokenSet = TokenSet::new(&[IDENT, T!['['], T![')'], T![,], T![=]]);
@@ -55,7 +55,7 @@ fn custom_type(p: &mut Parser<'_>) {
 
     name_r(p, TYPE_RECOVERY_SET);
 
-    m.complete(p, CustomType);
+    m.complete(p, CUSTOM_TYPE);
 }
 
 fn array_suffix(p: &mut Parser<'_>) {
@@ -64,5 +64,5 @@ fn array_suffix(p: &mut Parser<'_>) {
     p.expect(T!['[']);
     p.expect(T![']']);
 
-    m.complete(p, ArraySuffix);
+    m.complete(p, ARRAY_SUFFIX);
 }
