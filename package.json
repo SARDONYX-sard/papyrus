@@ -24,11 +24,11 @@
     "release": "npm run compile && npm run build:server && node ./dist.js"
   },
   "dependencies": {
-    "vscode-languageclient": "^9.0.0"
+    "vscode-languageclient": "^10.1.0"
   },
   "devDependencies": {
-    "@types/node": "^25.9.1",
-    "@types/vscode": "^1.120.0",
-    "typescript": "^5.4.5"
+    "@types/node": "^26.1.1",
+    "@types/vscode": "^1.125.0",
+    "typescript": "^7.0.2"
   }
 }

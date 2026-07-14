@@ -17,3 +17,13 @@ Inspired:
 - [ ] Language server
 - [ ] Compiler
 - [ ] Papyrus Virtual Machine(For unit test)
+
+## License
+
+This code was created by studying [rust-analyzer](https://github.com/rust-lang/rust-analyzer).
+In other words, this code as a whole can be considered a product of rust-analyzer.
+
+```txt
+SPDX-FileCopyrightText: (C) 2026 rust-analyzer team
+SPDX-License-Identifier: Apache-2.0 OR MIT
+```

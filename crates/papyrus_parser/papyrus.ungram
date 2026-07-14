@@ -1,0 +1,276 @@
+// Papyrus syntax definitions for the ungrammar crate.
+// Use this data to create nodes and tokens.
+//
+// Legend:
+// - //          -- comment
+// - Name =      -- non-terminal definition
+// - 'ident'     -- keyword or punct token (terminal)
+// - '#ident'    -- generic token (terminal)
+// - '@ident'    -- literal token (terminal)
+// - A B         -- sequence
+// - A | B       -- alternation
+// - A*          -- zero or more repetition
+// - A?          -- zero or one repetition
+// - (A)         -- same as A
+// - label:A     -- suggested name for field of AST node
+
+// === Roots ================================================================
+
+SourceFile =
+    Script
+
+Script =
+    Header
+    Item*
+
+Header =
+    ScriptNameDecl ExtendsClause? FlagModifier*
+
+ScriptNameDecl =
+    'ScriptName' Name
+
+// e.g., `extends ExampleScript`
+ExtendsClause =
+    'Extends' NameRef
+
+
+// === Items ================================================================
+
+// ref: https://ck.uesp.net/wiki/Script_File_Structure
+Item =
+      Import
+    | VarDeclStmt
+    | Property
+    | State
+    | Function
+    | Event
+
+Import =
+    'Import' NameRef
+
+
+// === Names ================================================================
+
+// When declaring
+Name =
+    '#ident'
+
+// When using
+NameRef =
+    '#ident'
+
+
+// === Types ================================================================
+
+Type =
+    BaseType ArraySuffix*
+
+BaseType =
+      PrimitiveType
+    | CustomType
+
+ArraySuffix =
+    '[' ']'
+
+PrimitiveType =
+      'Int'
+    | 'Float'
+    | 'Bool'
+    | 'String'
+
+CustomType =
+    NameRef
+
+// === Parameters ===========================================================
+
+ParamList =
+    '(' Param* ')'
+
+Param =
+    Type Name Initializer?
+
+
+// === Flags =========================================================
+// https://ck.uesp.net/wiki/Flag_Reference
+FlagModifier =
+      // custom flags e.g., `Hidden`, `Conditional`
+      '#ident'
+    | 'Native'
+    | 'Global'
+    | 'Auto'
+    | 'AutoReadOnly'
+
+// === Properties ===========================================================
+
+Property =
+      InlinePropertyStmt
+    | FullPropertyStmt
+
+InlinePropertyStmt =
+    Type 'Property' Name Initializer? FlagModifier*
+
+// At least one get/set method is required.: https://ck.uesp.net/wiki/Property_Reference
+FullPropertyStmt =
+    Type 'Property' Name FlagModifier*
+    PropertyMember
+    PropertyMember*
+    'EndProperty'
+
+PropertyMember =
+    Function
+
+
+// === States ===============================================================
+
+// https://ck.uesp.net/wiki/State_Reference
+State =
+    'Auto'? 'State' Name
+    StateMember*
+    'EndState'
+
+StateMember =
+      Function
+    | Event
+
+
+// === Functions ============================================================
+
+// In the case of ffi fn, there is no `block`. e.g., `Int Function f() native`
+Function =
+    ReturnType? 'Function' Name ParamList? FlagModifier*
+    (body:Block 'EndFunction')?
+
+ReturnType =
+    Type
+
+
+// === Events ===============================================================
+
+Event =
+    'Event' Name ParamList? FlagModifier*
+    body:Block
+    'EndEvent'
+
+
+// === Blocks ===============================================================
+
+Block =
+    Stmt*
+
+// === Statements ===========================================================
+
+Stmt =
+      VarDeclStmt
+    | AssignStmt
+    | ReturnStmt
+    | IfStmt
+    | WhileStmt
+    | ExprStmt
+
+VarDeclStmt =
+    Type
+    Name
+    Initializer?
+
+Initializer =
+    '=' Expr
+
+AssignStmt =
+    lhs:Expr
+    op:(
+      '=' | '+=' | '*=' | '/=' | '%=' | '-='
+    )
+    rhs:Expr
+
+ReturnStmt =
+    'Return' Expr?
+
+IfStmt =
+    'If' condition:Expr
+    then_branch:Block
+    elseif_branch:ElseIfBranch*
+    else_branch:ElseBranch?
+    'EndIf'
+
+ElseIfBranch =
+    'ElseIf' condition:Expr then_branch:Block
+
+ElseBranch =
+    'Else' then_branch:Block
+
+WhileStmt =
+    'While' condition:Expr
+    loop_body:Block
+    'EndWhile'
+
+ExprStmt =
+    Expr
+
+
+// === Expressions ==========================================================
+
+Expr =
+      BinExpr
+    | PrefixExpr
+    | CallExpr
+    | MethodCallExpr
+    | IndexExpr
+    | FieldExpr
+    | CastExpr
+    | NewExpr
+    | ParenExpr
+    | Literal
+    | NameRef
+
+ParenExpr =
+    '(' Expr ')'
+
+BinExpr =
+    lhs:Expr
+    op:(
+      '||' | '&&'
+    | '==' | '!=' | '<=' | '>=' | '<' | '>'
+    | '+' | '*' | '-' | '/' | '%' | '<<' | '>>' | '|' | '&'
+    | '=' | '+=' | '/=' | '*=' | '%=' | '-='
+    )
+    rhs:Expr
+
+PrefixExpr =
+    op:('-' | '!') Expr
+
+CallExpr =
+    Expr
+    ArgList
+
+ArgList =
+    '(' args:(Expr (',' Expr)* ','?)? ')'
+
+// e.g., `Debug.Trace("message")`
+MethodCallExpr =
+    receiver:Expr '.' NameRef ArgList
+
+FieldExpr =
+    Expr '.' NameRef
+
+IndexExpr =
+    Expr '[' Expr ']'
+
+CastExpr =
+    Expr 'As' Type
+
+NewExpr =
+    'New' Type
+
+
+// === Misc =================================================================
+
+Ident =
+    '#ident'
+
+Literal =
+    value:(
+      '@int_number' | '@float_number'
+    | '@string'
+    | 'True' | 'False'
+    | 'None'
+    )
