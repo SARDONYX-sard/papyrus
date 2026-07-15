@@ -180,7 +180,7 @@ mod tests {
         check_expr(
             "1",
             expect![[r#"
-                Literal
+                LITERAL
                   INT_NUMBER "1"
             "#]],
         );
@@ -202,7 +202,7 @@ mod tests {
         check_expr(
             "-foo",
             expect![[r#"
-                PrefixExpr
+                PREFIX_EXPR
                   MINUS "-"
                   NAME_REF
                     IDENT "foo"
@@ -216,12 +216,12 @@ mod tests {
             "1 + 2",
             expect![[r#"
 BIN_EXPR
-  Literal
+  LITERAL
     INT_NUMBER "1"
   WHITESPACE " "
   PLUS "+"
   WHITESPACE " "
-  Literal
+  LITERAL
     INT_NUMBER "2"
 "#]],
         );
@@ -233,18 +233,18 @@ BIN_EXPR
             "1 + 2 * 3",
             expect![[r#"
                 BIN_EXPR
-                  Literal
+                  LITERAL
                     INT_NUMBER "1"
                   WHITESPACE " "
                   PLUS "+"
                   WHITESPACE " "
                   BIN_EXPR
-                    Literal
+                    LITERAL
                       INT_NUMBER "2"
                     WHITESPACE " "
                     STAR "*"
                     WHITESPACE " "
-                    Literal
+                    LITERAL
                       INT_NUMBER "3"
         "#]],
         );
@@ -256,21 +256,21 @@ BIN_EXPR
             "(1 + 2) * 3",
             expect![[r#"
 BIN_EXPR
-  ParenExpr
+  PAREN_EXPR
     L_PAREN "("
     BIN_EXPR
-      Literal
+      LITERAL
         INT_NUMBER "1"
       WHITESPACE " "
       PLUS "+"
       WHITESPACE " "
-      Literal
+      LITERAL
         INT_NUMBER "2"
     R_PAREN ")"
   WHITESPACE " "
   STAR "*"
   WHITESPACE " "
-  Literal
+  LITERAL
     INT_NUMBER "3"
 "#]],
         );
@@ -281,7 +281,7 @@ BIN_EXPR
         check_expr(
             "foo.bar",
             expect![[r#"
-FieldExpr
+FIELD_EXPR
   NAME_REF
     IDENT "foo"
   DOT "."
@@ -296,8 +296,8 @@ FieldExpr
         check_expr(
             "foo.bar.baz",
             expect![[r#"
-FieldExpr
-  FieldExpr
+FIELD_EXPR
+  FIELD_EXPR
     NAME_REF
       IDENT "foo"
     DOT "."
@@ -320,11 +320,11 @@ CALL_EXPR
     IDENT "foo"
   ARG_LIST
     L_PAREN "("
-    Literal
+    LITERAL
       INT_NUMBER "1"
     COMMA ","
     WHITESPACE " "
-    Literal
+    LITERAL
       INT_NUMBER "2"
     R_PAREN ")"
 "#]],
@@ -345,7 +345,7 @@ CALL_EXPR
       R_PAREN ")"
   ARG_LIST
     L_PAREN "("
-    Literal
+    LITERAL
       INT_NUMBER "1"
     R_PAREN ")"
 "#]],
@@ -357,11 +357,11 @@ CALL_EXPR
         check_expr(
             "arr[0]",
             expect![[r#"
-IndexExpr
+INDEX_EXPR
   NAME_REF
     IDENT "arr"
   L_BRACK "["
-  Literal
+  LITERAL
     INT_NUMBER "0"
   R_BRACK "]"
 "#]],
@@ -373,16 +373,16 @@ IndexExpr
         check_expr(
             "arr[1][0]",
             expect![[r#"
-IndexExpr
-  IndexExpr
+INDEX_EXPR
+  INDEX_EXPR
     NAME_REF
       IDENT "arr"
     L_BRACK "["
-    Literal
+    LITERAL
       INT_NUMBER "1"
     R_BRACK "]"
   L_BRACK "["
-  Literal
+  LITERAL
     INT_NUMBER "0"
   R_BRACK "]"
 "#]],
@@ -394,15 +394,15 @@ IndexExpr
         check_expr(
             "foo As Int",
             expect![[r#"
-CastExpr
+CAST_EXPR
   NAME_REF
     IDENT "foo"
   WHITESPACE " "
   As_KW "As"
   WHITESPACE " "
-  Type
-    BaseType
-      PrimitiveType
+  TYPE
+    BASE_TYPE
+      PRIMITIVE_TYPE
         Int_KW "Int"
 "#]],
         );
@@ -413,9 +413,9 @@ CastExpr
         check_expr(
             "foo()[1].bar As String",
             expect![[r#"
-CastExpr
-  FieldExpr
-    IndexExpr
+CAST_EXPR
+  FIELD_EXPR
+    INDEX_EXPR
       CALL_EXPR
         NAME_REF
           IDENT "foo"
@@ -423,7 +423,7 @@ CastExpr
           L_PAREN "("
           R_PAREN ")"
       L_BRACK "["
-      Literal
+      LITERAL
         INT_NUMBER "1"
       R_BRACK "]"
     DOT "."
@@ -432,9 +432,9 @@ CastExpr
   WHITESPACE " "
   As_KW "As"
   WHITESPACE " "
-  Type
-    BaseType
-      PrimitiveType
+  TYPE
+    BASE_TYPE
+      PRIMITIVE_TYPE
         String_KW "String"
 "#]],
         );
@@ -513,7 +513,7 @@ error 5: expected expression
         check_expr_errors(
             "arr[",
             expect![[r#"
-IndexExpr
+INDEX_EXPR
   NAME_REF
     IDENT "arr"
   L_BRACK "["
@@ -529,7 +529,7 @@ error 4: expected R_BRACK
         check_expr_errors(
             "foo.",
             expect![[r#"
-FieldExpr
+FIELD_EXPR
   NAME_REF
     IDENT "foo"
   DOT "."
