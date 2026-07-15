@@ -1,6 +1,8 @@
 // Papyrus syntax definitions for the ungrammar crate.
 // Use this data to create nodes and tokens.
 //
+// There are no definitions for `comment` or `white_space` here, because processing is handled by the actual parser.
+//
 // Legend:
 // - //          -- comment
 // - Name =      -- non-terminal definition
@@ -66,8 +68,9 @@ NameRef =
 
 // === Types ================================================================
 
+// Papyrus does not support multidimensional array declarations.: https://ck.uesp.net/wiki/Arrays_(Papyrus)
 Type =
-    BaseType ArraySuffix*
+    BaseType ArraySuffix?
 
 BaseType =
       PrimitiveType
@@ -252,6 +255,7 @@ MethodCallExpr =
 FieldExpr =
     Expr '.' NameRef
 
+// Papyrus does not support multidimensional array declarations.: https://ck.uesp.net/wiki/Arrays_(Papyrus)
 IndexExpr =
     Expr '[' Expr ']'
 

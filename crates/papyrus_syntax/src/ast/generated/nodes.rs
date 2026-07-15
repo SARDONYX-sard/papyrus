@@ -177,7 +177,7 @@ pub struct Type {
 }
 impl Type {
     pub fn base_type(&self) -> Option<BaseType> { support::child(&self.syntax) }
-    pub fn array_suffixs(&self) -> AstChildren<ArraySuffix> { support::children(&self.syntax) }
+    pub fn array_suffix(&self) -> Option<ArraySuffix> { support::child(&self.syntax) }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ArraySuffix {
