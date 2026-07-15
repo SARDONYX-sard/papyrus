@@ -63,11 +63,7 @@ impl From<std::io::Error> for Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::UnexpectedEof {
-                offset,
-                expected,
-                remaining,
-            } => {
+            Error::UnexpectedEof { offset, expected, remaining } => {
                 write!(
                     f,
                     "unexpected EOF at offset {}, expected {} more bytes, {} bytes remaining",
@@ -80,19 +76,11 @@ impl fmt::Display for Error {
             }
 
             Error::InvalidDebugFunctionType { offset, value } => {
-                write!(
-                    f,
-                    "invalid debug function type 0x{:02X} at offset {}",
-                    value, offset
-                )
+                write!(f, "invalid debug function type 0x{:02X} at offset {}", value, offset)
             }
 
             Error::InvalidMagicNumber { offset, value } => {
-                write!(
-                    f,
-                    "invalid magic number 0x{:08X} at offset {}",
-                    value, offset
-                )
+                write!(f, "invalid magic number 0x{:08X} at offset {}", value, offset)
             }
 
             Error::InvalidGameType { offset, value } => {
@@ -100,11 +88,7 @@ impl fmt::Display for Error {
             }
 
             Error::InvalidVariableValue { offset, value } => {
-                write!(
-                    f,
-                    "invalid variable value 0x{:02X} at offset {}",
-                    value, offset
-                )
+                write!(f, "invalid variable value 0x{:02X} at offset {}", value, offset)
             }
 
             Error::InvalidOpCode { offset, source } => {
@@ -112,11 +96,7 @@ impl fmt::Display for Error {
             }
 
             Error::InvalidFunctionFlags { offset, value } => {
-                write!(
-                    f,
-                    "invalid function flags 0x{:02X} at offset {}",
-                    value, offset
-                )
+                write!(f, "invalid function flags 0x{:02X} at offset {}", value, offset)
             }
 
             Error::MissingAutoVerInProperty { name } => {
