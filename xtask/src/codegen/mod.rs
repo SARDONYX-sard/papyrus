@@ -299,6 +299,7 @@ impl CstNodeSrc {
     }
 }
 
+#[ignore = "local gen"]
 #[test]
 fn test() {
     generate().unwrap();
