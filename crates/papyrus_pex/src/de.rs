@@ -8,9 +8,7 @@ pub struct Writer {
 
 impl Default for Writer {
     fn default() -> Self {
-        Self {
-            bytes: Vec::with_capacity(2048),
-        }
+        Self { bytes: Vec::with_capacity(2048) }
     }
 }
 
@@ -158,9 +156,7 @@ impl Writer {
 
         if property.flags.contains(PropertyFlags::AUTO_VAR) {
             let Some(auto_var_name) = property.auto_var_name else {
-                return Err(Error::MissingAutoVerInProperty {
-                    name: property.name.to_string(),
-                });
+                return Err(Error::MissingAutoVerInProperty { name: property.name.to_string() });
             };
             self.string_id(auto_var_name);
         } else {

@@ -1,4 +1,7 @@
-use crate::{Error, binary::Reader, pex::*};
+mod reader;
+
+use self::reader::Reader;
+use crate::{Error, pex::*};
 
 #[cfg(feature = "trace-layout")]
 macro_rules! trace_struct {
@@ -70,10 +73,7 @@ where
 
 impl ReadPex for VariableType {
     fn read(reader: &mut Reader<'_>) -> Result<Self, Error> {
-        Ok(Self {
-            name: reader.string_id()?,
-            ty: reader.string_id()?,
-        })
+        Ok(Self { name: reader.string_id()?, ty: reader.string_id()? })
     }
 }
 
@@ -100,10 +100,7 @@ impl ReadPex for VariableValue {
             4 => Self::Float(reader.f32()?),
             5 => Self::Boolean(reader.u8()? != 0),
             invalid => {
-                return Err(Error::InvalidVariableValue {
-                    offset,
-                    value: invalid,
-                });
+                return Err(Error::InvalidVariableValue { offset, value: invalid });
             }
         })
     }
@@ -126,10 +123,7 @@ impl ReadPex for FunctionFlags {
     fn read(reader: &mut Reader<'_>) -> Result<Self, Error> {
         let offset = reader.offset();
         let flags = reader.u8()?;
-        FunctionFlags::from_bits(flags).ok_or(Error::InvalidFunctionFlags {
-            offset,
-            value: flags,
-        })
+        FunctionFlags::from_bits(flags).ok_or(Error::InvalidFunctionFlags { offset, value: flags })
     }
 }
 
@@ -153,10 +147,7 @@ impl ReadPex for FunctionInfo {
 
 impl ReadPex for Function {
     fn read(reader: &mut Reader<'_>) -> Result<Self, Error> {
-        Ok(Self {
-            name: reader.string_id()?,
-            info: FunctionInfo::read(reader)?,
-        })
+        Ok(Self { name: reader.string_id()?, info: FunctionInfo::read(reader)? })
     }
 }
 
@@ -169,10 +160,7 @@ impl ReadPex for Instruction {
             args.push(VariableValue::read(reader)?);
         }
 
-        if matches!(
-            opcode,
-            OpCode::CallMethod | OpCode::CallParent | OpCode::CallStatic
-        ) {
+        if matches!(opcode, OpCode::CallMethod | OpCode::CallParent | OpCode::CallStatic) {
             let arg = VariableValue::read(reader)?;
             let len = match arg {
                 VariableValue::Integer(len) => Some(len),
@@ -201,10 +189,7 @@ impl ReadPex for OpCode {
 
 impl ReadPex for State {
     fn read(reader: &mut Reader<'_>) -> Result<Self, Error> {
-        Ok(Self {
-            name: reader.string_id()?,
-            functions: read_vec(reader)?,
-        })
+        Ok(Self { name: reader.string_id()?, functions: read_vec(reader)? })
     }
 }
 
@@ -272,10 +257,7 @@ impl ReadPex for Property {
 impl ReadPex for DebugInfo {
     #[inline]
     fn read(reader: &mut Reader<'_>) -> Result<Self, Error> {
-        Ok(Self {
-            modification_time: reader.i64()?,
-            functions: read_vec(reader)?,
-        })
+        Ok(Self { modification_time: reader.i64()?, functions: read_vec(reader)? })
     }
 }
 
@@ -301,10 +283,7 @@ impl ReadPex for DebugFunctionType {
             1 => Self::Getter,
             2 => Self::Setter,
             invalid => {
-                return Err(Error::InvalidDebugFunctionType {
-                    offset,
-                    value: invalid,
-                });
+                return Err(Error::InvalidDebugFunctionType { offset, value: invalid });
             }
         })
     }
@@ -316,10 +295,7 @@ impl ReadPex for GameType {
         Ok(match reader.u16()? {
             1 => GameType::Skyrim,
             value => {
-                return Err(Error::InvalidGameType {
-                    offset: reader.offset(),
-                    value,
-                });
+                return Err(Error::InvalidGameType { offset: reader.offset(), value });
             }
         })
     }
@@ -349,10 +325,7 @@ impl<'a> PexFile<'a> {
 
         let magic_number = trace_field!(reader, "magic_number", reader.u32()?);
         if magic_number != LE_MAGIC_NUMBER {
-            return Err(Error::InvalidMagicNumber {
-                offset: 0,
-                value: magic_number,
-            });
+            return Err(Error::InvalidMagicNumber { offset: 0, value: magic_number });
         }
 
         let major_version = trace_field!(reader, "major_version", reader.u8()?);
@@ -464,6 +437,7 @@ where
 mod tests {
     use super::*;
 
+    #[ignore = "need local file"]
     #[test]
     fn from_file() {
         #[rustfmt::skip]

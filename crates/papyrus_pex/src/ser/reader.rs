@@ -20,11 +20,7 @@ pub struct Annotation {
 impl<'a> Reader<'a> {
     #[inline]
     pub fn annotate(&mut self, start: usize, size: usize, label: impl Into<String>) {
-        self.annotations.push(Annotation {
-            offset: start,
-            size,
-            label: label.into(),
-        });
+        self.annotations.push(Annotation { offset: start, size, label: label.into() });
     }
 }
 

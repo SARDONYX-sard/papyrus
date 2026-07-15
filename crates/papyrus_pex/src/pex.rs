@@ -439,16 +439,11 @@ impl<'a> PexFile<'a> {
     }
 
     pub fn object(&'a self, name: &str) -> Option<&'a Object> {
-        self.objects
-            .iter()
-            .find(|obj| self.string(obj.name) == Some(name))
+        self.objects.iter().find(|obj| self.string(obj.name) == Some(name))
     }
 
     pub fn state(&'a self, object: &'a Object, name: &str) -> Option<&'a State> {
-        object
-            .states
-            .iter()
-            .find(|state| self.string(state.name) == Some(name))
+        object.states.iter().find(|state| self.string(state.name) == Some(name))
     }
 
     pub fn empty_state(&'a self, object: &'a Object) -> Option<&'a State> {
@@ -458,17 +453,11 @@ impl<'a> PexFile<'a> {
     pub fn default_state(&self, object: &'a Object) -> Option<&'a State> {
         let name = self.string(object.auto_state_name);
 
-        object
-            .states
-            .iter()
-            .find(|state| self.string(state.name) == name)
+        object.states.iter().find(|state| self.string(state.name) == name)
     }
 
     pub fn function(&self, state: &'a State, name: &str) -> Option<&'a Function> {
-        state
-            .functions
-            .iter()
-            .find(|func| self.string(func.name) == Some(name))
+        state.functions.iter().find(|func| self.string(func.name) == Some(name))
     }
 
     pub fn function_from_empty_state(
@@ -485,18 +474,12 @@ impl<'a> PexFile<'a> {
     pub fn property(&'a self, object_name: &str, property_name: &str) -> Option<&'a Property> {
         let object = self.object(object_name)?;
 
-        object
-            .properties
-            .iter()
-            .find(|prop| self.string(prop.name) == Some(property_name))
+        object.properties.iter().find(|prop| self.string(prop.name) == Some(property_name))
     }
 
     pub fn variable(&'a self, object_name: &str, variable_name: &str) -> Option<&'a Variable> {
         let object = self.object(object_name)?;
 
-        object
-            .variables
-            .iter()
-            .find(|var| self.string(var.name) == Some(variable_name))
+        object.variables.iter().find(|var| self.string(var.name) == Some(variable_name))
     }
 }

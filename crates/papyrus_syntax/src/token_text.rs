@@ -9,6 +9,7 @@ pub struct TokenText<'a>(pub(crate) Repr<'a>);
 
 pub(crate) enum Repr<'a> {
     Borrowed(&'a str),
+    #[expect(unused)]
     Owned(GreenToken),
 }
 
@@ -17,6 +18,7 @@ impl<'a> TokenText<'a> {
         TokenText(Repr::Borrowed(text))
     }
 
+    #[expect(unused)]
     pub(crate) fn owned(green: GreenToken) -> Self {
         TokenText(Repr::Owned(green))
     }
