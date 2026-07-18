@@ -42,6 +42,7 @@ impl ast::Comment {
         let prefix = kind.prefix();
         let text = &self.text()[prefix.len()..];
 
+        let text = text.trim_end();
         let text = text.strip_suffix('}').unwrap_or(text);
 
         Some((text, TextSize::of(prefix)))
@@ -343,9 +344,7 @@ mod tests {
     fn doc_comment_text() {
         let src = r#"
 ScriptName Test
-{
-This is documentation.
-}
+{ This is documentation. }
 "#;
 
         let comment = comment_from_text(src);

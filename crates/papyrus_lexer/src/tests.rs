@@ -30,7 +30,7 @@ fn function_keyword() {
 
 #[test]
 fn line_comment() {
-    assert_tokens("; hello\n", &[TokenKind::LineComment, TokenKind::Whitespace]);
+    assert_tokens("; hello\n", &[TokenKind::LineComment, TokenKind::LineFeed]);
 }
 
 #[test]
@@ -92,7 +92,7 @@ fn unterminated_string() {
 
 #[test]
 fn whitespace() {
-    assert_tokens(" \t\n", &[TokenKind::Whitespace]);
+    assert_tokens(" \t\n", &[TokenKind::Whitespace, TokenKind::LineFeed]);
 }
 
 #[test]
@@ -151,163 +151,186 @@ EndEvent
     check_lexing(
         src,
         expect![[r#"
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Ident, len: 10 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Ident, len: 10 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Ident, len: 7 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Ident, len: 5 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Ident, len: 6 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Ident, len: 11 }
-            Token { kind: Whitespace, len: 2 }
-            Token { kind: Ident, len: 6 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Ident, len: 7 }
-            Token { kind: Whitespace, len: 2 }
-            Token { kind: Ident, len: 3 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Ident, len: 8 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Ident, len: 7 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Ident, len: 4 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Ident, len: 6 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Ident, len: 8 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Ident, len: 4 }
-            Token { kind: Whitespace, len: 5 }
-            Token { kind: Ident, len: 8 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Ident, len: 3 }
-            Token { kind: OpenParen, len: 1 }
-            Token { kind: CloseParen, len: 1 }
-            Token { kind: Whitespace, len: 9 }
-            Token { kind: Ident, len: 6 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Literal { kind: Str { terminated: true }, suffix_start: 2 }, len: 2 }
-            Token { kind: Whitespace, len: 5 }
-            Token { kind: Ident, len: 11 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Ident, len: 11 }
-            Token { kind: Whitespace, len: 2 }
-            Token { kind: Ident, len: 5 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Ident, len: 7 }
-            Token { kind: Whitespace, len: 5 }
-            Token { kind: Ident, len: 5 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Ident, len: 12 }
-            Token { kind: OpenParen, len: 1 }
-            Token { kind: CloseParen, len: 1 }
-            Token { kind: Whitespace, len: 9 }
-            Token { kind: Ident, len: 7 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Eq, len: 1 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Literal { kind: Int { base: Decimal, empty_int: false }, suffix_start: 1 }, len: 1 }
-            Token { kind: Whitespace, len: 5 }
-            Token { kind: Ident, len: 8 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Ident, len: 8 }
-            Token { kind: Whitespace, len: 2 }
-            Token { kind: Ident, len: 8 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Ident, len: 3 }
-            Token { kind: OpenParen, len: 1 }
-            Token { kind: Ident, len: 3 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Ident, len: 1 }
-            Token { kind: Comma, len: 1 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Ident, len: 5 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Ident, len: 1 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Eq, len: 1 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Literal { kind: Float { base: Decimal, empty_exponent: false }, suffix_start: 3 }, len: 3 }
-            Token { kind: CloseParen, len: 1 }
-            Token { kind: Whitespace, len: 5 }
-            Token { kind: Ident, len: 3 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Ident, len: 1 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Eq, len: 1 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Literal { kind: Int { base: Decimal, empty_int: false }, suffix_start: 1 }, len: 1 }
-            Token { kind: Whitespace, len: 6 }
-            Token { kind: Ident, len: 5 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Ident, len: 1 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Lt, len: 1 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Literal { kind: Int { base: Decimal, empty_int: false }, suffix_start: 2 }, len: 2 }
-            Token { kind: Whitespace, len: 9 }
-            Token { kind: Ident, len: 2 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Ident, len: 1 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Eq, len: 1 }
-            Token { kind: Eq, len: 1 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Literal { kind: Int { base: Decimal, empty_int: false }, suffix_start: 1 }, len: 1 }
-            Token { kind: Whitespace, len: 13 }
-            Token { kind: Ident, len: 5 }
-            Token { kind: Dot, len: 1 }
-            Token { kind: Ident, len: 5 }
-            Token { kind: OpenParen, len: 1 }
-            Token { kind: Literal { kind: Str { terminated: true }, suffix_start: 8 }, len: 8 }
-            Token { kind: CloseParen, len: 1 }
-            Token { kind: Whitespace, len: 9 }
-            Token { kind: Ident, len: 6 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Ident, len: 1 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Eq, len: 1 }
-            Token { kind: Eq, len: 1 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Literal { kind: Int { base: Decimal, empty_int: false }, suffix_start: 1 }, len: 1 }
-            Token { kind: Whitespace, len: 13 }
-            Token { kind: Ident, len: 6 }
-            Token { kind: Whitespace, len: 9 }
-            Token { kind: Ident, len: 4 }
-            Token { kind: Whitespace, len: 13 }
-            Token { kind: Ident, len: 1 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Plus, len: 1 }
-            Token { kind: Eq, len: 1 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Literal { kind: Int { base: Decimal, empty_int: false }, suffix_start: 1 }, len: 1 }
-            Token { kind: Whitespace, len: 9 }
-            Token { kind: Ident, len: 5 }
-            Token { kind: Whitespace, len: 5 }
-            Token { kind: Ident, len: 8 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Ident, len: 11 }
-            Token { kind: Whitespace, len: 2 }
-            Token { kind: Ident, len: 5 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Ident, len: 6 }
-            Token { kind: OpenParen, len: 1 }
-            Token { kind: CloseParen, len: 1 }
-            Token { kind: Whitespace, len: 5 }
-            Token { kind: Ident, len: 3 }
-            Token { kind: OpenParen, len: 1 }
-            Token { kind: Literal { kind: Int { base: Decimal, empty_int: false }, suffix_start: 1 }, len: 1 }
-            Token { kind: Comma, len: 1 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Literal { kind: Float { base: Decimal, empty_exponent: false }, suffix_start: 3 }, len: 3 }
-            Token { kind: CloseParen, len: 1 }
-            Token { kind: Whitespace, len: 1 }
-            Token { kind: Ident, len: 8 }
-            Token { kind: Whitespace, len: 1 }
-        "#]],
+Token { kind: LineFeed, len: 1 }
+Token { kind: Ident, len: 10 }
+Token { kind: Whitespace, len: 1 }
+Token { kind: Ident, len: 10 }
+Token { kind: Whitespace, len: 1 }
+Token { kind: Ident, len: 7 }
+Token { kind: Whitespace, len: 1 }
+Token { kind: Ident, len: 5 }
+Token { kind: Whitespace, len: 1 }
+Token { kind: Ident, len: 6 }
+Token { kind: Whitespace, len: 1 }
+Token { kind: Ident, len: 11 }
+Token { kind: LineFeed, len: 1 }
+Token { kind: LineFeed, len: 1 }
+Token { kind: Ident, len: 6 }
+Token { kind: Whitespace, len: 1 }
+Token { kind: Ident, len: 7 }
+Token { kind: LineFeed, len: 1 }
+Token { kind: LineFeed, len: 1 }
+Token { kind: Ident, len: 3 }
+Token { kind: Whitespace, len: 1 }
+Token { kind: Ident, len: 8 }
+Token { kind: Whitespace, len: 1 }
+Token { kind: Ident, len: 7 }
+Token { kind: Whitespace, len: 1 }
+Token { kind: Ident, len: 4 }
+Token { kind: LineFeed, len: 1 }
+Token { kind: Ident, len: 6 }
+Token { kind: Whitespace, len: 1 }
+Token { kind: Ident, len: 8 }
+Token { kind: Whitespace, len: 1 }
+Token { kind: Ident, len: 4 }
+Token { kind: LineFeed, len: 1 }
+Token { kind: Whitespace, len: 4 }
+Token { kind: Ident, len: 8 }
+Token { kind: Whitespace, len: 1 }
+Token { kind: Ident, len: 3 }
+Token { kind: OpenParen, len: 1 }
+Token { kind: CloseParen, len: 1 }
+Token { kind: LineFeed, len: 1 }
+Token { kind: Whitespace, len: 8 }
+Token { kind: Ident, len: 6 }
+Token { kind: Whitespace, len: 1 }
+Token { kind: Literal { kind: Str { terminated: true }, suffix_start: 2 }, len: 2 }
+Token { kind: LineFeed, len: 1 }
+Token { kind: Whitespace, len: 4 }
+Token { kind: Ident, len: 11 }
+Token { kind: LineFeed, len: 1 }
+Token { kind: Ident, len: 11 }
+Token { kind: LineFeed, len: 1 }
+Token { kind: LineFeed, len: 1 }
+Token { kind: Ident, len: 5 }
+Token { kind: Whitespace, len: 1 }
+Token { kind: Ident, len: 7 }
+Token { kind: LineFeed, len: 1 }
+Token { kind: Whitespace, len: 4 }
+Token { kind: Ident, len: 5 }
+Token { kind: Whitespace, len: 1 }
+Token { kind: Ident, len: 12 }
+Token { kind: OpenParen, len: 1 }
+Token { kind: CloseParen, len: 1 }
+Token { kind: LineFeed, len: 1 }
+Token { kind: Whitespace, len: 8 }
+Token { kind: Ident, len: 7 }
+Token { kind: Whitespace, len: 1 }
+Token { kind: Eq, len: 1 }
+Token { kind: Whitespace, len: 1 }
+Token { kind: Literal { kind: Int { base: Decimal, empty_int: false }, suffix_start: 1 }, len: 1 }
+Token { kind: LineFeed, len: 1 }
+Token { kind: Whitespace, len: 4 }
+Token { kind: Ident, len: 8 }
+Token { kind: LineFeed, len: 1 }
+Token { kind: Ident, len: 8 }
+Token { kind: LineFeed, len: 1 }
+Token { kind: LineFeed, len: 1 }
+Token { kind: Ident, len: 8 }
+Token { kind: Whitespace, len: 1 }
+Token { kind: Ident, len: 3 }
+Token { kind: OpenParen, len: 1 }
+Token { kind: Ident, len: 3 }
+Token { kind: Whitespace, len: 1 }
+Token { kind: Ident, len: 1 }
+Token { kind: Comma, len: 1 }
+Token { kind: Whitespace, len: 1 }
+Token { kind: Ident, len: 5 }
+Token { kind: Whitespace, len: 1 }
+Token { kind: Ident, len: 1 }
+Token { kind: Whitespace, len: 1 }
+Token { kind: Eq, len: 1 }
+Token { kind: Whitespace, len: 1 }
+Token { kind: Literal { kind: Float { base: Decimal, empty_exponent: false }, suffix_start: 3 }, len: 3 }
+Token { kind: CloseParen, len: 1 }
+Token { kind: LineFeed, len: 1 }
+Token { kind: Whitespace, len: 4 }
+Token { kind: Ident, len: 3 }
+Token { kind: Whitespace, len: 1 }
+Token { kind: Ident, len: 1 }
+Token { kind: Whitespace, len: 1 }
+Token { kind: Eq, len: 1 }
+Token { kind: Whitespace, len: 1 }
+Token { kind: Literal { kind: Int { base: Decimal, empty_int: false }, suffix_start: 1 }, len: 1 }
+Token { kind: LineFeed, len: 1 }
+Token { kind: LineFeed, len: 1 }
+Token { kind: Whitespace, len: 4 }
+Token { kind: Ident, len: 5 }
+Token { kind: Whitespace, len: 1 }
+Token { kind: Ident, len: 1 }
+Token { kind: Whitespace, len: 1 }
+Token { kind: Lt, len: 1 }
+Token { kind: Whitespace, len: 1 }
+Token { kind: Literal { kind: Int { base: Decimal, empty_int: false }, suffix_start: 2 }, len: 2 }
+Token { kind: LineFeed, len: 1 }
+Token { kind: Whitespace, len: 8 }
+Token { kind: Ident, len: 2 }
+Token { kind: Whitespace, len: 1 }
+Token { kind: Ident, len: 1 }
+Token { kind: Whitespace, len: 1 }
+Token { kind: Eq, len: 1 }
+Token { kind: Eq, len: 1 }
+Token { kind: Whitespace, len: 1 }
+Token { kind: Literal { kind: Int { base: Decimal, empty_int: false }, suffix_start: 1 }, len: 1 }
+Token { kind: LineFeed, len: 1 }
+Token { kind: Whitespace, len: 12 }
+Token { kind: Ident, len: 5 }
+Token { kind: Dot, len: 1 }
+Token { kind: Ident, len: 5 }
+Token { kind: OpenParen, len: 1 }
+Token { kind: Literal { kind: Str { terminated: true }, suffix_start: 8 }, len: 8 }
+Token { kind: CloseParen, len: 1 }
+Token { kind: LineFeed, len: 1 }
+Token { kind: Whitespace, len: 8 }
+Token { kind: Ident, len: 6 }
+Token { kind: Whitespace, len: 1 }
+Token { kind: Ident, len: 1 }
+Token { kind: Whitespace, len: 1 }
+Token { kind: Eq, len: 1 }
+Token { kind: Eq, len: 1 }
+Token { kind: Whitespace, len: 1 }
+Token { kind: Literal { kind: Int { base: Decimal, empty_int: false }, suffix_start: 1 }, len: 1 }
+Token { kind: LineFeed, len: 1 }
+Token { kind: Whitespace, len: 12 }
+Token { kind: Ident, len: 6 }
+Token { kind: LineFeed, len: 1 }
+Token { kind: Whitespace, len: 8 }
+Token { kind: Ident, len: 4 }
+Token { kind: LineFeed, len: 1 }
+Token { kind: Whitespace, len: 12 }
+Token { kind: Ident, len: 1 }
+Token { kind: Whitespace, len: 1 }
+Token { kind: Plus, len: 1 }
+Token { kind: Eq, len: 1 }
+Token { kind: Whitespace, len: 1 }
+Token { kind: Literal { kind: Int { base: Decimal, empty_int: false }, suffix_start: 1 }, len: 1 }
+Token { kind: LineFeed, len: 1 }
+Token { kind: Whitespace, len: 8 }
+Token { kind: Ident, len: 5 }
+Token { kind: LineFeed, len: 1 }
+Token { kind: Whitespace, len: 4 }
+Token { kind: Ident, len: 8 }
+Token { kind: LineFeed, len: 1 }
+Token { kind: Ident, len: 11 }
+Token { kind: LineFeed, len: 1 }
+Token { kind: LineFeed, len: 1 }
+Token { kind: Ident, len: 5 }
+Token { kind: Whitespace, len: 1 }
+Token { kind: Ident, len: 6 }
+Token { kind: OpenParen, len: 1 }
+Token { kind: CloseParen, len: 1 }
+Token { kind: LineFeed, len: 1 }
+Token { kind: Whitespace, len: 4 }
+Token { kind: Ident, len: 3 }
+Token { kind: OpenParen, len: 1 }
+Token { kind: Literal { kind: Int { base: Decimal, empty_int: false }, suffix_start: 1 }, len: 1 }
+Token { kind: Comma, len: 1 }
+Token { kind: Whitespace, len: 1 }
+Token { kind: Literal { kind: Float { base: Decimal, empty_exponent: false }, suffix_start: 3 }, len: 3 }
+Token { kind: CloseParen, len: 1 }
+Token { kind: LineFeed, len: 1 }
+Token { kind: Ident, len: 8 }
+Token { kind: LineFeed, len: 1 }
+"#]],
     );
 }

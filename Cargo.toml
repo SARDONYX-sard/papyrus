@@ -72,6 +72,7 @@ stdx = { path = "./crates/stdx", version = "0.0.0" }
 
 papyrus_lexer = { path = "./crates/papyrus_lexer", version = "0.0.0" }
 papyrus_parser = { path = "./crates/papyrus_parser", version = "0.0.0" }
+papyrus_syntax = { path = "./crates/papyrus_syntax", version = "0.0.0" }
 
 ra-ap-rustc_lexer = { version = "0.165", default-features = false }
 ra-ap-rustc_parse_format = { version = "0.165", default-features = false }

@@ -50,14 +50,16 @@ impl LexedStr<'_> {
                 was_joint = false
             } else if kind == SyntaxKind::IDENT {
                 let token_text = self.text(i);
-                let kind = match custom_flags
-                    .iter()
-                    .find(|flags| flags.eq_ignore_ascii_case(token_text))
-                {
-                    Some(_flags) => SyntaxKind::CUSTOM_FLAG,
-                    None => SyntaxKind::from_keyword(token_text).unwrap_or(SyntaxKind::IDENT),
+
+                let kind = if let Some(kind) = SyntaxKind::from_keyword(token_text) {
+                    kind
+                } else if custom_flags.iter().any(|flag| flag.eq_ignore_ascii_case(token_text)) {
+                    SyntaxKind::CUSTOM_FLAG
+                } else {
+                    SyntaxKind::IDENT
                 };
-                res.push_ident(kind)
+
+                res.push_ident(kind);
             } else {
                 if was_joint {
                     res.was_joint();

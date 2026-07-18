@@ -25,5 +25,3 @@ stdx.workspace = true
 rayon.workspace = true
 expect-test = "1.5.1"
 rustc_apfloat = "0.2.3"
-
-# test-utils.workspace = true
