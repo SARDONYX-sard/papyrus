@@ -70,6 +70,9 @@ pub enum TokenKind {
     /// Any whitespace character sequence.
     Whitespace,
 
+    /// Indicates the end of a papyrus statement or the end of a trailing flag in a function signature
+    LineFeed,
+
     /// An identifier or keyword, e.g. `ident` or `continue`.
     Ident,
 
@@ -192,7 +195,7 @@ pub fn is_whitespace(c: char) -> bool {
     matches!(
         c,
         // End-of-line characters
-        | '\u{000A}' // line feed (\n)
+        // | '\u{000A}' // line feed (\n)
         | '\u{000B}' // vertical tab
         | '\u{000C}' // form feed
         | '\u{000D}' // carriage return (\r)
@@ -392,6 +395,9 @@ impl<'a> Cursor<'a> {
             }
 
             // One-symbol tokens.
+            '\u{000A}' => LineFeed, // line feed (\n)
+            '\\' => BackSlash,
+
             ',' => Comma,
             '.' => Dot,
             '(' => OpenParen,
@@ -408,7 +414,6 @@ impl<'a> Cursor<'a> {
             '+' => Plus,
             '*' => Star,
             '%' => Percent,
-            '\\' => BackSlash,
 
             // String literal.
             '"' => {

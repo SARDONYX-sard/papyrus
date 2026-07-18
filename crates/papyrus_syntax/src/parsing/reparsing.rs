@@ -23,6 +23,7 @@ pub(crate) fn incremental_reparse(
     delete: TextRange,
     insert: &str,
     errors: impl IntoIterator<Item = SyntaxError>,
+    custom_flags: &[String],
 ) -> Option<(GreenNode, Vec<SyntaxError>, TextRange)> {
     if let Some((green, new_errors, old_range)) = reparse_token(node, delete, insert) {
         return Some((
@@ -32,7 +33,8 @@ pub(crate) fn incremental_reparse(
         ));
     }
 
-    if let Some((green, new_errors, old_range)) = reparse_block(node, delete, insert) {
+    if let Some((green, new_errors, old_range)) = reparse_block(node, delete, insert, custom_flags)
+    {
         return Some((
             green,
             merge_errors(errors, new_errors, old_range, delete, insert),
@@ -96,12 +98,13 @@ fn reparse_block(
     root: &SyntaxNode,
     delete: TextRange,
     insert: &str,
+    custom_flags: &[String],
 ) -> Option<(GreenNode, Vec<SyntaxError>, TextRange)> {
     let (node, reparser) = find_reparsable_node(root, delete)?;
     let text = get_text_after_edit(node.clone().into(), delete, insert);
 
     let lexed = parser::LexedStr::new(text.as_str());
-    let parser_input = lexed.to_input();
+    let parser_input = lexed.to_input(custom_flags);
     // if !is_balanced(&lexed) {
     //     return None;
     // }

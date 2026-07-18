@@ -5,6 +5,8 @@ mod syntax_node;
 mod token_text;
 mod validation;
 
+pub mod algo;
+
 pub mod ast;
 
 use std::{marker::PhantomData, ops::Range};
@@ -114,18 +116,29 @@ impl Parse<SourceFile> {
         buf
     }
 
-    pub fn reparse(&self, delete: TextRange, insert: &str) -> Parse<SourceFile> {
-        self.incremental_reparse(delete, insert)
-            .unwrap_or_else(|| self.full_reparse(delete, insert))
+    pub fn reparse(
+        &self,
+        delete: TextRange,
+        insert: &str,
+        custom_flags: &[String],
+    ) -> Parse<SourceFile> {
+        self.incremental_reparse(delete, insert, custom_flags)
+            .unwrap_or_else(|| self.full_reparse(delete, insert, custom_flags))
     }
 
-    fn incremental_reparse(&self, delete: TextRange, insert: &str) -> Option<Parse<SourceFile>> {
+    fn incremental_reparse(
+        &self,
+        delete: TextRange,
+        insert: &str,
+        custom_flags: &[String],
+    ) -> Option<Parse<SourceFile>> {
         // FIXME: validation errors are not handled here
         parsing::incremental_reparse(
             self.tree().syntax(),
             delete,
             insert,
             self.errors.as_deref().unwrap_or_default().iter().cloned(),
+            custom_flags,
         )
         .map(|(green_node, errors, _reparsed_range)| Parse {
             green: Some(green_node),
@@ -134,10 +147,15 @@ impl Parse<SourceFile> {
         })
     }
 
-    fn full_reparse(&self, delete: TextRange, insert: &str) -> Parse<SourceFile> {
+    fn full_reparse(
+        &self,
+        delete: TextRange,
+        insert: &str,
+        custom_flags: &[String],
+    ) -> Parse<SourceFile> {
         let mut text = self.tree().syntax().text().to_string();
         text.replace_range(Range::<usize>::from(delete), insert);
-        SourceFile::parse(&text)
+        SourceFile::parse(&text, custom_flags)
     }
 }
 
@@ -150,9 +168,10 @@ impl ast::Expr {
     /// # use syntax::{ast, Edition};
     /// ast::Expr::parse("let fail = true;", Edition::CURRENT).tree();
     /// ```
-    pub fn parse(text: &str) -> Parse<ast::Expr> {
+    pub fn parse(text: &str, custom_flags: &[String]) -> Parse<ast::Expr> {
         let _p = tracing::info_span!("Expr::parse").entered();
-        let (green, errors) = parsing::parse_text_at(text, papyrus_parser::TopEntryPoint::Expr);
+        let (green, errors) =
+            parsing::parse_text_at(text, papyrus_parser::TopEntryPoint::Expr, custom_flags);
         let root = SyntaxNode::new_root(green.clone());
 
         assert!(
@@ -201,9 +220,9 @@ impl<T> Drop for Parse<T> {
 pub use crate::ast::SourceFile;
 
 impl SourceFile {
-    pub fn parse(text: &str) -> Parse<SourceFile> {
+    pub fn parse(text: &str, custom_flags: &[String]) -> Parse<SourceFile> {
         let _p = tracing::info_span!("SourceFile::parse").entered();
-        let (green, errors) = parsing::parse_text(text);
+        let (green, errors) = parsing::parse_text(text, custom_flags);
         let root = SyntaxNode::new_root(green.clone());
 
         assert_eq!(root.kind(), SyntaxKind::SOURCE_FILE);

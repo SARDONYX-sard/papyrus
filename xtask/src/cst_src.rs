@@ -32,6 +32,7 @@ pub(crate) const KINDS_SRC: KindsSrc = KindsSrc {
         ("-", "MINUS"),
         ("*", "STAR"),
         ("/", "SLASH"),
+        ("\\", "BACK_SLASH"), // For line continuation
         ("%", "PERCENT"),
         ("<", "LT"),
         (">", "GT"),
@@ -88,7 +89,14 @@ pub(crate) const KINDS_SRC: KindsSrc = KindsSrc {
 
     literals: &["INT_NUMBER", "FLOAT_NUMBER", "STRING"],
 
-    tokens: &["ERROR", "IDENT", "WHITESPACE", "NEWLINE", "COMMENT"],
+    tokens: &[
+        "ERROR",
+        "IDENT",
+        "CUSTOM_FLAG",
+        "WHITESPACE",
+        "NEWLINE", // Instead of Semi(Indicates the end of a papyrus statement or the end of a trailing flag in a function signature)
+        "COMMENT",
+    ],
 
     nodes: &[
         "SOURCE_FILE",

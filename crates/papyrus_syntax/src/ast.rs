@@ -1,6 +1,7 @@
 //! Abstract Syntax Tree, layered on top of untyped `SyntaxNode`s
 
 mod generated;
+mod token_ext;
 
 use std::marker::PhantomData;
 
@@ -11,7 +12,7 @@ use crate::{
     syntax_node::{SyntaxNode, SyntaxNodeChildren, SyntaxToken},
 };
 
-pub use self::generated::nodes::*;
+pub use self::generated::{nodes::*, tokens::*};
 
 /// The main trait to go from untyped `SyntaxNode`  to a typed ast. The
 /// conversion itself has zero runtime cost: ast and syntax nodes have exactly

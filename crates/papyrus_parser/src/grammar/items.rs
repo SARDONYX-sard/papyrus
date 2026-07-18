@@ -7,9 +7,8 @@ pub(crate) fn source_file(p: &mut Parser<'_>) {
     let m = p.start();
 
     header(p);
-    mod_contents(p);
 
-    p.expect(EOF);
+    mod_contents(p);
 
     m.complete(p, SOURCE_FILE);
 }
@@ -55,10 +54,9 @@ pub(super) const ITEM_RECOVERY_SET: TokenSet = TokenSet::new(&[
 fn opt_item(p: &mut Parser<'_>, m: Marker) -> Result<(), Marker> {
     match p.current() {
         T![Import] => import(p, m),
-        T![State] | T![Auto] => state_stmt(p, m),
         T![Event] => event(p, m),
-        T![Function] => function(p, m),
-
+        T![State] | _ if at_has_auto_state(p) => state_stmt(p, m),
+        T![Function] | _ if at_has_ret_function(p) => function(p, m),
         _ if at_property(p) => property(p, m),
         _ if at_var_decl(p) => var_decl_stmt(p, m),
 
@@ -66,6 +64,39 @@ fn opt_item(p: &mut Parser<'_>, m: Marker) -> Result<(), Marker> {
     }
 
     Ok(())
+}
+
+/// Peek current `Auto "State"`
+fn at_has_auto_state(p: &Parser<'_>) -> bool {
+    if p.current() != T![Auto] {
+        return false;
+    }
+    p.nth_at(1, T![State])
+}
+
+/// Peek current `<Type> "Function"`
+fn at_has_ret_function(p: &Parser<'_>) -> bool {
+    if !types::at_type(p) {
+        return false;
+    }
+    p.nth_at(1, T![Function])
+}
+
+/// Peek `<Type> "Property"`
+fn at_property(p: &Parser<'_>) -> bool {
+    if !types::at_type(p) {
+        return false;
+    }
+
+    p.nth_at(1, T![Property])
+}
+
+/// Peek `<Type> <Ident> =`
+fn at_var_decl(p: &Parser<'_>) -> bool {
+    if !types::at_type(p) || !p.nth_at(1, T![ident]) {
+        return false;
+    }
+    p.nth_at(2, T![=])
 }
 
 fn import(p: &mut Parser<'_>, m: Marker) {
@@ -90,11 +121,14 @@ fn function(p: &mut Parser<'_>, m: Marker) {
         p.error("expected function arguments");
     }
 
-    flags(p);
-
-    if !p.at(T![EndFunction]) {
+    let has_native = flags(p);
+    if !has_native {
         statements::block(p);
         p.expect(T![EndFunction]);
+    }
+
+    if has_native && p.at(T![EndFunction]) {
+        p.error("If the `native` flag is specified, should not have a fn body");
     }
 
     m.complete(p, FUNCTION);
@@ -134,15 +168,6 @@ fn state_stmt(p: &mut Parser<'_>, m: Marker) {
     m.complete(p, STATE);
 }
 
-/// Peek `<Type> "Property"`
-fn at_property(p: &Parser<'_>) -> bool {
-    if !types::at_type(p) {
-        return false;
-    }
-
-    p.nth_at(1, T![Property])
-}
-
 fn property(p: &mut Parser<'_>, m: Marker) {
     types::ty(p);
 
@@ -179,14 +204,6 @@ fn property_member(p: &mut Parser<'_>) {
     function(p, fn_m);
 
     m.complete(p, PROPERTY_MEMBER);
-}
-
-fn at_var_decl(p: &Parser<'_>) -> bool {
-    if !types::at_type(p) {
-        return false;
-    }
-
-    p.nth_at(1, T![ident])
 }
 
 fn var_decl_stmt(p: &mut Parser<'_>, m: Marker) {

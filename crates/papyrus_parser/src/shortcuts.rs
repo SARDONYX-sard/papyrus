@@ -25,17 +25,39 @@ pub enum StrStep<'a> {
 }
 
 impl LexedStr<'_> {
-    pub fn to_input(&self) -> crate::Input {
+    pub fn to_input(&self, custom_flags: &[String]) -> crate::Input {
         let _p = tracing::info_span!("LexedStr::to_input").entered();
         let mut res = crate::Input::with_capacity(self.len());
         let mut was_joint = false;
-        for i in 0..self.len() {
+
+        let mut i = 0;
+        while i < self.len() {
             let kind = self.kind(i);
+
+            // `\` immediately followed by a newline is a line-continuation
+            // escape (e.g. `1 + \` then `1` parses as `1 + 1`). Both tokens
+            // are pure trivia: swallow them without touching `was_joint`
+            // or `sig_state`.
+            if kind == SyntaxKind::BACK_SLASH
+                && i + 1 < self.len()
+                && self.kind(i + 1) == SyntaxKind::NEWLINE
+            {
+                i += 2;
+                continue;
+            }
+
             if kind.is_trivia() {
                 was_joint = false
             } else if kind == SyntaxKind::IDENT {
                 let token_text = self.text(i);
-                res.push_ident(SyntaxKind::from_keyword(token_text).unwrap_or(SyntaxKind::IDENT))
+                let kind = match custom_flags
+                    .iter()
+                    .find(|flags| flags.eq_ignore_ascii_case(token_text))
+                {
+                    Some(_flags) => SyntaxKind::CUSTOM_FLAG,
+                    None => SyntaxKind::from_keyword(token_text).unwrap_or(SyntaxKind::IDENT),
+                };
+                res.push_ident(kind)
             } else {
                 if was_joint {
                     res.was_joint();
@@ -54,6 +76,8 @@ impl LexedStr<'_> {
                     was_joint = true;
                 }
             }
+
+            i += 1;
         }
         res
     }
@@ -270,12 +294,9 @@ fn n_attached_trivias<'a>(
 }
 
 fn is_outer(text: &str) -> bool {
-    if text.starts_with("////") || text.starts_with("/***") {
-        return false;
-    }
-    text.starts_with("///") || text.starts_with("/**")
+    text.starts_with('{') || text.starts_with("/**")
 }
 
 fn is_inner(text: &str) -> bool {
-    text.starts_with("//!") || text.starts_with("/*!")
+    text.starts_with(";/")
 }

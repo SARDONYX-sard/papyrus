@@ -9,11 +9,12 @@ use crate::{SyntaxError, SyntaxTreeBuilder, syntax_node::GreenNode};
 
 pub(crate) use crate::parsing::reparsing::incremental_reparse;
 
-pub(crate) fn parse_text(text: &str) -> (GreenNode, Vec<SyntaxError>) {
+pub(crate) fn parse_text(text: &str, custom_flags: &[String]) -> (GreenNode, Vec<SyntaxError>) {
     let _p = tracing::info_span!("parse_text").entered();
     let lexed = papyrus_parser::LexedStr::new(text);
-    let parser_input = lexed.to_input();
+    let parser_input = lexed.to_input(custom_flags);
     let parser_output = papyrus_parser::TopEntryPoint::SourceFile.parse(&parser_input);
+
     let (node, errors, _eof) = build_tree(lexed, parser_output);
     (node, errors)
 }
@@ -21,10 +22,11 @@ pub(crate) fn parse_text(text: &str) -> (GreenNode, Vec<SyntaxError>) {
 pub(crate) fn parse_text_at(
     text: &str,
     entry: papyrus_parser::TopEntryPoint,
+    custom_flags: &[String],
 ) -> (GreenNode, Vec<SyntaxError>) {
     let _p = tracing::info_span!("parse_text_at").entered();
     let lexed = papyrus_parser::LexedStr::new(text);
-    let parser_input = lexed.to_input();
+    let parser_input = lexed.to_input(custom_flags);
     let parser_output = entry.parse(&parser_input);
     let (node, errors, _eof) = build_tree(lexed, parser_output);
     (node, errors)

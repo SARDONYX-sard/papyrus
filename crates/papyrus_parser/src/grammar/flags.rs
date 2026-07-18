@@ -1,26 +1,38 @@
 use super::*;
 
-pub(super) fn flags(p: &mut Parser<'_>) {
+pub(super) fn flags(p: &mut Parser<'_>) -> bool {
+    let mut has_native = false;
+
     while at_flag_modifier(p) {
-        flag_modifier(p);
+        has_native = flag_modifier(p);
     }
+
+    has_native
 }
 
-fn flag_modifier(p: &mut Parser<'_>) {
+fn flag_modifier(p: &mut Parser<'_>) -> bool {
+    let mut has_native = false;
+
     let m = p.start();
 
     match p.current() {
-        T![Native] | T![Global] | T![Auto] | T![AutoReadOnly] | T![ident] => {
+        T![Native] => {
+            p.bump_any();
+            has_native = true;
+        }
+        T![Global] | T![Auto] | T![AutoReadOnly] | SyntaxKind::CUSTOM_FLAG => {
             p.bump_any();
         }
-        _ => {
-            p.error("expected flag modifier");
-        }
+        invalid => p.error(format!("expected flag modifier. but got {invalid:?}")),
     }
 
     m.complete(p, FLAG_MODIFIER);
+    has_native
 }
 
 fn at_flag_modifier(p: &Parser<'_>) -> bool {
-    matches!(p.current(), T![Native] | T![Global] | T![Auto] | T![AutoReadOnly] | T![ident])
+    matches!(
+        p.current(),
+        T![Native] | T![Global] | T![Auto] | T![AutoReadOnly] | SyntaxKind::CUSTOM_FLAG
+    )
 }

@@ -17,7 +17,7 @@ pub(crate) fn generate_kinds(kinds: KindsSrc) -> Result<String> {
         .unzip();
 
     let punctuation_values = kinds.punct.iter().map(|(token, _name)| {
-        if "{}[]()".contains(token) {
+        if "{}[]()\\".contains(token) {
             let c = token.chars().next().unwrap();
             quote! { #c }
         } else {

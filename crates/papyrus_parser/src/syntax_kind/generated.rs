@@ -33,6 +33,7 @@ pub enum SyntaxKind {
     MINUS,
     STAR,
     SLASH,
+    BACK_SLASH,
     PERCENT,
     LT,
     GT,
@@ -86,6 +87,7 @@ pub enum SyntaxKind {
     STRING,
     ERROR,
     IDENT,
+    CUSTOM_FLAG,
     WHITESPACE,
     NEWLINE,
     COMMENT,
@@ -199,6 +201,7 @@ impl SyntaxKind {
                 | MINUS
                 | STAR
                 | SLASH
+                | BACK_SLASH
                 | PERCENT
                 | LT
                 | GT
@@ -269,6 +272,7 @@ impl SyntaxKind {
             '-' => MINUS,
             '*' => STAR,
             '/' => SLASH,
+            '\\' => BACK_SLASH,
             '%' => PERCENT,
             '<' => LT,
             '>' => GT,
@@ -299,6 +303,7 @@ macro_rules ! S_ {
     [-] => { $ crate :: SyntaxKind :: MINUS };
     [*] => { $ crate :: SyntaxKind :: STAR };
     [/] => { $ crate :: SyntaxKind :: SLASH };
+    ['\\'] => { $ crate :: SyntaxKind :: BACK_SLASH };
     [%] => { $ crate :: SyntaxKind :: PERCENT };
     [<] => { $ crate :: SyntaxKind :: LT };
     [>] => { $ crate :: SyntaxKind :: GT };

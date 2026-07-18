@@ -203,9 +203,10 @@ impl<'a> Converter<'a> {
                     }
                     COMMENT
                 }
-                papyrus_lexer::TokenKind::BackSlash | papyrus_lexer::TokenKind::Whitespace => {
-                    WHITESPACE
-                }
+                papyrus_lexer::TokenKind::Whitespace => WHITESPACE,
+
+                papyrus_lexer::TokenKind::BackSlash => BACK_SLASH,
+                papyrus_lexer::TokenKind::LineFeed => NEWLINE,
 
                 papyrus_lexer::TokenKind::Ident => {
                     SyntaxKind::from_keyword(token_text).unwrap_or(IDENT)

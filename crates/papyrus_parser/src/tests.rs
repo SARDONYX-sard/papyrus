@@ -4,10 +4,15 @@ use crate::{LexedStr, TopEntryPoint};
 use expect_test::Expect;
 pub(crate) use expect_test::expect;
 
-pub(crate) fn parse(entry: TopEntryPoint, text: &str) -> (String, bool) {
+pub(crate) fn parse(entry: TopEntryPoint, text: &str, custom_flags: &[String]) -> (String, bool) {
     let lexed = LexedStr::new(text);
-    let input = lexed.to_input();
+    let input = lexed.to_input(custom_flags);
     let output = entry.parse(&input);
+
+    if cfg!(test) {
+        let steps: Vec<_> = output.iter().collect();
+        std::fs::write("../../target/dump.log", format!("{steps:#?}")).unwrap();
+    }
 
     let mut buf = String::new();
     let mut errors = Vec::new();
@@ -57,8 +62,30 @@ pub(crate) fn parse(entry: TopEntryPoint, text: &str) -> (String, bool) {
     (buf, has_errors)
 }
 
+pub(crate) fn check(src: &str, expect: Expect) {
+    let (tree, errors) = parse(TopEntryPoint::SourceFile, src, &[]);
+
+    assert!(!errors);
+
+    expect.assert_eq(&tree);
+}
+
+pub(crate) fn check_with_flags(src: &str, expect: Expect, custom_flags: &[String]) {
+    let (tree, errors) = parse(TopEntryPoint::SourceFile, src, custom_flags);
+
+    assert!(!errors);
+
+    expect.assert_eq(&tree);
+}
+
+pub(crate) fn check_errors(src: &str, expect: Expect) {
+    let (tree, _) = parse(TopEntryPoint::SourceFile, src, &[]);
+
+    expect.assert_eq(&tree);
+}
+
 pub(crate) fn check_expr(src: &str, expect: Expect) {
-    let (tree, errors) = parse(TopEntryPoint::Expr, src);
+    let (tree, errors) = parse(TopEntryPoint::Expr, src, &[]);
 
     assert!(!errors);
 
@@ -66,7 +93,7 @@ pub(crate) fn check_expr(src: &str, expect: Expect) {
 }
 
 pub(crate) fn check_expr_errors(src: &str, expect: Expect) {
-    let (tree, _) = parse(TopEntryPoint::Expr, src);
+    let (tree, _) = parse(TopEntryPoint::Expr, src, &[]);
 
     expect.assert_eq(&tree);
 }
