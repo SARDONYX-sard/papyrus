@@ -64,9 +64,7 @@ fn reparse_token(
             let mut new_text = get_text_after_edit(prev_token.clone().into(), delete, insert);
             let (new_token_kind, new_err) = parser::LexedStr::single_token(&new_text)?;
 
-            if new_token_kind != prev_token_kind
-                || (new_token_kind == IDENT && is_contextual_kw(&new_text))
-            {
+            if new_token_kind != prev_token_kind || (new_token_kind == IDENT) {
                 return None;
             }
 
@@ -127,10 +125,6 @@ fn get_text_after_edit(element: SyntaxElement, mut delete: TextRange, insert: &s
     text
 }
 
-fn is_contextual_kw(text: &str) -> bool {
-    matches!(text, "auto" | "default" | "union")
-}
-
 fn find_reparsable_node(node: &SyntaxNode, range: TextRange) -> Option<(SyntaxNode, Reparser)> {
     let node = node.covering_element(range);
 
@@ -140,26 +134,6 @@ fn find_reparsable_node(node: &SyntaxNode, range: TextRange) -> Option<(SyntaxNo
         Reparser::for_node(node.kind(), first_child, parent).map(|r| (node, r))
     })
 }
-
-// fn is_balanced(lexed: &parser::LexedStr<'_>) -> bool {
-//     if lexed.is_empty() || lexed.kind(0) != T!['{'] || lexed.kind(lexed.len() - 1) != T!['}'] {
-//         return false;
-//     }
-//     let mut balance = 0usize;
-//     for i in 1..lexed.len() - 1 {
-//         match lexed.kind(i) {
-//             T!['{'] => balance += 1,
-//             T!['}'] => {
-//                 balance = match balance.checked_sub(1) {
-//                     Some(b) => b,
-//                     None => return false,
-//                 }
-//             }
-//             _ => (),
-//         }
-//     }
-//     balance == 0
-// }
 
 fn merge_errors(
     old_errors: impl IntoIterator<Item = SyntaxError>,
