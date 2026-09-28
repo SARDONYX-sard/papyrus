@@ -34,7 +34,7 @@ pub enum TopEntryPoint {
 impl TopEntryPoint {
     pub fn parse(self, input: &Input) -> Output {
         let entry: fn(&mut parser::Parser<'_>) = match self {
-            TopEntryPoint::SourceFile => grammar::items::source_file,
+            TopEntryPoint::SourceFile => grammar::source_file,
             TopEntryPoint::Expr => grammar::expressions::expr,
             TopEntryPoint::Type => grammar::types::ty,
         };

@@ -72,6 +72,11 @@ pub(crate) fn generate_nodes(kinds: KindsSrc, grammar: &CstSrc) -> Result<String
                         }
                         fn syntax(&self) -> &SyntaxNode { &self.syntax }
                     }
+                    impl core::fmt::Display for #name {
+                        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                            core::fmt::Display::fmt(self.syntax(), f)
+                        }
+                    }
                 },
             )
         })
@@ -116,6 +121,12 @@ pub(crate) fn generate_nodes(kinds: KindsSrc, grammar: &CstSrc) -> Result<String
                                 #name::#variants(it) => it.syntax(),
                                 )*
                             }
+                        }
+                    }
+
+                    impl core::fmt::Display for #name {
+                        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                            core::fmt::Display::fmt(self.syntax(), f)
                         }
                     }
                 }

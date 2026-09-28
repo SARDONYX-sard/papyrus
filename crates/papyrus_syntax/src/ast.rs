@@ -1,6 +1,7 @@
 //! Abstract Syntax Tree, layered on top of untyped `SyntaxNode`s
 
 mod generated;
+mod make;
 mod token_ext;
 
 use std::marker::PhantomData;

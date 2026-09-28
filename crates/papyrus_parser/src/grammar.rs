@@ -42,6 +42,18 @@ use crate::{
     parser::{CompletedMarker, Marker, Parser},
 };
 
+pub(crate) fn source_file(p: &mut Parser<'_>) {
+    let m = p.start();
+
+    header::header(p);
+
+    while !p.at(EOF) {
+        items::item(p);
+    }
+
+    m.complete(p, SOURCE_FILE);
+}
+
 pub(crate) fn reparser(
     node: SyntaxKind,
     first_child: Option<SyntaxKind>,

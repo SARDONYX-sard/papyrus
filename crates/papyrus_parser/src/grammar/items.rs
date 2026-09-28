@@ -1,23 +1,7 @@
 //! Parse top-level items.
 
-use self::{flags::flags, header::header, params, types};
+use self::{flags::flags, params, types};
 use super::*;
-
-pub(crate) fn source_file(p: &mut Parser<'_>) {
-    let m = p.start();
-
-    header(p);
-
-    mod_contents(p);
-
-    m.complete(p, SOURCE_FILE);
-}
-
-fn mod_contents(p: &mut Parser<'_>) {
-    while !p.at(EOF) {
-        item(p);
-    }
-}
 
 pub(crate) fn item(p: &mut Parser<'_>) {
     let m = p.start();

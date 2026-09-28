@@ -446,12 +446,22 @@ impl AstNode for SourceFile {
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
 }
+impl core::fmt::Display for SourceFile {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
+}
 impl AstNode for Script {
     fn can_cast(kind: SyntaxKind) -> bool { kind == SCRIPT }
     fn cast(syntax: SyntaxNode) -> Option<Self> {
         if Self::can_cast(syntax.kind()) { Some(Self { syntax }) } else { None }
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
+}
+impl core::fmt::Display for Script {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
 }
 impl AstNode for Header {
     fn can_cast(kind: SyntaxKind) -> bool { kind == HEADER }
@@ -460,12 +470,22 @@ impl AstNode for Header {
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
 }
+impl core::fmt::Display for Header {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
+}
 impl AstNode for ScriptNameDecl {
     fn can_cast(kind: SyntaxKind) -> bool { kind == SCRIPT_NAME_DECL }
     fn cast(syntax: SyntaxNode) -> Option<Self> {
         if Self::can_cast(syntax.kind()) { Some(Self { syntax }) } else { None }
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
+}
+impl core::fmt::Display for ScriptNameDecl {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
 }
 impl AstNode for ExtendsClause {
     fn can_cast(kind: SyntaxKind) -> bool { kind == EXTENDS_CLAUSE }
@@ -474,12 +494,22 @@ impl AstNode for ExtendsClause {
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
 }
+impl core::fmt::Display for ExtendsClause {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
+}
 impl AstNode for FlagModifier {
     fn can_cast(kind: SyntaxKind) -> bool { kind == FLAG_MODIFIER }
     fn cast(syntax: SyntaxNode) -> Option<Self> {
         if Self::can_cast(syntax.kind()) { Some(Self { syntax }) } else { None }
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
+}
+impl core::fmt::Display for FlagModifier {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
 }
 impl AstNode for Name {
     fn can_cast(kind: SyntaxKind) -> bool { kind == NAME }
@@ -488,12 +518,22 @@ impl AstNode for Name {
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
 }
+impl core::fmt::Display for Name {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
+}
 impl AstNode for NameRef {
     fn can_cast(kind: SyntaxKind) -> bool { kind == NAME_REF }
     fn cast(syntax: SyntaxNode) -> Option<Self> {
         if Self::can_cast(syntax.kind()) { Some(Self { syntax }) } else { None }
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
+}
+impl core::fmt::Display for NameRef {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
 }
 impl AstNode for Import {
     fn can_cast(kind: SyntaxKind) -> bool { kind == IMPORT }
@@ -502,12 +542,22 @@ impl AstNode for Import {
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
 }
+impl core::fmt::Display for Import {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
+}
 impl AstNode for VarDeclStmt {
     fn can_cast(kind: SyntaxKind) -> bool { kind == VAR_DECL_STMT }
     fn cast(syntax: SyntaxNode) -> Option<Self> {
         if Self::can_cast(syntax.kind()) { Some(Self { syntax }) } else { None }
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
+}
+impl core::fmt::Display for VarDeclStmt {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
 }
 impl AstNode for InlineProperty {
     fn can_cast(kind: SyntaxKind) -> bool { kind == INLINE_PROPERTY }
@@ -516,12 +566,22 @@ impl AstNode for InlineProperty {
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
 }
+impl core::fmt::Display for InlineProperty {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
+}
 impl AstNode for FullProperty {
     fn can_cast(kind: SyntaxKind) -> bool { kind == FULL_PROPERTY }
     fn cast(syntax: SyntaxNode) -> Option<Self> {
         if Self::can_cast(syntax.kind()) { Some(Self { syntax }) } else { None }
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
+}
+impl core::fmt::Display for FullProperty {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
 }
 impl AstNode for State {
     fn can_cast(kind: SyntaxKind) -> bool { kind == STATE }
@@ -530,12 +590,22 @@ impl AstNode for State {
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
 }
+impl core::fmt::Display for State {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
+}
 impl AstNode for Function {
     fn can_cast(kind: SyntaxKind) -> bool { kind == FUNCTION }
     fn cast(syntax: SyntaxNode) -> Option<Self> {
         if Self::can_cast(syntax.kind()) { Some(Self { syntax }) } else { None }
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
+}
+impl core::fmt::Display for Function {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
 }
 impl AstNode for Event {
     fn can_cast(kind: SyntaxKind) -> bool { kind == EVENT }
@@ -544,12 +614,22 @@ impl AstNode for Event {
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
 }
+impl core::fmt::Display for Event {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
+}
 impl AstNode for Type {
     fn can_cast(kind: SyntaxKind) -> bool { kind == TYPE }
     fn cast(syntax: SyntaxNode) -> Option<Self> {
         if Self::can_cast(syntax.kind()) { Some(Self { syntax }) } else { None }
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
+}
+impl core::fmt::Display for Type {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
 }
 impl AstNode for ArraySuffix {
     fn can_cast(kind: SyntaxKind) -> bool { kind == ARRAY_SUFFIX }
@@ -558,12 +638,22 @@ impl AstNode for ArraySuffix {
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
 }
+impl core::fmt::Display for ArraySuffix {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
+}
 impl AstNode for PrimitiveType {
     fn can_cast(kind: SyntaxKind) -> bool { kind == PRIMITIVE_TYPE }
     fn cast(syntax: SyntaxNode) -> Option<Self> {
         if Self::can_cast(syntax.kind()) { Some(Self { syntax }) } else { None }
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
+}
+impl core::fmt::Display for PrimitiveType {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
 }
 impl AstNode for CustomType {
     fn can_cast(kind: SyntaxKind) -> bool { kind == CUSTOM_TYPE }
@@ -572,12 +662,22 @@ impl AstNode for CustomType {
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
 }
+impl core::fmt::Display for CustomType {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
+}
 impl AstNode for ParamList {
     fn can_cast(kind: SyntaxKind) -> bool { kind == PARAM_LIST }
     fn cast(syntax: SyntaxNode) -> Option<Self> {
         if Self::can_cast(syntax.kind()) { Some(Self { syntax }) } else { None }
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
+}
+impl core::fmt::Display for ParamList {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
 }
 impl AstNode for Param {
     fn can_cast(kind: SyntaxKind) -> bool { kind == PARAM }
@@ -586,12 +686,22 @@ impl AstNode for Param {
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
 }
+impl core::fmt::Display for Param {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
+}
 impl AstNode for Initializer {
     fn can_cast(kind: SyntaxKind) -> bool { kind == INITIALIZER }
     fn cast(syntax: SyntaxNode) -> Option<Self> {
         if Self::can_cast(syntax.kind()) { Some(Self { syntax }) } else { None }
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
+}
+impl core::fmt::Display for Initializer {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
 }
 impl AstNode for PropertyMember {
     fn can_cast(kind: SyntaxKind) -> bool { kind == PROPERTY_MEMBER }
@@ -600,12 +710,22 @@ impl AstNode for PropertyMember {
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
 }
+impl core::fmt::Display for PropertyMember {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
+}
 impl AstNode for ReturnType {
     fn can_cast(kind: SyntaxKind) -> bool { kind == RETURN_TYPE }
     fn cast(syntax: SyntaxNode) -> Option<Self> {
         if Self::can_cast(syntax.kind()) { Some(Self { syntax }) } else { None }
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
+}
+impl core::fmt::Display for ReturnType {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
 }
 impl AstNode for Block {
     fn can_cast(kind: SyntaxKind) -> bool { kind == BLOCK }
@@ -614,12 +734,22 @@ impl AstNode for Block {
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
 }
+impl core::fmt::Display for Block {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
+}
 impl AstNode for AssignStmt {
     fn can_cast(kind: SyntaxKind) -> bool { kind == ASSIGN_STMT }
     fn cast(syntax: SyntaxNode) -> Option<Self> {
         if Self::can_cast(syntax.kind()) { Some(Self { syntax }) } else { None }
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
+}
+impl core::fmt::Display for AssignStmt {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
 }
 impl AstNode for ReturnStmt {
     fn can_cast(kind: SyntaxKind) -> bool { kind == RETURN_STMT }
@@ -628,12 +758,22 @@ impl AstNode for ReturnStmt {
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
 }
+impl core::fmt::Display for ReturnStmt {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
+}
 impl AstNode for IfStmt {
     fn can_cast(kind: SyntaxKind) -> bool { kind == IF_STMT }
     fn cast(syntax: SyntaxNode) -> Option<Self> {
         if Self::can_cast(syntax.kind()) { Some(Self { syntax }) } else { None }
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
+}
+impl core::fmt::Display for IfStmt {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
 }
 impl AstNode for WhileStmt {
     fn can_cast(kind: SyntaxKind) -> bool { kind == WHILE_STMT }
@@ -642,12 +782,22 @@ impl AstNode for WhileStmt {
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
 }
+impl core::fmt::Display for WhileStmt {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
+}
 impl AstNode for ExprStmt {
     fn can_cast(kind: SyntaxKind) -> bool { kind == EXPR_STMT }
     fn cast(syntax: SyntaxNode) -> Option<Self> {
         if Self::can_cast(syntax.kind()) { Some(Self { syntax }) } else { None }
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
+}
+impl core::fmt::Display for ExprStmt {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
 }
 impl AstNode for ElseIfBranch {
     fn can_cast(kind: SyntaxKind) -> bool { kind == ELSE_IF_BRANCH }
@@ -656,12 +806,22 @@ impl AstNode for ElseIfBranch {
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
 }
+impl core::fmt::Display for ElseIfBranch {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
+}
 impl AstNode for ElseBranch {
     fn can_cast(kind: SyntaxKind) -> bool { kind == ELSE_BRANCH }
     fn cast(syntax: SyntaxNode) -> Option<Self> {
         if Self::can_cast(syntax.kind()) { Some(Self { syntax }) } else { None }
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
+}
+impl core::fmt::Display for ElseBranch {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
 }
 impl AstNode for BinExpr {
     fn can_cast(kind: SyntaxKind) -> bool { kind == BIN_EXPR }
@@ -670,12 +830,22 @@ impl AstNode for BinExpr {
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
 }
+impl core::fmt::Display for BinExpr {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
+}
 impl AstNode for PrefixExpr {
     fn can_cast(kind: SyntaxKind) -> bool { kind == PREFIX_EXPR }
     fn cast(syntax: SyntaxNode) -> Option<Self> {
         if Self::can_cast(syntax.kind()) { Some(Self { syntax }) } else { None }
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
+}
+impl core::fmt::Display for PrefixExpr {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
 }
 impl AstNode for CallExpr {
     fn can_cast(kind: SyntaxKind) -> bool { kind == CALL_EXPR }
@@ -684,12 +854,22 @@ impl AstNode for CallExpr {
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
 }
+impl core::fmt::Display for CallExpr {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
+}
 impl AstNode for MethodCallExpr {
     fn can_cast(kind: SyntaxKind) -> bool { kind == METHOD_CALL_EXPR }
     fn cast(syntax: SyntaxNode) -> Option<Self> {
         if Self::can_cast(syntax.kind()) { Some(Self { syntax }) } else { None }
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
+}
+impl core::fmt::Display for MethodCallExpr {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
 }
 impl AstNode for IndexExpr {
     fn can_cast(kind: SyntaxKind) -> bool { kind == INDEX_EXPR }
@@ -698,12 +878,22 @@ impl AstNode for IndexExpr {
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
 }
+impl core::fmt::Display for IndexExpr {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
+}
 impl AstNode for FieldExpr {
     fn can_cast(kind: SyntaxKind) -> bool { kind == FIELD_EXPR }
     fn cast(syntax: SyntaxNode) -> Option<Self> {
         if Self::can_cast(syntax.kind()) { Some(Self { syntax }) } else { None }
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
+}
+impl core::fmt::Display for FieldExpr {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
 }
 impl AstNode for CastExpr {
     fn can_cast(kind: SyntaxKind) -> bool { kind == CAST_EXPR }
@@ -712,12 +902,22 @@ impl AstNode for CastExpr {
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
 }
+impl core::fmt::Display for CastExpr {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
+}
 impl AstNode for NewExpr {
     fn can_cast(kind: SyntaxKind) -> bool { kind == NEW_EXPR }
     fn cast(syntax: SyntaxNode) -> Option<Self> {
         if Self::can_cast(syntax.kind()) { Some(Self { syntax }) } else { None }
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
+}
+impl core::fmt::Display for NewExpr {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
 }
 impl AstNode for ParenExpr {
     fn can_cast(kind: SyntaxKind) -> bool { kind == PAREN_EXPR }
@@ -726,6 +926,11 @@ impl AstNode for ParenExpr {
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
 }
+impl core::fmt::Display for ParenExpr {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
+}
 impl AstNode for Literal {
     fn can_cast(kind: SyntaxKind) -> bool { kind == LITERAL }
     fn cast(syntax: SyntaxNode) -> Option<Self> {
@@ -733,12 +938,22 @@ impl AstNode for Literal {
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
 }
+impl core::fmt::Display for Literal {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
+}
 impl AstNode for ArgList {
     fn can_cast(kind: SyntaxKind) -> bool { kind == ARG_LIST }
     fn cast(syntax: SyntaxNode) -> Option<Self> {
         if Self::can_cast(syntax.kind()) { Some(Self { syntax }) } else { None }
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
+}
+impl core::fmt::Display for ArgList {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
 }
 impl From<Import> for Item {
     fn from(node: Import) -> Item { Item::Import(node) }
@@ -793,6 +1008,11 @@ impl AstNode for Item {
         }
     }
 }
+impl core::fmt::Display for Item {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
+}
 impl From<PrimitiveType> for BaseType {
     fn from(node: PrimitiveType) -> BaseType { BaseType::PrimitiveType(node) }
 }
@@ -816,6 +1036,11 @@ impl AstNode for BaseType {
         }
     }
 }
+impl core::fmt::Display for BaseType {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
+    }
+}
 impl From<Function> for StateMember {
     fn from(node: Function) -> StateMember { StateMember::Function(node) }
 }
@@ -837,6 +1062,11 @@ impl AstNode for StateMember {
             StateMember::Function(it) => it.syntax(),
             StateMember::Event(it) => it.syntax(),
         }
+    }
+}
+impl core::fmt::Display for StateMember {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
     }
 }
 impl From<VarDeclStmt> for Stmt {
@@ -882,6 +1112,11 @@ impl AstNode for Stmt {
             Stmt::WhileStmt(it) => it.syntax(),
             Stmt::ExprStmt(it) => it.syntax(),
         }
+    }
+}
+impl core::fmt::Display for Stmt {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
     }
 }
 impl From<BinExpr> for Expr {
@@ -965,5 +1200,10 @@ impl AstNode for Expr {
             Expr::Literal(it) => it.syntax(),
             Expr::NameRef(it) => it.syntax(),
         }
+    }
+}
+impl core::fmt::Display for Expr {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.syntax(), f)
     }
 }
