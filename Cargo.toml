@@ -37,15 +37,18 @@ debug = 2
 
 [workspace.dependencies]
 # local crates
+papyrus_compiler = { path = "./crates/papyrus_compiler", version = "0.0.0" }
 papyrus_fmt = { path = "./crates/papyrus_fmt", version = "0.0.0" }
 papyrus_ide = { path = "./crates/papyrus_ide", version = "0.0.0" }
 papyrus_intern = { path = "./crates/papyrus_intern", version = "0.0.0" }
 papyrus_lexer = { path = "./crates/papyrus_lexer", version = "0.0.0" }
+papyrus_pex = { path = "./crates/papyrus_pex", version = "0.1.0" }
 papyrus_parser = { path = "./crates/papyrus_parser", version = "0.0.0" }
 papyrus_project = { path = "./crates/papyrus_project", version = "0.0.0" }
 skyrim_data_dir = { path = "./crates/skyrim_data_dir", version = "0.1.0" }
 
 # non-local crates
+annotate-snippets = "0.12.17"
 anyhow = "1.0.98"
 bitflags = "2.13.2"
 camino = "1.2.2"

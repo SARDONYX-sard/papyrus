@@ -3,8 +3,10 @@
 //! Speaks the Language Server Protocol over stdio. Logs go to stderr and are
 //! controlled with the `RUST_LOG` environment variable (default: `info`).
 
+mod compile;
 mod config;
 mod conv;
+mod disasm;
 mod ext;
 mod fmt;
 mod handlers;
@@ -30,6 +32,12 @@ fn main() -> anyhow::Result<()> {
     if args.iter().any(|a| a == "--help" || a == "-h") {
         println!("{}", config::USAGE);
         return Ok(());
+    }
+    if args.first().is_some_and(|a| a == "compile") {
+        std::process::exit(compile::run(&args[1..]));
+    }
+    if args.first().is_some_and(|a| a == "disasm") {
+        std::process::exit(disasm::run(&args[1..]));
     }
     if args.first().is_some_and(|a| a == "fmt") {
         let code = fmt::run(&args[1..]);

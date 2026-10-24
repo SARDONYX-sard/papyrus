@@ -137,10 +137,12 @@ fn check_duplicates(sema: &Sema<'_>, out: &mut Vec<Diagnostic>) {
         if let Some(&first) = seen.get(&key) {
             let first = &sema.index.members[first];
             if m.kind == MemberKind::State && first.kind == MemberKind::State {
-                out.push(Diagnostic::error(
+                // The compiler merges the blocks (vanilla scripts do this);
+                // duplicate functions are reported per state above.
+                out.push(Diagnostic::warning(
                     m.name_range,
-                    "duplicate-definition",
-                    format!("state `{}` is already defined", m.name),
+                    "duplicate-state",
+                    format!("state `{}` is declared again; the blocks are merged", m.name),
                 ));
             } else {
                 out.push(Diagnostic::error(

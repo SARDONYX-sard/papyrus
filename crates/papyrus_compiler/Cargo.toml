@@ -1,0 +1,38 @@
+[package]
+name = "papyrus_compiler"
+version = "0.0.0"
+description = "Compiler of Papyrus scripts to .pex files."
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+doctest = false
+
+[[bin]]
+name = "papyrus_compiler"
+path = "src/main.rs"
+
+[features]
+default = ["log"]
+# Progress logs of the compiler (`-log` on the command line).
+log = ["dep:tracing", "dep:tracing-subscriber"]
+
+[dependencies]
+annotate-snippets.workspace = true
+papyrus_ide.workspace = true
+papyrus_intern.workspace = true
+papyrus_lexer.workspace = true
+papyrus_parser.workspace = true
+papyrus_pex.workspace = true
+
+rustc-hash.workspace = true
+tracing = { workspace = true, optional = true }
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["ansi", "env-filter", "fmt", "std"], optional = true }
+
+[dev-dependencies]
+expect-test.workspace = true
+
+[lints]
+workspace = true
