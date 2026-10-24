@@ -1,5 +1,7 @@
 # Papyrus
 
+![lsp](https://github.com/user-attachments/assets/57595025-640f-4f9a-b418-91d32051996b)
+
 Inspired:
 
 - [russo-2025/papyrus-compiler](https://github.com/russo-2025/papyrus-compiler)
