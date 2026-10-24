@@ -2,18 +2,19 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "npm: compile",
+      // Unminified extension with a source map, and a debug build of the server.
+      "label": "npm: debug",
       "type": "shell",
       "command": "npm",
-      "args": ["run", "compile"],
+      "args": ["run", "debug"],
       "problemMatcher": []
     },
     {
+      // Minified extension and a release build of the server.
       "label": "npm: release",
       "type": "shell",
       "command": "npm",
       "args": ["run", "release"],
-      "dependsOn": ["npm: compile"],
       "problemMatcher": []
     }
   ]

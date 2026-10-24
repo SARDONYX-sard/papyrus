@@ -1,13 +1,16 @@
 {
+  // Type checking only (`npm run check`); Vite bundles the extension.
   "compilerOptions": {
-    "module": "commonjs",
-    "target": "ES2020",
-    "outDir": "../dist",
-    "lib": ["ES2020"],
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022"],
     "types": ["node"],
     "strict": true,
-    "sourceMap": true,
-    "rootDir": "."
+    "noEmit": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true
   },
-  "include": ["."]
+  "include": ["src", "vite.config.ts"]
 }

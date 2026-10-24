@@ -9,10 +9,10 @@
 !syntaxes/**
 !schemas/**
 
-# The compiled extension and the server binary (see dist.js).
+# The bundled extension (see extension/vite.config.ts) and the server binary (see dist.js).
 !dist/extension.js
 !dist/papyrus_analyzer
 !dist/papyrus_analyzer.exe
 
-# vsce only collects production dependencies here.
-!node_modules/**
+# The grammar generator.
+syntaxes/*.mjs

@@ -54,10 +54,12 @@ if (vsix) {
     console.log(`> ${cmd}`);
     execSync(cmd, { cwd: __dirname, stdio: "inherit" });
   };
-  run("npx tsc -p ./extension");
+  run("npm run check");
+  run("npm run compile");
   const platform = target ? PLATFORMS[target] : undefined;
   if (target && !platform) throw new Error(`no VS Code platform for target ${target}`);
   const out = `papyrus-analyzer${platform ? `-${platform}` : ""}.vsix`;
-  run(`npx --yes @vscode/vsce package ${platform ? `--target ${platform}` : ""} --out ${out}`);
+  // Vite bundles the dependencies into dist/extension.js.
+  run(`npx --yes @vscode/vsce package --no-dependencies ${platform ? `--target ${platform}` : ""} --out ${out}`);
   console.log(`packaged ${out}`);
 }

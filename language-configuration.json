@@ -7,23 +7,64 @@
     ["(", ")"],
     ["[", "]"]
   ],
+  "colorizedBracketPairs": [
+    ["(", ")"],
+    ["[", "]"]
+  ],
   "autoClosingPairs": [
     { "open": "(", "close": ")" },
     { "open": "[", "close": "]" },
-    { "open": "{", "close": "}", "notIn": ["string"] },
-    { "open": "\"", "close": "\"", "notIn": ["string", "comment"] }
+    { "open": "\"", "close": "\"", "notIn": ["string", "comment"] },
+    // `{ documentation }` after declarations.
+    { "open": "{", "close": "}", "notIn": ["string", "comment"] },
+    { "open": ";/", "close": " /;", "notIn": ["string", "comment"] }
   ],
+  // Close pairs only before these characters, not in the middle of a word.
+  "autoCloseBefore": ";:.,=}])> \n\t",
   "surroundingPairs": [
     ["(", ")"],
     ["[", "]"],
     ["{", "}"],
     ["\"", "\""]
   ],
-  "wordPattern": "[A-Za-z_][A-Za-z0-9_]*|-?\\d+(\\.\\d+)?",
+  // Identifiers, and numbers with their sign and fraction for double click.
+  "wordPattern": "-?\\d+(?:\\.\\d+)?|[A-Za-z_][A-Za-z0-9_]*",
   "indentationRules": {
-    "increaseIndentPattern": "^\\s*((\\w+(\\[\\])?\\s+)?(Function|Event)\\b(?!.*\\bNative\\b)|(Auto\\s+)?State\\b|If\\b|ElseIf\\b|Else\\b|While\\b|\\w+(\\[\\])?\\s+Property\\b(?!.*\\bAuto(ReadOnly)?\\b))",
-    "decreaseIndentPattern": "^\\s*(End(Function|Event|State|If|While|Property)|ElseIf|Else)\\b"
+    // Lines opening a block: function and event headers (not `Native` ones,
+    // which have no body), states, full properties (not `Auto` ones), `If`,
+    // `ElseIf`, `Else` and `While`. Papyrus keywords ignore case.
+    "increaseIndentPattern": {
+      "pattern": "^\\s*(?:(?:\\w+(?:\\[\\])?\\s+)?(?:function|event)\\b(?![^;]*\\bnative\\b)|(?:auto\\s+)?state\\b|\\w+(?:\\[\\])?\\s+property\\b(?![^;]*\\bauto(?:readonly)?\\b)|if\\b|elseif\\b|else\\b|while\\b)",
+      "flags": "i"
+    },
+    // Lines closing a block, outdented as soon as they are typed.
+    "decreaseIndentPattern": {
+      "pattern": "^\\s*(?:end(?:function|event|state|if|while|property)|elseif|else)\\b",
+      "flags": "i"
+    },
+    // Comment and blank lines do not change the indentation.
+    "unIndentedLinePattern": {
+      "pattern": "^\\s*(?:;.*)?$"
+    }
   },
+  "onEnterRules": [
+    {
+      // Continue `;` comment lines (not `;/` block comments).
+      "beforeText": { "pattern": "^\\s*;(?!/)\\s?\\S.*$" },
+      "action": { "indent": "none", "appendText": "; " }
+    },
+    {
+      // A line continued with `\`: indent the continuation once, keep the
+      // indentation of the following continuation lines.
+      "beforeText": { "pattern": "\\\\\\s*$" },
+      "previousLineText": { "pattern": "\\\\\\s*$" },
+      "action": { "indent": "none" }
+    },
+    {
+      "beforeText": { "pattern": "\\\\\\s*$" },
+      "action": { "indent": "indent" }
+    }
+  ],
   "folding": {
     "markers": {
       "start": "^\\s*;\\s*#?region\\b",
