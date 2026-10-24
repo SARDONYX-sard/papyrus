@@ -32,6 +32,7 @@ pub use crate::{
         diagnostics::{Diagnostic, Severity, diagnostics, flag_file_diagnostics},
         folding::{Fold, FoldKind, folding_ranges},
         hover::{HoverResult, flag_file_hover, hover},
+        inlay_hints::{InlayHint, inlay_hints},
         navigation::{
             Highlight, NavFile, NavTarget, flag_references, goto_definition, highlight, references,
         },

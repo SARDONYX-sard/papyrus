@@ -4,6 +4,7 @@ pub(crate) mod completion;
 pub(crate) mod diagnostics;
 pub(crate) mod folding;
 pub(crate) mod hover;
+pub(crate) mod inlay_hints;
 pub(crate) mod keyword_docs;
 pub(crate) mod navigation;
 pub(crate) mod semantic_tokens;

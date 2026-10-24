@@ -210,6 +210,9 @@ impl Server {
             }
             CodeLensRequest::METHOD => handle::<CodeLensRequest>(self, params, Server::code_lens),
             Formatting::METHOD => handle::<Formatting>(self, params, Server::formatting),
+            InlayHintRequest::METHOD => {
+                handle::<InlayHintRequest>(self, params, Server::inlay_hints)
+            }
             FoldingRangeRequest::METHOD => {
                 handle::<FoldingRangeRequest>(self, params, Server::folding_ranges)
             }
@@ -386,7 +389,19 @@ impl Server {
         let reload = config.import_directories != self.config.import_directories
             || config.flags_file != self.config.flags_file
             || config.var != self.config.var;
+        let refresh_hints = config.inlay_hints != self.config.inlay_hints;
         self.config = config;
+        if refresh_hints
+            && self
+                .caps
+                .workspace
+                .as_ref()
+                .and_then(|w| w.inlay_hint.as_ref())
+                .and_then(|i| i.refresh_support)
+                .unwrap_or(false)
+        {
+            self.request_client::<request::InlayHintRefreshRequest>(());
+        }
         if reload {
             // Variables may change the paths of papyrus.toml too.
             self.load_project();

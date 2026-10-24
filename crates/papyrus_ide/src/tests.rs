@@ -236,6 +236,35 @@ fn diagnostics_semantic() {
 }
 
 #[test]
+fn parameter_inlay_hints() {
+    let (ws, file, _) = workspace(&[
+        ("Form.psc", FORM),
+        ("Actor.psc", ACTOR),
+        ("Debug.psc", DEBUG),
+        (
+            "Test.psc",
+            "ScriptName Test$0\nFunction F(Actor killer, Int[] arr)\n  killer.Kill(killer)\n  killer.Kill(None)\n  Debug.Trace(\"x\", aiSeverity = 1)\n  Debug.Trace(\"x\", 2)\n  arr.Find(3)\nEndFunction\n",
+        ),
+    ]);
+    let text = ws.text(file).unwrap();
+    let hints: Vec<String> = inlay_hints(&ws, file, None)
+        .into_iter()
+        .map(|h| format!("{} {}", h.label, &text[usize::from(h.offset)..usize::from(h.offset) + 4]))
+        .collect();
+    // `killer` repeats `akKiller`; named arguments get no hint.
+    assert_eq!(
+        hints,
+        [
+            "akKiller: None",
+            "asText: \"x\",",
+            "asText: \"x\",",
+            "aiSeverity: 2)\n ",
+            "akElement: 3)\nE"
+        ]
+    );
+}
+
+#[test]
 fn type_errors() {
     let (ws, file, _) = workspace(&[
         ("Form.psc", FORM),

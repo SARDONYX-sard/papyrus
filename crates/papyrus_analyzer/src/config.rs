@@ -17,9 +17,25 @@ pub(crate) struct Config {
     pub(crate) semantic_diagnostics: bool,
     /// The flags file, when `papyrus.toml` does not set one.
     pub(crate) flags_file: Option<PathBuf>,
+    /// Show parameter names before call arguments.
+    pub(crate) inlay_hints: InlayHintsConfig,
     /// Values of `${NAME}` variables, e.g. `SKYRIM_DIR`. They win over `[var]`
     /// of `papyrus.local.toml` and `papyrus.toml`.
     pub(crate) var: BTreeMap<String, String>,
+}
+
+/// The `inlayHints` settings.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub(crate) struct InlayHintsConfig {
+    /// Parameter names before call arguments.
+    pub(crate) parameter_names: bool,
+}
+
+impl Default for InlayHintsConfig {
+    fn default() -> Self {
+        InlayHintsConfig { parameter_names: true }
+    }
 }
 
 /// Options given on the command line, for editors that cannot send settings
@@ -93,6 +109,7 @@ impl Default for Config {
             semantic_diagnostics: true,
             flags_file: None,
             var: BTreeMap::new(),
+            inlay_hints: InlayHintsConfig::default(),
         }
     }
 }

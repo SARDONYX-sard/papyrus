@@ -5,9 +5,10 @@ use lsp_types::{
     CompletionParams, CompletionResponse, CompletionTextEdit, DocumentFormattingParams,
     DocumentHighlight, DocumentHighlightKind, DocumentHighlightParams, DocumentSymbolParams,
     DocumentSymbolResponse, Documentation, FoldingRange, FoldingRangeKind, FoldingRangeParams,
-    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents, HoverParams,
-    InsertTextFormat, Location, LocationLink, MarkupContent, MarkupKind, ParameterInformation,
-    ParameterLabel, Position, ReferenceParams, SemanticToken, SemanticTokens, SemanticTokensParams,
+    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents, HoverParams, InlayHint,
+    InlayHintKind, InlayHintLabel, InlayHintParams, InlayHintTooltip, InsertTextFormat, Location,
+    LocationLink, MarkupContent, MarkupKind, ParameterInformation, ParameterLabel, Position,
+    ReferenceParams, SemanticToken, SemanticTokens, SemanticTokensParams,
     SemanticTokensRangeParams, SemanticTokensRangeResult, SemanticTokensResult, SignatureHelp,
     SignatureHelpParams, SignatureInformation, SymbolInformation, TextDocumentPositionParams,
     TextEdit, WorkspaceSymbolParams, WorkspaceSymbolResponse,
@@ -459,6 +460,34 @@ impl Server {
                 None
             }
         }
+    }
+
+    pub(crate) fn inlay_hints(&mut self, params: InlayHintParams) -> Option<Vec<InlayHint>> {
+        if !self.config.inlay_hints.parameter_names {
+            return Some(Vec::new());
+        }
+        let file = self.file(&params.text_document.uri).ok()?;
+        let lines = Lines::of(&self.ws, file)?;
+        let range = lines.text_range(params.range);
+        let hints = papyrus_ide::inlay_hints(&self.ws, file, Some(range));
+        Some(
+            hints
+                .into_iter()
+                .map(|h| InlayHint {
+                    position: lines.position(h.offset),
+                    label: InlayHintLabel::String(h.label),
+                    kind: Some(InlayHintKind::PARAMETER),
+                    text_edits: None,
+                    tooltip: Some(InlayHintTooltip::MarkupContent(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: format!("```papyrus\n{}\n```", h.tooltip),
+                    })),
+                    padding_left: None,
+                    padding_right: Some(true),
+                    data: None,
+                })
+                .collect(),
+        )
     }
 
     pub(crate) fn syntax_tree(&mut self, params: ext::SyntaxTreeParams) -> String {

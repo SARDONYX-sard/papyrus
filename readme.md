@@ -7,13 +7,13 @@ Inspired:
 
 ## Crates
 
-| Crate            | Role                                                                                              |
-| ---------------- | ------------------------------------------------------------------------------------------------- |
-| `papyrus_intern` | Global, case-insensitive string interner (`Symbol`, `Name`).                                      |
-| `papyrus_lexer`  | Zero-copy lexer (`Lexer<'a>`). Newlines are tokens; `\` + newline is a line continuation.         |
-| `papyrus_parser` | Resilient, line-oriented LL parser producing a flat lossless CST viewed through `SyntaxNode<'a>`. |
-| `papyrus_ide`    | Workspace index, name resolution, type inference and IDE features, independent of LSP.            |
-| `papyrus_analyzer`    | Language server over stdio.                                                                       |
+| Crate              | Role                                                                                              |
+| ------------------ | ------------------------------------------------------------------------------------------------- |
+| `papyrus_intern`   | Global, case-insensitive string interner (`Symbol`, `Name`).                                      |
+| `papyrus_lexer`    | Zero-copy lexer (`Lexer<'a>`). Newlines are tokens; `\` + newline is a line continuation.         |
+| `papyrus_parser`   | Resilient, line-oriented LL parser producing a flat lossless CST viewed through `SyntaxNode<'a>`. |
+| `papyrus_ide`      | Workspace index, name resolution, type inference and IDE features, independent of LSP.            |
+| `papyrus_analyzer` | Language server over stdio.                                                                       |
 
 Every script of `tests/fixtures/papyrus-compiler-test-sources` must parse without errors and
 without semantic diagnostics (`cargo test`).

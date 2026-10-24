@@ -151,6 +151,11 @@
           "default": {},
           "scope": "machine-overridable",
           "markdownDescription": "Values of `${NAME}` variables used by `papyrus.toml` and by the path settings, e.g. `{ \"SKYRIM_DIR\": \"${game:SkyrimSE}\" }`. Put machine specific paths here (user settings) instead of in the committed `papyrus.toml`. Wins over `[var]` of `papyrus.local.toml` and `papyrus.toml`; an undefined variable is an error. Values may use `${game:SkyrimSE}` (installation from the registry, Windows only: `SkyrimLE`, `SkyrimSE`, `SkyrimVR`, `Enderal`, `EnderalSE`), `${env:NAME}` (environment variables) and `${workspaceFolder}`."
+        },
+        "papyrus.inlayHints.parameterNames": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show parameter names before call arguments, e.g. `Debug.Trace(asTextToPrint: msg)`. Hidden for named arguments and for arguments spelled like the parameter (`actor` for `akActor`)."
         }
       }
     },

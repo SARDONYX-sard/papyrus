@@ -81,6 +81,7 @@ fn capabilities() -> ServerCapabilities {
         folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
         code_lens_provider: Some(lsp_types::CodeLensOptions { resolve_provider: Some(false) }),
         document_formatting_provider: Some(OneOf::Left(true)),
+        inlay_hint_provider: Some(OneOf::Left(true)),
         completion_provider: Some(CompletionOptions {
             resolve_provider: Some(true),
             trigger_characters: Some(vec![".".to_owned()]),
