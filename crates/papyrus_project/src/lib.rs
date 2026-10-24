@@ -40,7 +40,10 @@ use std::{
 use serde::Deserialize;
 use toml::Spanned;
 
+mod editorconfig;
 mod vars;
+
+pub use crate::editorconfig::EditorConfig;
 
 pub use crate::vars::{
     SKYRIM_DIR, VarSource, Variables, detect_skyrim_dir, game_dir, game_script_dirs,
@@ -81,6 +84,125 @@ struct RawManifest {
     compiler: RawCompiler,
     #[serde(default)]
     build: RawBuild,
+    #[serde(default)]
+    format: RawFormat,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+struct RawFormat {
+    /// A number of spaces, or `"tab"`.
+    indent: Option<Spanned<toml::Value>>,
+    keyword_case: Option<Spanned<String>>,
+    #[serde(default)]
+    keywords: BTreeMap<String, Spanned<String>>,
+    max_blank_lines: Option<usize>,
+    newline: Option<Spanned<String>>,
+    final_newline: Option<bool>,
+}
+
+/// The `[format]` table: formatter settings shared by the team. Unset values
+/// come from `.editorconfig`, then from the editor.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FormatSettings {
+    /// `indent`: a number of spaces, or `"tab"`.
+    pub indent: Option<papyrus_fmt::Indent>,
+    /// `keyword-case`, see [`papyrus_fmt::KeywordCase::NAMES`].
+    pub keyword_case: Option<papyrus_fmt::KeywordCase>,
+    /// `[format.keywords]`: spelling of single keywords, e.g. `as = "As"`.
+    pub keywords: BTreeMap<String, String>,
+    /// `max-blank-lines`
+    pub max_blank_lines: Option<usize>,
+    /// `newline`: `"auto"`, `"lf"` or `"crlf"`.
+    pub newline: Option<papyrus_fmt::Newline>,
+    /// `final-newline`
+    pub final_newline: Option<bool>,
+}
+
+impl FormatSettings {
+    /// Applies the set values to formatter options.
+    pub fn apply(&self, options: &mut papyrus_fmt::FormatOptions) {
+        if let Some(indent) = self.indent {
+            options.indent = indent;
+        }
+        if let Some(case) = self.keyword_case {
+            options.keyword_case = case;
+        }
+        options.keyword_overrides.extend(self.keywords.iter().map(|(k, v)| (k.clone(), v.clone())));
+        if let Some(n) = self.max_blank_lines {
+            options.max_blank_lines = n;
+        }
+        if let Some(newline) = self.newline {
+            options.newline = newline;
+        }
+        if let Some(final_newline) = self.final_newline {
+            options.final_newline = final_newline;
+        }
+    }
+}
+
+fn format_settings(raw: &RawFormat, errors: &mut Vec<ManifestError>) -> FormatSettings {
+    let span = |r: Range<usize>| Some(r).filter(|r| !r.is_empty());
+    let mut out = FormatSettings {
+        max_blank_lines: raw.max_blank_lines,
+        final_newline: raw.final_newline,
+        ..Default::default()
+    };
+    if let Some(indent) = &raw.indent {
+        out.indent = match indent.get_ref() {
+            toml::Value::Integer(n) if (1..=16).contains(n) => {
+                Some(papyrus_fmt::Indent::Spaces(*n as u8))
+            }
+            toml::Value::String(s)
+                if s.eq_ignore_ascii_case("tab") || s.eq_ignore_ascii_case("tabs") =>
+            {
+                Some(papyrus_fmt::Indent::Tabs)
+            }
+            _ => {
+                errors.push(ManifestError::new(
+                    "`indent` must be a number of spaces (1 to 16) or \"tab\"",
+                    span(indent.span()),
+                ));
+                None
+            }
+        };
+    }
+    if let Some(case) = &raw.keyword_case {
+        match case.get_ref().parse() {
+            Ok(c) => out.keyword_case = Some(c),
+            Err(e) => errors.push(ManifestError::new(e, span(case.span()))),
+        }
+    }
+    for (keyword, spelling) in &raw.keywords {
+        if papyrus_lexer::keyword(keyword).is_none() {
+            errors.push(ManifestError::new(
+                format!("`{keyword}` is not a keyword"),
+                span(spelling.span()),
+            ));
+        } else if !spelling.get_ref().eq_ignore_ascii_case(keyword) {
+            errors.push(ManifestError::new(
+                format!("the spelling of `{keyword}` may only change its case"),
+                span(spelling.span()),
+            ));
+        } else {
+            out.keywords.insert(keyword.to_ascii_lowercase(), spelling.get_ref().clone());
+        }
+    }
+    if let Some(newline) = &raw.newline {
+        out.newline = match newline.get_ref().to_ascii_lowercase().as_str() {
+            "auto" => Some(papyrus_fmt::Newline::Auto),
+            "lf" => Some(papyrus_fmt::Newline::Lf),
+            "crlf" => Some(papyrus_fmt::Newline::CrLf),
+            _ => {
+                errors.push(ManifestError::new(
+                    "`newline` must be \"auto\", \"lf\" or \"crlf\"",
+                    span(newline.span()),
+                ));
+                None
+            }
+        };
+    }
+    out
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -177,6 +299,8 @@ pub struct Project {
     pub r#final: bool,
     /// `build.quiet`: only report errors.
     pub quiet: bool,
+    /// `[format]`: formatter settings.
+    pub format: FormatSettings,
     /// The variables used by the manifest, with their value and origin.
     pub variables: BTreeMap<String, (String, VarSource)>,
     /// Non-fatal problems, e.g. directories that do not exist.
@@ -268,6 +392,47 @@ pub fn load(manifest_path: &Path, vars: &Variables) -> Result<Project, Vec<Manif
     parse(manifest_path, &text, local.as_deref(), vars)
 }
 
+/// Reads only the `[format]` table of a manifest. Unlike [`load`], this does
+/// not need the variables to be defined, so formatting works on any machine.
+pub fn load_format(manifest_path: &Path) -> Result<FormatSettings, Vec<ManifestError>> {
+    let text = std::fs::read_to_string(manifest_path).map_err(|e| {
+        vec![ManifestError::new(format!("cannot read {}: {e}", manifest_path.display()), None)]
+    })?;
+    parse_format(&text)
+}
+
+/// Parses only the `[format]` table of manifest text.
+pub fn parse_format(text: &str) -> Result<FormatSettings, Vec<ManifestError>> {
+    let raw: RawManifest = toml::from_str(text)
+        .map_err(|e| vec![ManifestError::new(e.message().to_owned(), e.span())])?;
+    let mut errors = Vec::new();
+    let settings = format_settings(&raw.format, &mut errors);
+    if errors.is_empty() { Ok(settings) } else { Err(errors) }
+}
+
+/// The formatter options of a script: defaults, then `base` (e.g. the editor
+/// settings), then `.editorconfig`, then `[format]` of the manifest found
+/// above the script.
+pub fn format_options_for(
+    script: &Path,
+    base: impl FnOnce(&mut papyrus_fmt::FormatOptions),
+) -> papyrus_fmt::FormatOptions {
+    let mut options = papyrus_fmt::FormatOptions::default();
+    base(&mut options);
+    EditorConfig::for_file(script).apply(&mut options);
+    if let Some(manifest) = script.parent().and_then(find_manifest_upwards)
+        && let Ok(settings) = load_format(&manifest)
+    {
+        settings.apply(&mut options);
+    }
+    options
+}
+
+/// Searches `dir` and its ancestors only.
+fn find_manifest_upwards(dir: &Path) -> Option<PathBuf> {
+    dir.ancestors().map(|d| d.join(MANIFEST_NAME)).find(|p| p.is_file())
+}
+
 /// Reads the `papyrus.local.toml` next to a manifest.
 pub fn read_local(manifest_path: &Path) -> Option<String> {
     std::fs::read_to_string(manifest_path.with_file_name(LOCAL_MANIFEST_NAME)).ok()
@@ -306,6 +471,7 @@ pub fn parse(
     let imports: Vec<PathBuf> = raw.build.imports.iter().map(|p| resolver.path(p)).collect();
     let flags = raw.build.flags.as_ref().map(|p| resolver.path(p));
     let extra_args = raw.compiler.args.iter().map(|a| resolver.expand(a, None)).collect();
+    let format = format_settings(&raw.format, &mut resolver.errors);
 
     if !resolver.errors.is_empty() {
         return Err(resolver.errors);
@@ -356,6 +522,7 @@ pub fn parse(
         release: raw.build.release,
         r#final: raw.build.r#final,
         quiet: raw.build.quiet,
+        format,
         variables,
         warnings,
     })
@@ -612,6 +779,18 @@ optimize = true
 release = false
 final = false
 quiet = true
+
+# Formatter settings. Unset values come from .editorconfig, then from the editor.
+[format]
+# indent = 4                    # spaces, or "tab"
+# keyword-case = "canonical"    # canonical, preserve, PascalCase, camelCase, lowercase, UPPERCASE
+# max-blank-lines = 1
+# newline = "auto"              # auto, lf, crlf
+# final-newline = true
+#
+# Spelling of single keywords, winning over keyword-case.
+# [format.keywords]
+# as = "As"
 "#;
 
 /// A `papyrus.local.toml` to start from.
@@ -703,6 +882,25 @@ mod tests {
         let vars = manifest_variables(text, Some("[var]\nLOCAL = \"1\"\n"), &vars());
         assert_eq!(vars.lookup("GAME").unwrap(), ("/env/game".to_owned(), VarSource::Manifest));
         assert_eq!(vars.lookup("LOCAL").unwrap().1, VarSource::Local);
+    }
+
+    #[test]
+    fn format_table() {
+        let p = parse_str(
+            "[format]\nindent = \"tab\"\nkeyword-case = \"camelCase\"\nnewline = \"crlf\"\n[format.keywords]\nas = \"As\"\n",
+        )
+        .unwrap();
+        let mut options = papyrus_fmt::FormatOptions::default();
+        p.format.apply(&mut options);
+        assert_eq!(options.indent, papyrus_fmt::Indent::Tabs);
+        assert_eq!(options.keyword_case, papyrus_fmt::KeywordCase::CamelCase);
+        assert_eq!(options.newline, papyrus_fmt::Newline::CrLf);
+        assert_eq!(options.keyword_overrides["as"], "As");
+
+        let errors = parse_str("[format]\nindent = 0\nkeyword-case = \"kebab\"\n[format.keywords]\nfoo = \"Foo\"\nif = \"Iff\"\n").unwrap_err();
+        let messages: Vec<_> = errors.iter().map(|e| e.message.as_str()).collect();
+        assert_eq!(messages.len(), 4, "{messages:?}");
+        assert!(errors.iter().all(|e| e.span.is_some()));
     }
 
     #[test]

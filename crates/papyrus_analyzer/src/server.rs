@@ -209,6 +209,7 @@ impl Server {
                 handle::<WorkspaceSymbolRequest>(self, params, Server::workspace_symbols)
             }
             CodeLensRequest::METHOD => handle::<CodeLensRequest>(self, params, Server::code_lens),
+            Formatting::METHOD => handle::<Formatting>(self, params, Server::formatting),
             FoldingRangeRequest::METHOD => {
                 handle::<FoldingRangeRequest>(self, params, Server::folding_ranges)
             }

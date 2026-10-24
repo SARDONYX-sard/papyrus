@@ -48,6 +48,7 @@ impl Diagnostic {
     /// unknown types, members, parameters and names.
     pub fn needs_workspace(&self) -> bool {
         matches!(self.code, "unknown-type" | "unknown-member" | "unknown-param" | "unresolved-name")
+            || TYPE_CODES.contains(&self.code)
     }
 
     fn error(range: TextRange, code: &'static str, message: impl Into<String>) -> Diagnostic {
@@ -82,6 +83,7 @@ pub fn diagnostics(ws: &Workspace, file: FileId) -> Vec<Diagnostic> {
         // Name resolution on broken code is noisy; fix the syntax first.
         if !has_syntax_errors && ws.script(Name::new("Form")).is_some() {
             check_names(sema, &mut out);
+            check_types(sema, &mut out);
         }
     });
     out.sort_by_key(|d| (d.range.start(), d.severity));
@@ -240,6 +242,57 @@ fn target_label(kind: SyntaxKind) -> &'static str {
         _ => "functions",
     }
 }
+/// Codes of the type checker, see [`crate::typeck`].
+const TYPE_CODES: &[&str] = &[
+    "type-mismatch",
+    "invalid-operator",
+    "invalid-cast",
+    "invalid-member",
+    "invalid-assignment",
+    "not-an-array",
+    "not-global",
+    "read-only",
+    "wrong-arg-count",
+    "missing-return-value",
+    "unexpected-return-value",
+];
+
+/// Type checks bodies and the initial values of declarations.
+fn check_types(sema: &Sema<'_>, out: &mut Vec<Diagnostic>) {
+    for node in sema.root.descendants() {
+        match node.kind() {
+            SyntaxKind::FUNCTION | SyntaxKind::EVENT => {
+                let Some(body) = crate::hir::Body::lower(sema, node) else { continue };
+                let result = crate::typeck::check_body(sema, &body);
+                out.extend(
+                    result.errors.into_iter().map(|e| Diagnostic::error(e.range, e.code, e.message)),
+                );
+            }
+            SyntaxKind::VAR_DECL | SyntaxKind::PROPERTY | SyntaxKind::PARAM => {
+                // Locals are checked with their body.
+                if node.parent().is_some_and(|p| p.kind() == SyntaxKind::BLOCK) {
+                    continue;
+                }
+                let (ty, value) = if let Some(v) = ast::VarDecl::cast(node) {
+                    (v.ty(), v.initializer())
+                } else if let Some(p) = ast::Property::cast(node) {
+                    (p.ty(), p.initializer())
+                } else if let Some(p) = ast::Param::cast(node) {
+                    (p.ty(), p.default_value())
+                } else {
+                    continue;
+                };
+                let (Some(ty), Some(value)) = (ty, value) else { continue };
+                let declared = crate::index::TypeRef::from_ast(ty);
+                if let Some(e) = crate::typeck::check_initializer(sema, declared, value) {
+                    out.push(Diagnostic::error(e.range, e.code, e.message));
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 fn check_names(sema: &Sema<'_>, out: &mut Vec<Diagnostic>) {
     for node in sema.root.descendants() {
         match node.kind() {

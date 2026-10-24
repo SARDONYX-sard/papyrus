@@ -36,7 +36,10 @@ pub(crate) const USAGE: &str = "\
 papyrus_analyzer: language server for the Papyrus scripting language (stdio)
 
 USAGE:
-    papyrus_analyzer [OPTIONS]
+    papyrus_analyzer [OPTIONS]            run the language server on stdio
+    papyrus_analyzer fmt [--check] [PATH]...
+                                          format scripts (directories recursively);
+                                          --check only lists unformatted files
 
 OPTIONS:
     --var NAME=VALUE      Value of a `${NAME}` variable of papyrus.toml, e.g.

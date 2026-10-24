@@ -1,0 +1,21 @@
+[package]
+name = "papyrus_fmt"
+version = "0.0.0"
+description = "Formatter for the Papyrus scripting language."
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+papyrus_lexer.workspace = true
+papyrus_parser.workspace = true
+
+[dev-dependencies]
+expect-test.workspace = true
+
+[lints]
+workspace = true

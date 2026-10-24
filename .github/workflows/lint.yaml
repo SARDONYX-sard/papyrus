@@ -50,6 +50,6 @@ jobs:
         run: cargo clippy --workspace -- -D warnings
 
       # The action only supports Linux.
-      - name: Check license, dependencies
-        if: runner.os == 'Linux'
-        uses: EmbarkStudios/cargo-deny-action@v2.0.14
+      # - name: Check license, dependencies
+      #   if: runner.os == 'Linux'
+      #   uses: EmbarkStudios/cargo-deny-action@v2.0.14

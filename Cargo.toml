@@ -31,6 +31,7 @@ debug = 2
 
 [workspace.dependencies]
 # local crates
+papyrus_fmt = { path = "./crates/papyrus_fmt", version = "0.0.0" }
 papyrus_ide = { path = "./crates/papyrus_ide", version = "0.0.0" }
 papyrus_intern = { path = "./crates/papyrus_intern", version = "0.0.0" }
 papyrus_lexer = { path = "./crates/papyrus_lexer", version = "0.0.0" }

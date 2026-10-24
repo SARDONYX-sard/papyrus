@@ -12,6 +12,7 @@ name = "papyrus_analyzer"
 path = "src/main.rs"
 
 [dependencies]
+papyrus_fmt.workspace = true
 papyrus_ide.workspace = true
 papyrus_parser.workspace = true
 papyrus_project.workspace = true

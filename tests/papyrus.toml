@@ -4,7 +4,7 @@ version = "0.1.0"
 
 # This file is shared with your team: keep machine specific paths out of it and
 # write them as `${NAME}` variables. A variable is taken from, first wins:
-#   1. the `papyrus.var` editor setting, or `papyrus_lsp --var NAME=VALUE`
+#   1. the `papyrus.var` editor setting, or `papyrus_analyzer --var NAME=VALUE`
 #   2. `[var]` of papyrus.local.toml next to this file (add it to .gitignore)
 #   3. `[var]` of this file, for values shared by everyone
 # An undefined variable is an error. `${env:NAME}` reads the environment
@@ -33,3 +33,15 @@ optimize = true
 release = false
 final = false
 quiet = true
+
+# Formatter settings. Unset values come from .editorconfig, then from the editor.
+[format]
+indent = 4                    # spaces, or "tab"
+# keyword-case = "canonical"    # canonical, preserve, PascalCase, camelCase, lowercase, UPPERCASE
+# max-blank-lines = 1
+# newline = "auto"              # auto, lf, crlf
+# final-newline = true
+#
+# Spelling of single keywords, winning over keyword-case.
+# [format.keywords]
+# as = "As"

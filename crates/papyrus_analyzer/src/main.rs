@@ -6,6 +6,7 @@
 mod config;
 mod conv;
 mod ext;
+mod fmt;
 mod handlers;
 mod project;
 mod server;
@@ -29,6 +30,10 @@ fn main() -> anyhow::Result<()> {
     if args.iter().any(|a| a == "--help" || a == "-h") {
         println!("{}", config::USAGE);
         return Ok(());
+    }
+    if args.first().is_some_and(|a| a == "fmt") {
+        let code = fmt::run(&args[1..]);
+        std::process::exit(code);
     }
     let cli = config::CliOptions::parse(args).map_err(anyhow::Error::msg)?;
 
@@ -75,6 +80,7 @@ fn capabilities() -> ServerCapabilities {
         workspace_symbol_provider: Some(OneOf::Left(true)),
         folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
         code_lens_provider: Some(lsp_types::CodeLensOptions { resolve_provider: Some(false) }),
+        document_formatting_provider: Some(OneOf::Left(true)),
         completion_provider: Some(CompletionOptions {
             resolve_provider: Some(true),
             trigger_characters: Some(vec![".".to_owned()]),

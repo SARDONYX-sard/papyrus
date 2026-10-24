@@ -32,24 +32,6 @@ jobs:
               asset: x86_64-unknown-linux-gnu.tar.gz,
             }
 
-          - {
-              target: aarch64-apple-darwin,
-              os: macos-latest,
-              asset: aarch64-apple-darwin-extra_fmt.tar.gz,
-              features: extra_fmt,
-            }
-          - {
-              target: x86_64-pc-windows-msvc,
-              os: windows-latest,
-              asset: x86_64-pc-windows-msvc-extra_fmt.zip,
-              features: extra_fmt,
-            }
-          - {
-              target: x86_64-unknown-linux-gnu,
-              os: ubuntu-latest,
-              asset: x86_64-unknown-linux-gnu-extra_fmt.tar.gz,
-              features: extra_fmt,
-            }
     runs-on: ${{ matrix.job.os }}
     permissions:
       contents: write
@@ -71,5 +53,5 @@ jobs:
         with:
           allowUpdates: true
           artifacts: ${{ matrix.job.asset }}
-          omitBody: ${{ !(matrix.job.feature == 'extra_fmt' && runner.os == 'Windows') }}
-          bodyFile: ${{ matrix.job.feature == 'extra_fmt' && runner.os == 'Windows' && './docs/release.md' || '' }}
+          omitBody: ${{ !(runner.os == 'Windows') }}
+          bodyFile: ${{ runner.os == 'Windows' && 'papyrus language server' || '' }}

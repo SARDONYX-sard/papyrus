@@ -2,12 +2,12 @@
 
 use lsp_types::{
     CodeLens, CodeLensParams, Command, CompletionItem, CompletionItemKind, CompletionList,
-    CompletionParams, CompletionResponse, CompletionTextEdit, DocumentHighlight,
-    DocumentHighlightKind, DocumentHighlightParams, DocumentSymbolParams, DocumentSymbolResponse,
-    Documentation, FoldingRange, FoldingRangeKind, FoldingRangeParams, GotoDefinitionParams,
-    GotoDefinitionResponse, Hover, HoverContents, HoverParams, InsertTextFormat, Location,
-    LocationLink, MarkupContent, MarkupKind, ParameterInformation, ParameterLabel, Position,
-    ReferenceParams, SemanticToken, SemanticTokens, SemanticTokensParams,
+    CompletionParams, CompletionResponse, CompletionTextEdit, DocumentFormattingParams,
+    DocumentHighlight, DocumentHighlightKind, DocumentHighlightParams, DocumentSymbolParams,
+    DocumentSymbolResponse, Documentation, FoldingRange, FoldingRangeKind, FoldingRangeParams,
+    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents, HoverParams,
+    InsertTextFormat, Location, LocationLink, MarkupContent, MarkupKind, ParameterInformation,
+    ParameterLabel, Position, ReferenceParams, SemanticToken, SemanticTokens, SemanticTokensParams,
     SemanticTokensRangeParams, SemanticTokensRangeResult, SemanticTokensResult, SignatureHelp,
     SignatureHelpParams, SignatureInformation, SymbolInformation, TextDocumentPositionParams,
     TextEdit, WorkspaceSymbolParams, WorkspaceSymbolResponse,
@@ -428,6 +428,37 @@ impl Server {
             }
         }
         Some(data)
+    }
+
+    /// Formats a whole script. Editor options come first, then
+    /// `.editorconfig`, then `[format]` of `papyrus.toml`.
+    pub(crate) fn formatting(&mut self, params: DocumentFormattingParams) -> Option<Vec<TextEdit>> {
+        let file = self.file(&params.text_document.uri).ok()?;
+        let data = self.ws.file(file);
+        let text = data.open.as_ref()?.text.clone();
+        let editor = &params.options;
+        let options = papyrus_project::format_options_for(&data.path, |o| {
+            o.indent = if editor.insert_spaces {
+                papyrus_fmt::Indent::Spaces(editor.tab_size.clamp(1, 16) as u8)
+            } else {
+                papyrus_fmt::Indent::Tabs
+            };
+            if let Some(final_newline) = editor.insert_final_newline {
+                o.final_newline = final_newline;
+            }
+        });
+        match papyrus_fmt::format(&text, &options) {
+            Ok(formatted) if formatted == *text => Some(Vec::new()),
+            Ok(formatted) => {
+                let lines = Lines::of(&self.ws, file)?;
+                let range = lines.range(TextRange::up_to(TextSize::of(&*text)));
+                Some(vec![TextEdit { range, new_text: formatted }])
+            }
+            Err(err) => {
+                log::info!("{}: {err}", data.path.display());
+                None
+            }
+        }
     }
 
     pub(crate) fn syntax_tree(&mut self, params: ext::SyntaxTreeParams) -> String {

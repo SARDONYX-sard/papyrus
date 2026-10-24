@@ -403,12 +403,22 @@ dependencies = [
  "log",
  "lsp-server",
  "lsp-types",
+ "papyrus_fmt",
  "papyrus_ide",
  "papyrus_parser",
  "papyrus_project",
  "rustc-hash",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "papyrus_fmt"
+version = "0.0.0"
+dependencies = [
+ "expect-test",
+ "papyrus_lexer",
+ "papyrus_parser",
 ]
 
 [[package]]
@@ -456,6 +466,8 @@ dependencies = [
 name = "papyrus_project"
 version = "0.0.0"
 dependencies = [
+ "papyrus_fmt",
+ "papyrus_lexer",
  "serde",
  "skyrim_data_dir",
  "toml",
