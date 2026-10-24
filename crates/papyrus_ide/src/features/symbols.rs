@@ -4,7 +4,7 @@ use papyrus_parser::TextRange;
 
 use crate::{
     FileId, Workspace,
-    index::{Flags, Member, MemberKind, ScriptIndex},
+    index::{Member, MemberKind, ScriptIndex},
 };
 
 /// The kind of a symbol.
@@ -22,6 +22,8 @@ pub enum SymbolKind {
     Variable,
     /// A state.
     State,
+    /// A flag of the flags file.
+    Flag,
 }
 
 impl From<MemberKind> for SymbolKind {
@@ -95,9 +97,7 @@ pub fn document_symbols(ws: &Workspace, file: FileId) -> Vec<DocumentSymbol> {
     if let Some(ext) = index.extends {
         detail.push_str(&format!(" extends {ext}"));
     }
-    if index.flags.contains(Flags::HIDDEN) {
-        detail.push_str(" Hidden");
-    }
+    crate::index::render_flags(&mut detail, index.flags, &index.user_flags);
     vec![DocumentSymbol {
         name: name.to_string(),
         detail: Some(detail),
@@ -106,6 +106,22 @@ pub fn document_symbols(ws: &Workspace, file: FileId) -> Vec<DocumentSymbol> {
         focus_range: focus,
         children: top,
     }]
+}
+
+/// The outline of the flags file.
+pub fn flag_file_symbols(ws: &Workspace) -> Vec<DocumentSymbol> {
+    ws.flags()
+        .defs
+        .iter()
+        .map(|d| DocumentSymbol {
+            name: d.name.to_string(),
+            detail: Some(d.signature()),
+            kind: SymbolKind::Flag,
+            full_range: d.full_range,
+            focus_range: d.name_range,
+            children: Vec::new(),
+        })
+        .collect()
 }
 
 /// The last symbol of `kind` named `name`, searching nested symbols too.

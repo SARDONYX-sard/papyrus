@@ -12,11 +12,20 @@ use crate::{
     sema::{Def, FileSource, Sema},
 };
 
+/// A file that can be navigated to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum NavFile {
+    /// A script.
+    Script(FileId),
+    /// The flags file, see [`Workspace::flags`].
+    Flags,
+}
+
 /// A location to navigate to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NavTarget {
     /// The target file.
-    pub file: FileId,
+    pub file: NavFile,
     /// The range of the declaring name, to select.
     pub focus_range: TextRange,
     /// The range of the whole declaration.
@@ -37,7 +46,11 @@ pub fn goto_definition(ws: &Workspace, file: FileId, offset: TextSize) -> Vec<Na
                 .iter()
                 .filter_map(|&f| {
                     let range = ws.file(f).index.name_range?;
-                    Some(NavTarget { file: f, focus_range: range, full_range: range })
+                    Some(NavTarget {
+                        file: NavFile::Script(f),
+                        focus_range: range,
+                        full_range: range,
+                    })
                 })
                 .collect();
         }
@@ -48,7 +61,6 @@ pub fn goto_definition(ws: &Workspace, file: FileId, offset: TextSize) -> Vec<Na
     })
     .unwrap_or_default()
 }
-
 /// An occurrence of a name in the current file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Highlight {
@@ -74,14 +86,33 @@ pub fn references(
     file: FileId,
     offset: TextSize,
     include_declaration: bool,
-) -> Vec<(FileId, TextRange)> {
+) -> Vec<(NavFile, TextRange)> {
     let Some(Some((def, name))) = with_sema(ws, file, |sema| {
         let (_, def) = def_at(sema, offset)?;
         Some((def, def_name(sema, def)?))
     }) else {
         return Vec::new();
     };
+    find_references(ws, def, name, include_declaration)
+}
 
+/// All uses of the flag defined at `offset` in the flags file.
+pub fn flag_references(
+    ws: &Workspace,
+    offset: TextSize,
+    include_declaration: bool,
+) -> Vec<(NavFile, TextRange)> {
+    let flags = ws.flags();
+    let Some(i) = flags.def_at(offset) else { return Vec::new() };
+    find_references(ws, Def::Flag(i as u32), flags.defs[i].name, include_declaration)
+}
+
+fn find_references(
+    ws: &Workspace,
+    def: Def,
+    name: Name,
+    include_declaration: bool,
+) -> Vec<(NavFile, TextRange)> {
     let keep = |h: &Highlight, f: FileId| {
         include_declaration || !h.write || !is_declaration(ws, def, f, h.range)
     };
@@ -91,7 +122,7 @@ pub fn references(
             occurrences(sema, def, name)
                 .into_iter()
                 .filter(|h| keep(h, file))
-                .map(|h| (file, h.range))
+                .map(|h| (NavFile::Script(file), h.range))
                 .collect()
         })
         .unwrap_or_default();
@@ -102,7 +133,7 @@ pub fn references(
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).min(16);
     let chunk = files.len().div_ceil(threads).max(1);
 
-    let mut out: Vec<(FileId, TextRange)> = std::thread::scope(|s| {
+    let mut out: Vec<(NavFile, TextRange)> = std::thread::scope(|s| {
         let handles: Vec<_> = files
             .chunks(chunk)
             .map(|chunk| {
@@ -121,7 +152,7 @@ pub fn references(
                             occurrences(&sema, def, name)
                                 .into_iter()
                                 .filter(|h| keep(h, f))
-                                .map(|h| (f, h.range)),
+                                .map(|h| (NavFile::Script(f), h.range)),
                         );
                     }
                     found
@@ -130,11 +161,16 @@ pub fn references(
             .collect();
         handles.into_iter().flat_map(|h| h.join().unwrap_or_default()).collect()
     });
+    if let Def::Flag(i) = def
+        && include_declaration
+        && ws.flags().path.is_some()
+    {
+        out.push((NavFile::Flags, ws.flags().defs[i as usize].name_range));
+    }
     out.sort_by_key(|&(f, r)| (f, r.start()));
     out.dedup();
     out
 }
-
 fn is_declaration(ws: &Workspace, def: Def, file: FileId, range: TextRange) -> bool {
     match def {
         Def::Local { range: r, file: f, .. } => f == file && r == range,
@@ -142,7 +178,7 @@ fn is_declaration(ws: &Workspace, def: Def, file: FileId, range: TextRange) -> b
             f == file && ws.file(f).index.members[index as usize].name_range == range
         }
         Def::Script { file: f } => f == file && ws.file(f).index.name_range == Some(range),
-        Def::Param { .. } | Def::Builtin(..) => false,
+        Def::Param { .. } | Def::Builtin(..) | Def::Flag(_) | Def::LanguageFlag(_) => false,
     }
 }
 
@@ -153,6 +189,8 @@ fn def_name(sema: &Sema<'_>, def: Def) -> Option<Name> {
         Def::Param { file, member, param } => sema.member(file, member).params[param as usize].name,
         Def::Script { file } => sema.ws.file(file).index.name?,
         Def::Builtin(b, _) => Name::new(b.name()),
+        Def::Flag(i) => sema.ws.flags().defs.get(i as usize)?.name,
+        Def::LanguageFlag(kind) => Name::new(super::language_flag_docs(kind).0),
     })
 }
 
@@ -160,14 +198,18 @@ fn def_name(sema: &Sema<'_>, def: Def) -> Option<Name> {
 fn occurrences(sema: &Sema<'_>, def: Def, name: Name) -> Vec<Highlight> {
     let mut out = Vec::new();
     for tok in sema.root.descendant_tokens() {
-        if !matches!(tok.kind(), SyntaxKind::IDENT | SyntaxKind::SELF_KW | SyntaxKind::PARENT_KW) {
+        let Some(parent) = tok.parent() else { continue };
+        let flag_keyword = tok.kind().is_keyword() && parent.kind() == SyntaxKind::FLAG;
+        if !matches!(tok.kind(), SyntaxKind::IDENT | SyntaxKind::SELF_KW | SyntaxKind::PARENT_KW)
+            && !flag_keyword
+        {
             continue;
         }
         if !tok.text().eq_ignore_ascii_case(name.as_str()) {
             continue;
         }
-        let Some(parent) = tok.parent() else { continue };
         let (resolved, write) = match parent.kind() {
+            SyntaxKind::FLAG => (super::flag_def(sema, tok), false),
             SyntaxKind::NAME => (decl_def(sema, parent), true),
             SyntaxKind::NAME_REF => {
                 let Some(nr) = ast::NameRef::cast(parent) else { continue };

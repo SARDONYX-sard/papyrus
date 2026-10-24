@@ -14,7 +14,7 @@ use papyrus_intern::{Name, Symbol};
 use papyrus_parser::{SyntaxError, SyntaxTree};
 use rustc_hash::FxHashMap;
 
-use crate::{LineIndex, ScriptIndex};
+use crate::{LineIndex, ScriptIndex, flags::FlagTable};
 
 /// Identifies a file of a [`Workspace`]. Ids are never reused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -77,6 +77,7 @@ pub struct Workspace {
     files: Vec<Option<FileData>>,
     by_path: FxHashMap<String, FileId>,
     by_script: FxHashMap<Symbol, Vec<FileId>>,
+    flags: FlagTable,
 }
 
 /// Normalizes a path into a lookup key. Windows paths are case-insensitive.
@@ -258,6 +259,42 @@ impl Workspace {
             let id = self.script(name)?;
             Some((self.file(id).index.name.unwrap_or(name), id))
         })
+    }
+
+    /// The user flags (`Hidden`, `Conditional`, ...) of the flags file.
+    pub fn flags(&self) -> &FlagTable {
+        &self.flags
+    }
+
+    /// Sets the flags file read from disk. Ignored while the current flags file
+    /// is open in the editor, unless `path` is another file.
+    pub fn set_flags_file(&mut self, path: PathBuf, text: Arc<str>) {
+        if self.flags.open
+            && self.flags.path.as_deref().is_some_and(|p| path_key(p) == path_key(&path))
+        {
+            return;
+        }
+        self.flags = FlagTable::parse(Some(path), text);
+    }
+
+    /// Sets the editor contents of the flags file.
+    pub fn set_flags_open(&mut self, path: PathBuf, text: Arc<str>) {
+        self.flags = FlagTable::parse(Some(path), text);
+        self.flags.open = true;
+    }
+
+    /// Marks the flags file as closed, re-reading it from disk.
+    pub fn close_flags(&mut self) {
+        let Some(path) = self.flags.path.clone() else { return };
+        self.flags = match crate::read_file(&path) {
+            Some(text) => FlagTable::parse(Some(path), Arc::from(text)),
+            None => FlagTable::default(),
+        };
+    }
+
+    /// Returns `true` if `path` is the current flags file.
+    pub fn is_flags_file(&self, path: &Path) -> bool {
+        self.flags.path.as_deref().is_some_and(|p| path_key(p) == path_key(path))
     }
 
     /// The text of a file: the editor contents, or the file read from disk.

@@ -13,7 +13,7 @@ Inspired:
 | `papyrus_lexer`  | Zero-copy lexer (`Lexer<'a>`). Newlines are tokens; `\` + newline is a line continuation.         |
 | `papyrus_parser` | Resilient, line-oriented LL parser producing a flat lossless CST viewed through `SyntaxNode<'a>`. |
 | `papyrus_ide`    | Workspace index, name resolution, type inference and IDE features, independent of LSP.            |
-| `papyrus_lsp`    | Language server over stdio.                                                                       |
+| `papyrus_analyzer`    | Language server over stdio.                                                                       |
 
 Every script of `tests/fixtures/papyrus-compiler-test-sources` must parse without errors and
 without semantic diagnostics (`cargo test`).
@@ -31,8 +31,71 @@ Custom requests:
 - `papyrus/status`: indexed files, open files, indexing state.
 - `papyrus/syntaxTree`: debug dump of a document's syntax tree.
 
-Build the VS Code extension with `npm run release`, then launch `Run Papyrus LSP Extension`.
-Set `papyrus.importDirectories` to the game's `Data/Source/Scripts` for full resolution.
+- `papyrus/compileCommands`: the compiler invocations described by `papyrus.toml` (run by the client).
+
+Build the VS Code extension with `npm run release`, then launch `Run Papyrus Analyzer Extension`.
+
+### `papyrus.toml`
+
+Optional. Without it the server indexes the workspace folders (plus `papyrus.importDirectories`)
+and picks the first `TESV_Papyrus_Flags.flg` it finds. With it, the imports and the flags file come
+from the manifest, and the compiler can be run from:
+
+- the `▶ Compile` code lens above `ScriptName`;
+- the `Compile…` status bar button, which compiles the scripts picked in a list (remembered);
+- the explorer context menu on one or several `.psc` files, the editor title button or `Ctrl+Shift+B`.
+
+`papyrus.toml` is searched in the workspace folders, their parents and up to three levels of
+subdirectories. `Papyrus: Create papyrus.toml` writes a template.
+
+`papyrus.toml` is committed and shared, so machine specific paths are written as `${NAME}`
+variables. A variable is taken from, first wins:
+
+1. the `papyrus.var` editor setting (VS Code user `settings.json`), or `papyrus_analyzer --var NAME=VALUE`
+   / `init_options = { var = { ... } }` for other editors;
+2. `[var]` of `papyrus.local.toml` next to the manifest (not committed, added to `.gitignore`);
+3. `[var]` of `papyrus.toml` (shared defaults).
+
+An undefined variable is an error (the status bar turns red). Like in VS Code settings,
+`${env:NAME}` reads the environment variable `NAME` and `${workspaceFolder}` (or
+`${workspaceFolder:name}`) is a workspace folder. `${game:SkyrimSE}` is the installation directory
+found in the registry (`SkyrimLE`, `SkyrimSE`, `SkyrimVR`, `Enderal`, `EnderalSE`); the registry
+only exists on Windows, so elsewhere set `SKYRIM_DIR` to a path instead. Values of
+variables may use them too, e.g. `"papyrus.var": { "SKYRIM_DIR": "${game:SkyrimSE}" }`. Hover a `${...}` or a `[var]` key in `papyrus.toml` to see
+its value and where it comes from.
+
+```toml
+[package]
+name = "MyMod"
+
+[compiler]
+path = "${SKYRIM_DIR}/Papyrus Compiler/PapyrusCompiler.exe"
+args = []
+
+[build]
+sources = ["."]                             # scripts to compile, recursively
+output = "output"                           # .pex output, keeps the directories of sources
+imports = ["${SKYRIM_DIR}/Data/Scripts/Source"]
+flags = "${SKYRIM_DIR}/Data/Scripts/Source/TESV_Papyrus_Flags.flg"
+optimize = true
+release = false
+final = false
+quiet = true
+```
+
+```jsonc
+// VS Code user settings.json
+"papyrus.var": { "SKYRIM_DIR": "${game:SkyrimSE}" }  // or an absolute path
+```
+
+```sh
+# Other editors: pass variables on the command line (see `papyrus_analyzer --help`).
+papyrus_analyzer --var "SKYRIM_DIR=D:/Steam/steamapps/common/Skyrim Special Edition"
+```
+
+Without `papyrus.toml`, the game scripts below `SKYRIM_DIR` (or the installation found in the registry)
+are imported automatically; add more
+directories with `papyrus.importDirectories` (variables allowed, e.g. `${SKYRIM_DIR}/Data/Scripts/Source`).
 
 ## Todo
 

@@ -2,7 +2,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const exe = process.platform === "win32" ? "papyrus_lsp.exe" : "papyrus_lsp";
+const exe = process.platform === "win32" ? "papyrus_analyzer.exe" : "papyrus_analyzer";
 const src = path.join(__dirname, "target", "release", exe);
 
 const distDir = path.join(__dirname, "dist");

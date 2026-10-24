@@ -16,7 +16,8 @@ use rustc_hash::FxHashMap;
 use super::{in_body, with_sema};
 use crate::{
     FileId, Workspace,
-    index::{Flags, MemberKind},
+    flags::FlagTargets,
+    index::MemberKind,
     sema::{Builtin, Sema, Ty},
 };
 
@@ -85,6 +86,15 @@ pub fn diagnostics(ws: &Workspace, file: FileId) -> Vec<Diagnostic> {
     });
     out.sort_by_key(|d| (d.range.start(), d.severity));
     out
+}
+
+/// Diagnostics of the flags file.
+pub fn flag_file_diagnostics(ws: &Workspace) -> Vec<Diagnostic> {
+    ws.flags()
+        .errors
+        .iter()
+        .map(|e| Diagnostic::error(e.range, "flags-syntax", e.message.clone()))
+        .collect()
 }
 
 fn check_script_name(sema: &Sema<'_>, out: &mut Vec<Diagnostic>) {
@@ -176,18 +186,60 @@ fn check_duplicates(sema: &Sema<'_>, out: &mut Vec<Diagnostic>) {
 }
 
 fn check_flags(sema: &Sema<'_>, out: &mut Vec<Diagnostic>) {
+    let table = sema.ws.flags();
     for node in sema.root.descendants() {
         let Some(flag) = ast::Flag::cast(node) else { continue };
-        if Flags::from_name(flag.text()).is_none() {
+        let (Some(tok), Some(decl)) = (flag.token(), node.parent()) else { continue };
+        let auto_property = ast::Property::cast(decl).is_some_and(|p| p.is_auto());
+        let Some(target) = FlagTargets::of_declaration(decl.kind(), auto_property) else {
+            continue;
+        };
+        let range = node.text_range();
+        let allowed = match tok.kind() {
+            SyntaxKind::IDENT => match table.get(tok.text()) {
+                Some((_, def)) => def.targets,
+                None => {
+                    out.push(Diagnostic::warning(
+                        range,
+                        "unknown-flag",
+                        format!(
+                            "unknown flag `{}`, not defined in {}",
+                            tok.text(),
+                            table.source_name()
+                        ),
+                    ));
+                    continue;
+                }
+            },
+            SyntaxKind::NATIVE_KW => FlagTargets::SCRIPT.union(FlagTargets::FUNCTION),
+            SyntaxKind::GLOBAL_KW => FlagTargets::FUNCTION,
+            SyntaxKind::AUTO_KW | SyntaxKind::AUTOREADONLY_KW => FlagTargets::PROPERTY,
+            _ => continue,
+        };
+        if !allowed.intersects(target) {
             out.push(Diagnostic::warning(
-                node.text_range(),
-                "unknown-flag",
-                format!("unknown flag `{}`", flag.text()),
+                range,
+                "misplaced-flag",
+                format!(
+                    "flag `{}` is not allowed on {} (allowed on: {})",
+                    tok.text(),
+                    target_label(decl.kind()),
+                    allowed.names().join(", ")
+                ),
             ));
         }
     }
 }
 
+fn target_label(kind: SyntaxKind) -> &'static str {
+    match kind {
+        SyntaxKind::SCRIPT_HEADER => "scripts",
+        SyntaxKind::PROPERTY => "properties",
+        SyntaxKind::VAR_DECL => "variables",
+        SyntaxKind::EVENT => "events",
+        _ => "functions",
+    }
+}
 fn check_names(sema: &Sema<'_>, out: &mut Vec<Diagnostic>) {
     for node in sema.root.descendants() {
         match node.kind() {

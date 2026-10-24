@@ -1,0 +1,26 @@
+[package]
+name = "skyrim_data_dir"
+version = "0.1.0"
+description = "Get Skyrim data directory(For windows)"
+# Vendored from https://github.com/SARDONYX-sard/d-merge (core/skyrim_data_dir).
+
+authors.workspace = true
+categories = ["development-tools"]
+edition.workspace = true
+keywords = ["skyrim"]
+license = "MIT OR Apache-2.0"
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+# The examples of the docs are illustrative and not self-contained.
+doctest = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"], optional = true }
+
+[features]
+serde = ["dep:serde"]
+
+[lints]
+workspace = true

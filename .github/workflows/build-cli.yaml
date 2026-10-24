@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  APP_NAME: papyrus_lsp
+  APP_NAME: papyrus_analyzer
   CARGO_TERM_COLOR: always
   PROFILE: release
 

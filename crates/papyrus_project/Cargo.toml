@@ -1,0 +1,19 @@
+[package]
+name = "papyrus_project"
+version = "0.0.0"
+description = "`papyrus.toml` project manifest: sources, imports, flags and compiler invocation."
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+toml.workspace = true
+skyrim_data_dir.workspace = true
+
+[lints]
+workspace = true

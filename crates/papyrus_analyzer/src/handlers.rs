@@ -1,18 +1,18 @@
 //! Request handlers: protocol in, [`papyrus_ide`] query, protocol out.
 
 use lsp_types::{
-    CompletionItem, CompletionItemKind, CompletionList, CompletionParams, CompletionResponse,
-    CompletionTextEdit, DocumentHighlight, DocumentHighlightKind, DocumentHighlightParams,
-    DocumentSymbolParams, DocumentSymbolResponse, Documentation, FoldingRange, FoldingRangeKind,
-    FoldingRangeParams, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents,
-    HoverParams, InsertTextFormat, Location, LocationLink, MarkupContent, MarkupKind,
-    ParameterInformation, ParameterLabel, ReferenceParams, SemanticToken, SemanticTokens,
-    SemanticTokensParams, SemanticTokensRangeParams, SemanticTokensRangeResult,
-    SemanticTokensResult, SignatureHelp, SignatureHelpParams, SignatureInformation,
-    SymbolInformation, TextDocumentPositionParams, TextEdit, WorkspaceSymbolParams,
-    WorkspaceSymbolResponse,
+    CodeLens, CodeLensParams, Command, CompletionItem, CompletionItemKind, CompletionList,
+    CompletionParams, CompletionResponse, CompletionTextEdit, DocumentHighlight,
+    DocumentHighlightKind, DocumentHighlightParams, DocumentSymbolParams, DocumentSymbolResponse,
+    Documentation, FoldingRange, FoldingRangeKind, FoldingRangeParams, GotoDefinitionParams,
+    GotoDefinitionResponse, Hover, HoverContents, HoverParams, InsertTextFormat, Location,
+    LocationLink, MarkupContent, MarkupKind, ParameterInformation, ParameterLabel, Position,
+    ReferenceParams, SemanticToken, SemanticTokens, SemanticTokensParams,
+    SemanticTokensRangeParams, SemanticTokensRangeResult, SemanticTokensResult, SignatureHelp,
+    SignatureHelpParams, SignatureInformation, SymbolInformation, TextDocumentPositionParams,
+    TextEdit, WorkspaceSymbolParams, WorkspaceSymbolResponse,
 };
-use papyrus_ide::{FileId, FoldKind, TextRange, TextSize};
+use papyrus_ide::{FileId, FoldKind, NavFile, TextRange, TextSize};
 use rustc_hash::FxHashMap;
 
 use crate::{conv::Lines, ext, server::Server};
@@ -44,7 +44,62 @@ impl Server {
         })
     }
 
+    fn nav_location(
+        &self,
+        file: NavFile,
+        range: TextRange,
+        cache: &mut FxHashMap<FileId, Lines>,
+    ) -> Option<Location> {
+        match file {
+            NavFile::Script(file) => self.location(file, range, cache),
+            NavFile::Flags => Some(Location {
+                uri: crate::conv::path_to_uri(self.ws.flags().path.as_ref()?),
+                range: Lines::flags(&self.ws).range(range),
+            }),
+        }
+    }
+
+    /// The offset of a position in the active flags file, if `uri` is it.
+    fn flags_position(&self, pos: &TextDocumentPositionParams) -> Option<(Lines, TextSize)> {
+        let path = crate::conv::uri_to_path(&pos.text_document.uri)?;
+        if !self.ws.is_flags_file(&path) {
+            return None;
+        }
+        let lines = Lines::flags(&self.ws);
+        let offset = lines.offset(pos.position);
+        Some((lines, offset))
+    }
+
     pub(crate) fn hover(&mut self, params: HoverParams) -> Option<Hover> {
+        let pos = &params.text_document_position_params;
+        if let Some(path) = crate::conv::uri_to_path(&pos.text_document.uri)
+            && crate::server::is_manifest(&path)
+        {
+            let text: std::sync::Arc<str> = match self.other_docs.get(&path) {
+                Some(doc) => doc.text.as_str().into(),
+                None => std::fs::read_to_string(&path).ok()?.into(),
+            };
+            let lines =
+                Lines { index: std::sync::Arc::new(papyrus_ide::LineIndex::new(&text)), text };
+            let (range, value) = self.manifest_hover(&path, lines.offset(pos.position))?;
+            return Some(Hover {
+                contents: HoverContents::Markup(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value,
+                }),
+                range: Some(lines.range(range)),
+            });
+        }
+        if let Some((lines, offset)) = self.flags_position(&params.text_document_position_params) {
+            let hover = papyrus_ide::flag_file_hover(&self.ws, offset)?;
+            return Some(Hover {
+                contents: HoverContents::Markup(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: hover.markdown,
+                }),
+                range: Some(lines.range(hover.range)),
+            });
+        }
         let (file, lines, offset) = self.position(&params.text_document_position_params)?;
         let hover = papyrus_ide::hover(&self.ws, file, offset)?;
         Some(Hover {
@@ -77,8 +132,8 @@ impl Server {
         if link_support {
             let mut links = Vec::new();
             for t in targets {
-                let full = self.location(t.file, t.full_range, &mut cache)?;
-                let focus = self.location(t.file, t.focus_range, &mut cache)?;
+                let full = self.nav_location(t.file, t.full_range, &mut cache)?;
+                let focus = self.nav_location(t.file, t.focus_range, &mut cache)?;
                 links.push(LocationLink {
                     origin_selection_range: None,
                     target_uri: full.uri,
@@ -90,19 +145,23 @@ impl Server {
         } else {
             let locations = targets
                 .into_iter()
-                .filter_map(|t| self.location(t.file, t.focus_range, &mut cache))
+                .filter_map(|t| self.nav_location(t.file, t.focus_range, &mut cache))
                 .collect();
             Some(GotoDefinitionResponse::Array(locations))
         }
     }
 
     pub(crate) fn references(&mut self, params: ReferenceParams) -> Option<Vec<Location>> {
-        let (file, lines, offset) = self.position(&params.text_document_position)?;
-        let refs =
-            papyrus_ide::references(&self.ws, file, offset, params.context.include_declaration);
+        let include = params.context.include_declaration;
         let mut cache = FxHashMap::default();
-        cache.insert(file, lines);
-        Some(refs.into_iter().filter_map(|(f, r)| self.location(f, r, &mut cache)).collect())
+        let refs = if let Some((_, offset)) = self.flags_position(&params.text_document_position) {
+            papyrus_ide::flag_references(&self.ws, offset, include)
+        } else {
+            let (file, lines, offset) = self.position(&params.text_document_position)?;
+            cache.insert(file, lines);
+            papyrus_ide::references(&self.ws, file, offset, include)
+        };
+        Some(refs.into_iter().filter_map(|(f, r)| self.nav_location(f, r, &mut cache)).collect())
     }
 
     pub(crate) fn document_highlight(
@@ -127,8 +186,13 @@ impl Server {
     }
 
     pub(crate) fn completion(&mut self, params: CompletionParams) -> Option<CompletionResponse> {
-        let (file, lines, offset) = self.position(&params.text_document_position)?;
-        let completions = papyrus_ide::completions(&self.ws, file, offset);
+        let (lines, completions) =
+            if let Some((lines, offset)) = self.flags_position(&params.text_document_position) {
+                (lines, papyrus_ide::flag_file_completions(&self.ws, offset))
+            } else {
+                let (file, lines, offset) = self.position(&params.text_document_position)?;
+                (lines, papyrus_ide::completions(&self.ws, file, offset))
+            };
         let snippets = self
             .caps
             .text_document
@@ -216,6 +280,15 @@ impl Server {
         &mut self,
         params: DocumentSymbolParams,
     ) -> Option<DocumentSymbolResponse> {
+        if crate::conv::uri_to_path(&params.text_document.uri)
+            .is_some_and(|p| self.ws.is_flags_file(&p))
+        {
+            let lines = Lines::flags(&self.ws);
+            let symbols = papyrus_ide::flag_file_symbols(&self.ws);
+            return Some(DocumentSymbolResponse::Nested(
+                symbols.into_iter().map(|s| document_symbol(&lines, s)).collect(),
+            ));
+        }
         let file = self.file(&params.text_document.uri).ok()?;
         let lines = Lines::of(&self.ws, file)?;
         let symbols = papyrus_ide::document_symbols(&self.ws, file);
@@ -247,6 +320,28 @@ impl Server {
             })
             .collect();
         Some(WorkspaceSymbolResponse::Flat(infos))
+    }
+
+    /// `▶ Compile` and `Compile All` above the `ScriptName` line, like the
+    /// `▶ Run Test` lenses of rust-analyzer. None without `papyrus.toml`.
+    pub(crate) fn code_lens(&mut self, params: CodeLensParams) -> Option<Vec<CodeLens>> {
+        let file = self.file(&params.text_document.uri).ok()?;
+        let lines = Lines::of(&self.ws, file)?;
+        let range = self.ws.file(file).index.name_range?;
+        let line = lines.position(range.start()).line;
+        let range = lsp_types::Range::new(Position::new(line, 0), Position::new(line, 0));
+        let uri = serde_json::to_value(params.text_document.uri.as_str()).ok()?;
+        let lens = |title: &str, command: &str, arguments| CodeLens {
+            range,
+            command: Some(Command {
+                title: title.to_owned(),
+                command: command.to_owned(),
+                arguments,
+            }),
+            data: None,
+        };
+        self.manifest.as_ref()?;
+        Some(vec![lens("▶\u{fe0e} Compile", "papyrus.compile", Some(vec![uri]))])
     }
 
     pub(crate) fn folding_ranges(
@@ -381,6 +476,7 @@ fn symbol_kind(kind: papyrus_ide::SymbolKind) -> lsp_types::SymbolKind {
         K::Property => lsp_types::SymbolKind::PROPERTY,
         K::Variable => lsp_types::SymbolKind::FIELD,
         K::State => lsp_types::SymbolKind::NAMESPACE,
+        K::Flag => lsp_types::SymbolKind::CONSTANT,
     }
 }
 

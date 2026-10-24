@@ -25,6 +25,13 @@ fn workspace(files: &[(&str, &str)]) -> (Workspace, FileId, TextSize) {
     (ws, file, offset)
 }
 
+fn script_of(file: NavFile) -> FileId {
+    match file {
+        NavFile::Script(f) => f,
+        NavFile::Flags => panic!("expected a script"),
+    }
+}
+
 const FORM: &str = "ScriptName Form Hidden\nInt Function GetFormID() Native\n";
 const ACTOR: &str = "ScriptName Actor extends Form Hidden\n; Kills the actor.\nFunction Kill(Actor akKiller = None) Native\nFloat Function GetAV(String asName) Native\nEvent OnDeath(Actor akKiller)\nEndEvent\n";
 const DEBUG: &str =
@@ -83,12 +90,12 @@ fn goto_inherited_and_imported() {
     ]);
     let targets = goto_definition(&ws, file, offset);
     assert_eq!(targets.len(), 1);
-    assert_eq!(ws.file(targets[0].file).path, Path::new("/ws/Form.psc"));
+    assert_eq!(ws.file(script_of(targets[0].file)).path, Path::new("/ws/Form.psc"));
 
     let text = ws.text(file).unwrap();
     let trace = TextSize::new(text.find("Trace").unwrap() as u32 + 1);
     let targets = goto_definition(&ws, file, trace);
-    assert_eq!(ws.file(targets[0].file).path, Path::new("/ws/Debug.psc"));
+    assert_eq!(ws.file(script_of(targets[0].file)).path, Path::new("/ws/Debug.psc"));
 }
 
 #[test]
@@ -102,7 +109,7 @@ fn goto_property_through_cast_and_index() {
         ),
     ]);
     let targets = goto_definition(&ws, file, offset);
-    assert_eq!(ws.file(targets[0].file).path, Path::new("/ws/Actor.psc"));
+    assert_eq!(ws.file(script_of(targets[0].file)).path, Path::new("/ws/Actor.psc"));
 }
 
 #[test]
@@ -219,7 +226,7 @@ fn diagnostics_semantic() {
         [
             "script-name-mismatch: script name `Test` does not match the file name `Wrong.psc`",
             "duplicate-definition: `x` is already defined in this scope",
-            "unknown-flag: unknown flag `Gloabl`",
+            "unknown-flag: unknown flag `Gloabl`, not defined in built-in Skyrim flags",
             "unresolved-name: cannot find `Fly` in this scope",
             "unknown-member: `Test` has no member `Swim`",
             "unknown-type: unknown type `Missing`",
@@ -239,6 +246,132 @@ fn document_symbols_nest_states_and_accessors() {
     let children: Vec<_> =
         symbols[0].children.iter().map(|s| (s.name.as_str(), s.children.len())).collect();
     assert_eq!(children, [("P", 1), ("S", 1)]);
+}
+
+const FLAGS: &str = "// Hides things.\nFlag Hidden 0 { Script Property }\nFlag Conditional 1 { Script Variable }\nFlag Everywhere 5\n";
+
+fn with_flags(files: &[(&str, &str)]) -> (Workspace, FileId, TextSize) {
+    let (mut ws, file, offset) = workspace(files);
+    ws.set_flags_file(PathBuf::from("/ws/Custom.flg"), Arc::from(FLAGS));
+    (ws, file, offset)
+}
+
+#[test]
+fn flag_completion_depends_on_declaration() {
+    let complete = |src: &str| {
+        let (ws, file, offset) = with_flags(&[("Test.psc", src)]);
+        let c = crate::features::completion::completions(&ws, file, offset);
+        let mut l: Vec<String> = c.items.iter().map(|i| i.label.clone()).collect();
+        l.sort();
+        l
+    };
+    assert_eq!(complete("ScriptName Test $0\n"), ["Conditional", "Everywhere", "Hidden", "Native"]);
+    assert_eq!(
+        complete("ScriptName Test\nFunction F() $0\nEndFunction\n"),
+        ["Everywhere", "Global", "Native"]
+    );
+    assert_eq!(
+        complete("ScriptName Test\nInt Property P = 1 Auto $0\n"),
+        ["Conditional", "Everywhere", "Hidden"]
+    );
+    assert_eq!(complete("ScriptName Test\nInt x = 1 H$0\n"), ["Conditional", "Everywhere"]);
+    assert_eq!(
+        complete("ScriptName Test\nInt Property P $0\n"),
+        ["Auto", "AutoReadOnly", "Everywhere", "Hidden"]
+    );
+}
+
+#[test]
+fn flag_hover_goto_and_references() {
+    let (ws, file, offset) = with_flags(&[
+        ("Test.psc", "ScriptName Test Hid$0den\nInt Property P Auto Hidden\n"),
+        ("Other.psc", "ScriptName Other Hidden\n"),
+    ]);
+    let h = hover(&ws, file, offset).unwrap();
+    assert_eq!(
+        h.markdown,
+        "```papyrus\nFlag Hidden 0 { Script Property }\n```\n*Custom.flg*\n\n---\n\nHides things."
+    );
+    let targets = goto_definition(&ws, file, offset);
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].file, NavFile::Flags);
+    assert_eq!(&FLAGS[targets[0].focus_range], "Hidden");
+
+    let refs = references(&ws, file, offset, true);
+    assert_eq!(refs.len(), 4, "{refs:?}");
+    let from_flg = flag_references(&ws, targets[0].focus_range.start(), false);
+    assert_eq!(from_flg.len(), 3);
+
+    assert!(flag_file_hover(&ws, targets[0].focus_range.start()).is_some());
+    assert_eq!(flag_file_symbols(&ws).len(), 3);
+}
+
+#[test]
+fn keyword_hover_has_examples() {
+    let (ws, file, offset) = workspace(&[(
+        "Test.psc",
+        "ScriptName Test\nFunction F()\n  Wh$0ile True\n  EndWhile\nEndFunction\n",
+    )]);
+    let h = hover(&ws, file, offset).unwrap();
+    assert!(h.markdown.starts_with("```papyrus\nWhile\n```\n*keyword*"), "{}", h.markdown);
+    assert!(h.markdown.contains("# Examples\n\n```papyrus\nInt i = 0"), "{}", h.markdown);
+
+    let (ws, file, offset) = workspace(&[(
+        "Test.psc",
+        "ScriptName Test\nFunction F()\n  Se$0lf.Disable()\nEndFunction\n",
+    )]);
+    let h = hover(&ws, file, offset).unwrap();
+    assert!(
+        h.markdown.contains("Refers to:") && h.markdown.contains("ScriptName Test"),
+        "{}",
+        h.markdown
+    );
+
+    let (ws, _, _) = with_flags(&[("Test.psc", "ScriptName Test$0\n")]);
+    let at = |needle: &str| TextSize::new(FLAGS.find(needle).unwrap() as u32 + 1);
+    assert!(flag_file_hover(&ws, at("Flag Hidden")).unwrap().markdown.contains("bit index"));
+    assert!(
+        flag_file_hover(&ws, at("Property }")).unwrap().markdown.contains("property declarations")
+    );
+    assert!(
+        flag_file_hover(&ws, at("Hidden 0"))
+            .unwrap()
+            .markdown
+            .starts_with("```papyrus\nFlag Hidden 0")
+    );
+    assert!(flag_file_hover(&ws, at("Hides")).is_none(), "comments have no hover");
+}
+
+#[test]
+fn flag_file_completion() {
+    let (ws, _, _) = with_flags(&[("Test.psc", "ScriptName Test$0\n")]);
+    let at = |needle: &str| TextSize::new((FLAGS.find(needle).unwrap() + needle.len()) as u32);
+    let labels = |offset| -> Vec<String> {
+        flag_file_completions(&ws, offset).items.into_iter().map(|i| i.label).collect()
+    };
+    // Inside `{ Script Property }` of Hidden: only the missing targets.
+    assert_eq!(labels(at("{ Script ")), ["Variable", "Function"]);
+    assert_eq!(labels(TextSize::of(FLAGS)), ["Flag", "Flag"]);
+    let snippet = flag_file_completions(&ws, TextSize::of(FLAGS)).items[0].snippet.clone().unwrap();
+    assert!(snippet.contains("${2:2}"), "next free index: {snippet}");
+    assert!(labels(at("// Hid")).is_empty());
+}
+
+#[test]
+fn misplaced_flags() {
+    let (ws, file, _) = with_flags(&[(
+        "Test.psc",
+        "ScriptName Test$0\nFunction F() Hidden Global\nEndFunction\nInt x Hidden\nInt Property P Auto Conditional\nInt Property Q Global Auto\n",
+    )]);
+    let diags: Vec<String> = diagnostics(&ws, file).into_iter().map(|d| d.message).collect();
+    assert_eq!(
+        diags,
+        [
+            "flag `Hidden` is not allowed on functions (allowed on: Script, Property)",
+            "flag `Hidden` is not allowed on variables (allowed on: Script, Property)",
+            "flag `Global` is not allowed on properties (allowed on: Function)",
+        ]
+    );
 }
 
 // === Corpus ===
@@ -277,6 +410,9 @@ fn corpus_has_no_semantic_diagnostics() {
     }
 
     let mut ws = Workspace::new();
+    let flg = deps.join("TESV_Papyrus_Flags.flg");
+    ws.set_flags_file(flg.clone(), Arc::from(read_file(&flg).unwrap()));
+    assert!(ws.flags().errors.is_empty());
     for path in &dep_files {
         let text = read_file(path).unwrap();
         ws.set_disk_index(path.clone(), index_text(&text), Origin::Import(0));

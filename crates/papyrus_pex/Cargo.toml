@@ -5,7 +5,7 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
-bitflags = "2.13.0"
+bitflags.workspace = true
 
 [features]
 # default = ["trace-layout"]

@@ -33,7 +33,7 @@ use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
 use crate::{
-    config::Config,
+    config::{CliOptions, Config},
     conv::{self, Lines},
 };
 
@@ -41,8 +41,20 @@ use crate::{
 pub(crate) enum IndexEvent {
     /// `done` of `total` files are indexed.
     Progress { generation: u64, done: usize, total: usize },
-    /// Indexing finished.
-    Done { generation: u64, files: Vec<(PathBuf, ScriptIndex, Origin)>, elapsed_ms: u128 },
+    /// Indexing finished. `flag_files` are the `.flg` files found on the way.
+    Done {
+        generation: u64,
+        files: Vec<(PathBuf, ScriptIndex, Origin)>,
+        flag_files: Vec<PathBuf>,
+        elapsed_ms: u128,
+    },
+}
+
+/// A document open in the editor that is not a script: the flags file or the
+/// project manifest.
+pub(crate) struct OtherDoc {
+    pub(crate) text: String,
+    pub(crate) version: i32,
 }
 
 /// The language server.
@@ -50,8 +62,17 @@ pub(crate) struct Server {
     sender: Sender<Message>,
     pub(crate) ws: Workspace,
     pub(crate) config: Config,
-    roots: Vec<PathBuf>,
+    cli: CliOptions,
+    pub(crate) roots: Vec<PathBuf>,
     pub(crate) caps: ClientCapabilities,
+    /// The loaded `papyrus.toml`.
+    pub(crate) project: Option<papyrus_project::Project>,
+    /// The `papyrus.toml` found in the workspace, valid or not.
+    pub(crate) manifest: Option<PathBuf>,
+    /// Why `manifest` could not be loaded.
+    pub(crate) manifest_error: Option<String>,
+    /// Open `.flg` and `papyrus.toml` documents, by path.
+    pub(crate) other_docs: rustc_hash::FxHashMap<PathBuf, OtherDoc>,
     /// Incremented on every (re)index; results of older runs are dropped.
     generation: u64,
     indexing: bool,
@@ -63,7 +84,7 @@ pub(crate) struct Server {
 type HandlerResult = Result<Value, (ErrorCode, String)>;
 
 impl Server {
-    pub(crate) fn new(sender: Sender<Message>, init: &InitializeParams) -> Server {
+    pub(crate) fn new(sender: Sender<Message>, init: &InitializeParams, cli: CliOptions) -> Server {
         let mut roots: Vec<PathBuf> = init
             .workspace_folders
             .iter()
@@ -78,9 +99,14 @@ impl Server {
         Server {
             sender,
             ws: Workspace::new(),
-            config: Config::from_json(init.initialization_options.clone()),
+            config: Config::from_json(init.initialization_options.clone()).with_cli(&cli),
+            cli,
             roots,
             caps: init.capabilities.clone(),
+            project: None,
+            manifest: None,
+            manifest_error: None,
+            other_docs: Default::default(),
             generation: 0,
             indexing: false,
             index_tx,
@@ -91,6 +117,7 @@ impl Server {
 
     /// Runs until the client asks for shutdown.
     pub(crate) fn run(mut self, connection: &Connection) -> anyhow::Result<()> {
+        self.load_project();
         self.start_indexing();
         loop {
             select! {
@@ -128,7 +155,7 @@ impl Server {
         self.send(Notification::new(N::METHOD.to_owned(), params));
     }
 
-    fn request_client<R: request::Request>(&mut self, params: R::Params) {
+    pub(crate) fn request_client<R: request::Request>(&mut self, params: R::Params) {
         self.next_request_id += 1;
         let id = RequestId::from(format!("papyrus-{}", self.next_request_id));
         self.send(Request::new(id, R::METHOD.to_owned(), params));
@@ -181,6 +208,7 @@ impl Server {
             WorkspaceSymbolRequest::METHOD => {
                 handle::<WorkspaceSymbolRequest>(self, params, Server::workspace_symbols)
             }
+            CodeLensRequest::METHOD => handle::<CodeLensRequest>(self, params, Server::code_lens),
             FoldingRangeRequest::METHOD => {
                 handle::<FoldingRangeRequest>(self, params, Server::folding_ranges)
             }
@@ -198,6 +226,19 @@ impl Server {
             }
             crate::ext::Status::METHOD => {
                 handle::<crate::ext::Status>(self, params, Server::status)
+            }
+            crate::ext::ManifestTemplate::METHOD => {
+                handle::<crate::ext::ManifestTemplate>(self, params, |_, ()| {
+                    papyrus_project::TEMPLATE.to_owned()
+                })
+            }
+            crate::ext::CompileCommands::METHOD => {
+                let params = serde_json::from_value(params)
+                    .map_err(|e| (ErrorCode::InvalidParams, format!("invalid params: {e}")))?;
+                let result = self
+                    .compile_commands(params)
+                    .map_err(|message| (ErrorCode::RequestFailed, message))?;
+                serde_json::to_value(result).map_err(|e| (ErrorCode::InternalError, e.to_string()))
             }
             _ => Err((ErrorCode::MethodNotFound, format!("unknown request `{method}`"))),
         }
@@ -218,12 +259,16 @@ impl Server {
             DidCloseTextDocument::METHOD => {
                 notify::<DidCloseTextDocument>(not, |p| self.did_close(p));
             }
+            DidSaveTextDocument::METHOD => {
+                notify::<DidSaveTextDocument>(not, |p| self.did_save(p));
+            }
             DidChangeWatchedFiles::METHOD => {
                 notify::<DidChangeWatchedFiles>(not, |p| self.did_change_watched_files(p));
             }
             DidChangeConfiguration::METHOD => {
                 notify::<DidChangeConfiguration>(not, |p| {
-                    self.set_config(Config::from_json(Some(p.settings)));
+                    let config = Config::from_json(Some(p.settings)).with_cli(&self.cli);
+                    self.set_config(config);
                 });
             }
             _ => {}
@@ -236,40 +281,55 @@ impl Server {
     fn did_open(&mut self, params: lsp_types::DidOpenTextDocumentParams) {
         let doc = params.text_document;
         let Some(path) = conv::uri_to_path(&doc.uri) else { return };
+        if !is_script(&path) {
+            self.other_docs.insert(path.clone(), OtherDoc { text: doc.text, version: doc.version });
+            self.other_doc_changed(&path);
+            return;
+        }
         self.ws.set_open(path, Arc::from(doc.text), doc.version);
         self.publish_open_diagnostics();
     }
 
     fn did_change(&mut self, params: lsp_types::DidChangeTextDocumentParams) {
         let Some(path) = conv::uri_to_path(&params.text_document.uri) else { return };
+        let version = params.text_document.version;
+        if let Some(doc) = self.other_docs.get_mut(&path) {
+            apply_changes(&mut doc.text, params.content_changes);
+            doc.version = version;
+            self.other_doc_changed(&path);
+            return;
+        }
         let Some(file) = self.ws.file_id(&path) else { return };
         let Some(doc) = &self.ws.file(file).open else { return };
 
         let mut text = doc.text.to_string();
-        for change in params.content_changes {
-            match change.range {
-                Some(range) => {
-                    // Positions refer to the text after the previous change.
-                    let lines = Lines {
-                        index: Arc::new(papyrus_ide::LineIndex::new(&text)),
-                        text: Arc::from(text.as_str()),
-                    };
-                    let range = lines.text_range(range);
-                    text.replace_range(
-                        usize::from(range.start())..usize::from(range.end()),
-                        &change.text,
-                    );
-                }
-                None => text = change.text,
-            }
-        }
-        self.ws.set_open(path, Arc::from(text), params.text_document.version);
+        apply_changes(&mut text, params.content_changes);
+        self.ws.set_open(path, Arc::from(text), version);
         self.publish_open_diagnostics();
+    }
+
+    fn did_save(&mut self, params: lsp_types::DidSaveTextDocumentParams) {
+        let Some(path) = conv::uri_to_path(&params.text_document.uri) else { return };
+        if is_manifest(&path) {
+            self.reload_project();
+        }
     }
 
     fn did_close(&mut self, params: lsp_types::DidCloseTextDocumentParams) {
         let uri = params.text_document.uri;
-        if let Some(file) = conv::uri_to_path(&uri).and_then(|p| self.ws.file_id(&p)) {
+        let path = conv::uri_to_path(&uri);
+        if let Some(path) = &path
+            && self.other_docs.remove(path).is_some()
+        {
+            if self.ws.is_flags_file(path) {
+                self.ws.close_flags();
+            }
+            if is_manifest(path) {
+                // Keep showing problems of the file on disk.
+                self.reload_project();
+                return;
+            }
+        } else if let Some(file) = path.and_then(|p| self.ws.file_id(&p)) {
             self.ws.close(file);
         }
         self.notify::<notification::PublishDiagnostics>(PublishDiagnosticsParams {
@@ -283,6 +343,18 @@ impl Server {
     fn did_change_watched_files(&mut self, params: lsp_types::DidChangeWatchedFilesParams) {
         for change in params.changes {
             let Some(path) = conv::uri_to_path(&change.uri) else { continue };
+            if is_manifest(&path) {
+                if !self.other_docs.contains_key(&path) {
+                    self.reload_project();
+                }
+                continue;
+            }
+            if is_flags(&path) {
+                if self.ws.is_flags_file(&path) && !self.other_docs.contains_key(&path) {
+                    self.select_flags_file(Vec::new());
+                }
+                continue;
+            }
             if !is_script(&path) {
                 continue;
             }
@@ -310,9 +382,13 @@ impl Server {
         if config == self.config {
             return;
         }
-        let reindex = config.import_directories != self.config.import_directories;
+        let reload = config.import_directories != self.config.import_directories
+            || config.flags_file != self.config.flags_file
+            || config.var != self.config.var;
         self.config = config;
-        if reindex {
+        if reload {
+            // Variables may change the paths of papyrus.toml too.
+            self.load_project();
             self.reset_workspace();
             self.start_indexing();
         }
@@ -321,7 +397,7 @@ impl Server {
 
     fn origin_of(&self, path: &Path) -> Origin {
         let in_root = self.roots.iter().any(|r| path.starts_with(r));
-        match self.config.import_directories.iter().position(|d| path.starts_with(d)) {
+        match self.import_dirs().iter().position(|d| path.starts_with(d)) {
             Some(i) if !in_root => Origin::Import(i as u16),
             _ => Origin::Workspace,
         }
@@ -342,31 +418,54 @@ impl Server {
         for (path, text, version) in open {
             self.ws.set_open(path, text, version);
         }
+        let open_flags: Vec<(PathBuf, String)> = self
+            .other_docs
+            .iter()
+            .filter(|(p, _)| is_flags(p))
+            .map(|(p, d)| (p.clone(), d.text.clone()))
+            .collect();
+        for (path, text) in open_flags {
+            self.ws.set_flags_open(path, Arc::from(text));
+        }
     }
 
     /// Handles `papyrus/restart`.
     fn restart(&mut self, params: Option<crate::ext::RestartParams>) -> crate::ext::StatusResult {
         log::info!("restarting the server");
         if let Some(settings) = params.and_then(|p| p.settings) {
-            self.config = Config::from_json(Some(settings));
+            self.config = Config::from_json(Some(settings)).with_cli(&self.cli);
         }
+        self.load_project();
         self.reset_workspace();
         self.start_indexing();
         self.publish_open_diagnostics();
+        self.refresh_code_lenses();
         self.status(())
     }
 
     fn status(&mut self, _: ()) -> crate::ext::StatusResult {
+        let (health, problems) = self.health();
         crate::ext::StatusResult {
+            health: health.to_owned(),
+            problems,
             files: self.ws.len(),
             open_files: self.ws.open_files().count(),
             indexing: self.indexing,
             generation: self.generation,
             roots: self.roots.iter().map(|p| p.display().to_string()).collect(),
             import_directories: self
-                .config
-                .import_directories
+                .import_dirs()
                 .iter()
+                .map(|p| p.display().to_string())
+                .collect(),
+            manifest: self.manifest.as_ref().map(|p| p.display().to_string()),
+            manifest_error: self.manifest_error.clone(),
+            flags_file: self.ws.flags().path.as_ref().map(|p| p.display().to_string()),
+            variables: self.variables_report(),
+            sources: self
+                .project
+                .iter()
+                .flat_map(|p| &p.sources)
                 .map(|p| p.display().to_string())
                 .collect(),
         }
@@ -374,18 +473,19 @@ impl Server {
 
     // === Indexing ===
 
-    fn start_indexing(&mut self) {
+    pub(crate) fn start_indexing(&mut self) {
         self.generation += 1;
         self.indexing = true;
         let generation = self.generation;
         let mut dirs: Vec<(PathBuf, Origin)> =
             self.roots.iter().map(|r| (r.clone(), Origin::Workspace)).collect();
         dirs.extend(
-            self.config
-                .import_directories
-                .iter()
+            self.import_dirs()
+                .into_iter()
                 .enumerate()
-                .map(|(i, d)| (d.clone(), Origin::Import(i as u16))),
+                // Directories inside a workspace folder are already scanned.
+                .filter(|(_, d)| !self.roots.iter().any(|r| d.starts_with(r)))
+                .map(|(i, d)| (d, Origin::Import(i as u16))),
         );
         for (dir, _) in &dirs {
             if !dir.is_dir() {
@@ -438,7 +538,7 @@ impl Server {
                     )),
                 });
             }
-            IndexEvent::Done { generation, files, elapsed_ms } => {
+            IndexEvent::Done { generation, files, flag_files, elapsed_ms } => {
                 if generation != self.generation {
                     return;
                 }
@@ -446,6 +546,7 @@ impl Server {
                 for (path, index, origin) in files {
                     self.ws.set_disk_index(path, index, origin);
                 }
+                self.select_flags_file(flag_files);
                 self.indexing = false;
                 log::info!("indexed {count} scripts in {elapsed_ms} ms");
                 if self.progress_supported() {
@@ -538,16 +639,50 @@ where
     }
 }
 
-fn is_script(path: &Path) -> bool {
+pub(crate) fn is_script(path: &Path) -> bool {
     path.extension().is_some_and(|e| e.eq_ignore_ascii_case("psc"))
+}
+
+pub(crate) fn is_flags(path: &Path) -> bool {
+    path.extension().is_some_and(|e| e.eq_ignore_ascii_case("flg"))
+}
+
+/// `papyrus.toml` or its machine local `papyrus.local.toml`.
+pub(crate) fn is_manifest(path: &Path) -> bool {
+    path.file_name().is_some_and(|n| {
+        n.eq_ignore_ascii_case(papyrus_project::MANIFEST_NAME)
+            || n.eq_ignore_ascii_case(papyrus_project::LOCAL_MANIFEST_NAME)
+    })
+}
+
+/// Applies editor changes to `text`.
+fn apply_changes(text: &mut String, changes: Vec<lsp_types::TextDocumentContentChangeEvent>) {
+    for change in changes {
+        match change.range {
+            Some(range) => {
+                // Positions refer to the text after the previous change.
+                let lines = Lines {
+                    index: Arc::new(papyrus_ide::LineIndex::new(text)),
+                    text: Arc::from(text.as_str()),
+                };
+                let range = lines.text_range(range);
+                text.replace_range(
+                    usize::from(range.start())..usize::from(range.end()),
+                    &change.text,
+                );
+            }
+            None => *text = change.text,
+        }
+    }
 }
 
 /// Finds and indexes every script below `dirs`, in parallel.
 fn index_workspace(generation: u64, dirs: &[(PathBuf, Origin)], tx: &Sender<IndexEvent>) {
     let start = Instant::now();
     let mut paths = Vec::new();
+    let mut flag_files = Vec::new();
     for (dir, origin) in dirs {
-        collect_scripts(dir, *origin, &mut paths);
+        collect_scripts(dir, *origin, &mut paths, &mut flag_files);
     }
     let total = paths.len();
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).min(16);
@@ -577,11 +712,16 @@ fn index_workspace(generation: u64, dirs: &[(PathBuf, Origin)], tx: &Sender<Inde
         handles.into_iter().flat_map(|h| h.join().unwrap_or_default()).collect()
     });
 
-    let _ =
-        tx.send(IndexEvent::Done { generation, files, elapsed_ms: start.elapsed().as_millis() });
+    let elapsed_ms = start.elapsed().as_millis();
+    let _ = tx.send(IndexEvent::Done { generation, files, flag_files, elapsed_ms });
 }
 
-fn collect_scripts(dir: &Path, origin: Origin, out: &mut Vec<(PathBuf, Origin)>) {
+fn collect_scripts(
+    dir: &Path,
+    origin: Origin,
+    out: &mut Vec<(PathBuf, Origin)>,
+    flag_files: &mut Vec<PathBuf>,
+) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for entry in entries.flatten() {
         let path = entry.path();
@@ -592,9 +732,11 @@ fn collect_scripts(dir: &Path, origin: Origin, out: &mut Vec<(PathBuf, Origin)>)
             if name.starts_with('.') || name == "node_modules" || name == "target" {
                 continue;
             }
-            collect_scripts(&path, origin, out);
+            collect_scripts(&path, origin, out, flag_files);
         } else if is_script(&path) {
             out.push((path, origin));
+        } else if is_flags(&path) {
+            flag_files.push(path);
         }
     }
 }

@@ -1,5 +1,5 @@
 ;/ script docs /;
-ScriptName TestPlayerScript extends Actor
+ScriptName expected_formatted extends Actor
 
 ;/ event docs /;
 Event OnInit()

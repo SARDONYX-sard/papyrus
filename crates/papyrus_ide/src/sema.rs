@@ -173,6 +173,10 @@ pub enum Def {
     },
     /// A built-in.
     Builtin(Builtin, Option<TypeRef>),
+    /// A user flag, by index into [`crate::flags::FlagTable::defs`].
+    Flag(u32),
+    /// A language flag: `Native`, `Global`, `Auto` or `AutoReadOnly`.
+    LanguageFlag(SyntaxKind),
 }
 
 /// The type of an expression.
@@ -529,6 +533,7 @@ impl<'a> Sema<'a> {
             }
             Def::Script { file } => self.ws.file(file).index.name.map(Ty::Static),
             Def::Builtin(b, _) => b.ty().map(Ty::Value),
+            Def::Flag(_) | Def::LanguageFlag(_) => None,
         }
     }
 

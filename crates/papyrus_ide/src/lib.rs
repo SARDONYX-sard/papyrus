@@ -11,6 +11,7 @@
 
 mod db;
 mod features;
+pub mod flags;
 pub mod index;
 mod line_index;
 pub mod sema;
@@ -22,15 +23,21 @@ pub use papyrus_parser::{TextRange, TextSize};
 pub use crate::{
     db::{FileData, FileId, OpenDoc, Origin, Workspace},
     features::{
-        completion::{CompletionItem, CompletionKind, Completions, completions, member_docs},
-        diagnostics::{Diagnostic, Severity, diagnostics},
+        completion::{
+            CompletionItem, CompletionKind, Completions, completions, flag_file_completions,
+            member_docs,
+        },
+        diagnostics::{Diagnostic, Severity, diagnostics, flag_file_diagnostics},
         folding::{Fold, FoldKind, folding_ranges},
-        hover::{HoverResult, hover},
-        navigation::{Highlight, NavTarget, goto_definition, highlight, references},
+        hover::{HoverResult, flag_file_hover, hover},
+        navigation::{
+            Highlight, NavFile, NavTarget, flag_references, goto_definition, highlight, references,
+        },
         semantic_tokens::{SemanticToken, TokenModifier, TokenType, semantic_tokens},
         signature_help::{SignatureHelp, signature_help},
         symbols::{
-            DocumentSymbol, SymbolKind, WorkspaceSymbol, document_symbols, workspace_symbols,
+            DocumentSymbol, SymbolKind, WorkspaceSymbol, document_symbols, flag_file_symbols,
+            workspace_symbols,
         },
     },
     index::ScriptIndex,

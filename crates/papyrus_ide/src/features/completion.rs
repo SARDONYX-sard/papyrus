@@ -19,6 +19,7 @@ use papyrus_parser::{
 use super::{in_body, member_kind_label, with_sema};
 use crate::{
     FileId, Workspace,
+    flags::FlagTargets,
     index::{Member, MemberKind, render_param},
     sema::{FileSource, LocalKind, MemberItem, Sema, Ty},
 };
@@ -157,6 +158,10 @@ impl<'s, 'a> Ctx<'s, 'a> {
         if self.in_comment_or_string() {
             return self.out;
         }
+        if let Some(decl) = self.flag_context() {
+            self.add_flags(decl);
+            return self.out;
+        }
         match prev_kind {
             Some(SyntaxKind::DOT) => self.complete_members(),
             Some(SyntaxKind::EXTENDS_KW | SyntaxKind::IMPORT_KW) => self.add_scripts(false),
@@ -168,7 +173,6 @@ impl<'s, 'a> Ctx<'s, 'a> {
             Some(SyntaxKind::FUNCTION_KW) if !self.in_body() => {
                 self.add_overrides(MemberKind::Function);
             }
-            Some(SyntaxKind::R_PAREN) if self.on_declaration_header() => self.add_flags(),
             _ if self.in_body() => self.complete_body(),
             _ => self.complete_item(),
         }
@@ -193,8 +197,46 @@ impl<'s, 'a> Ctx<'s, 'a> {
         self.anchor().is_some_and(in_body)
     }
 
-    fn on_declaration_header(&self) -> bool {
-        self.prev.and_then(|t| t.parent()).is_some_and(|p| p.kind() == SyntaxKind::PARAM_LIST)
+    /// The declaration whose trailing flags are being typed: the cursor is on
+    /// the header line, after the name, the parameters or the initializer.
+    fn flag_context(&self) -> Option<papyrus_parser::SyntaxNode<'a>> {
+        let prev = self.prev?;
+        let parent = prev.parent()?;
+        let decl = std::iter::once(parent).chain(parent.ancestors()).find(|n| {
+            matches!(
+                n.kind(),
+                SyntaxKind::SCRIPT_HEADER
+                    | SyntaxKind::FUNCTION
+                    | SyntaxKind::EVENT
+                    | SyntaxKind::PROPERTY
+                    | SyntaxKind::VAR_DECL
+                    | SyntaxKind::BLOCK
+            )
+        })?;
+        if decl.kind() == SyntaxKind::BLOCK
+            || decl.parent().is_some_and(|p| p.kind() == SyntaxKind::BLOCK)
+        {
+            return None;
+        }
+        let callable = matches!(decl.kind(), SyntaxKind::FUNCTION | SyntaxKind::EVENT);
+        let ok = match parent.kind() {
+            SyntaxKind::FLAG => true,
+            SyntaxKind::PARAM_LIST => prev.kind() == SyntaxKind::R_PAREN,
+            SyntaxKind::NAME | SyntaxKind::NAME_REF => {
+                !callable
+                    && parent
+                        .parent()
+                        .is_some_and(|p| p == decl || p.kind() == SyntaxKind::EXTENDS_CLAUSE)
+            }
+            // The end of an initializer such as `= 5` or `= None`.
+            _ => {
+                !callable
+                    && decl.child_node(SyntaxKind::INITIALIZER).is_some_and(|init| {
+                        init.last_token() == Some(prev) && prev.kind() != SyntaxKind::EQ
+                    })
+            }
+        };
+        ok.then_some(decl)
     }
 
     fn push(
@@ -320,9 +362,6 @@ impl<'s, 'a> Ctx<'s, 'a> {
             self.push(*kw, CompletionKind::Keyword, 1);
         }
         self.add_primitives();
-        if self.prev.is_some_and(|t| t.kind() != SyntaxKind::NEWLINE) {
-            self.add_flags();
-        }
         self.add_scripts(true);
     }
 
@@ -332,9 +371,45 @@ impl<'s, 'a> Ctx<'s, 'a> {
         }
     }
 
-    fn add_flags(&mut self) {
-        for flag in ["Global", "Native", "Auto", "AutoReadOnly", "Hidden", "Conditional"] {
-            self.push(flag, CompletionKind::Flag, 0);
+    /// Language flags and user flags allowed on `decl`, minus those present.
+    fn add_flags(&mut self, decl: papyrus_parser::SyntaxNode<'a>) {
+        let auto_property = ast::Property::cast(decl).is_some_and(|p| p.is_auto());
+        let Some(target) = FlagTargets::of_declaration(decl.kind(), auto_property) else { return };
+        let present: Vec<&str> = decl
+            .children()
+            .filter_map(ast::Flag::cast)
+            .filter(|f| f.syntax().text_range().end() < self.replace_range.start())
+            .map(|f| f.text())
+            .collect();
+        let is_present = |name: &str| present.iter().any(|p| p.eq_ignore_ascii_case(name));
+
+        let language: &[SyntaxKind] = match decl.kind() {
+            SyntaxKind::SCRIPT_HEADER | SyntaxKind::EVENT => &[SyntaxKind::NATIVE_KW],
+            SyntaxKind::FUNCTION => &[SyntaxKind::GLOBAL_KW, SyntaxKind::NATIVE_KW],
+            SyntaxKind::PROPERTY if present.is_empty() || !auto_property => {
+                &[SyntaxKind::AUTO_KW, SyntaxKind::AUTOREADONLY_KW]
+            }
+            _ => &[],
+        };
+        for &kind in language {
+            let (name, docs) = super::language_flag_docs(kind);
+            if is_present(name) {
+                continue;
+            }
+            let item = self.push(name, CompletionKind::Flag, 0);
+            item.detail = Some("language flag".to_owned());
+            item.documentation = Some(docs.to_owned());
+        }
+
+        let table = self.sema.ws.flags();
+        let source = table.source_name();
+        for def in table.defs.iter().filter(|d| d.targets.intersects(target)) {
+            if is_present(def.name.as_str()) {
+                continue;
+            }
+            let item = self.push(def.name.as_str(), CompletionKind::Flag, 1);
+            item.detail = Some(format!("{} ({source})", def.signature()));
+            item.documentation = (!def.docs.is_empty()).then(|| def.docs.clone());
         }
     }
 
@@ -413,4 +488,88 @@ fn call_snippet(name: &str, has_params: bool) -> String {
 
 fn escape_snippet(s: &str) -> String {
     s.replace('\\', "\\\\").replace('$', "\\$").replace('}', "\\}")
+}
+
+/// Completion in the flags file: `Flag` definitions at the top level and the
+/// targets (`Script`, `Property`, `Variable`, `Function`) inside `{ }`.
+pub fn flag_file_completions(ws: &Workspace, offset: TextSize) -> Completions {
+    let flags = ws.flags();
+    let text: &str = &flags.text;
+    let offset = usize::from(offset).min(text.len());
+    let before = &text[..offset];
+
+    // No completion inside comments.
+    let line_start = before.rfind('\n').map_or(0, |i| i + 1);
+    let in_block_comment =
+        before.rfind("/*").is_some_and(|open| before[open..].find("*/").is_none());
+    if before[line_start..].contains("//") || in_block_comment {
+        return Completions::default();
+    }
+
+    let word_start = before
+        .char_indices()
+        .rev()
+        .take_while(|(_, c)| c.is_ascii_alphanumeric() || *c == '_')
+        .last()
+        .map_or(offset, |(i, _)| i);
+    let replace_range =
+        TextRange::new(TextSize::new(word_start as u32), TextSize::new(offset as u32));
+    let item =
+        |label: &str, kind, detail: &str, snippet: Option<String>, sort: &str| CompletionItem {
+            label: label.to_owned(),
+            kind,
+            detail: Some(detail.to_owned()),
+            documentation: None,
+            snippet,
+            replace_range,
+            sort_text: format!("{sort}{label}"),
+            resolve: None,
+        };
+
+    let open = before.rfind('{');
+    let close = before.rfind('}');
+    let in_braces = match (open, close) {
+        (Some(o), Some(c)) => o > c,
+        (Some(_), None) => true,
+        _ => false,
+    };
+    let mut out = Completions::default();
+    if in_braces {
+        // The whole `{ ... }` block, also after the cursor.
+        let start = open.unwrap_or(0);
+        let end = text[offset..].find('}').map_or(text.len(), |i| offset + i);
+        let listed = format!("{}{}", &text[start..word_start], &text[offset..end]);
+        for (target, detail) in [
+            ("Script", "the script header"),
+            ("Property", "properties"),
+            ("Variable", "script variables (and auto properties)"),
+            ("Function", "functions and events"),
+        ] {
+            let present = listed
+                .split(|c: char| !c.is_ascii_alphanumeric())
+                .any(|w| w.eq_ignore_ascii_case(target) && !w.is_empty());
+            if !present {
+                out.items.push(item(
+                    target,
+                    CompletionKind::Keyword,
+                    &format!("flag allowed on {detail}"),
+                    None,
+                    "0",
+                ));
+            }
+        }
+        return out;
+    }
+
+    // The first free bit index for a new flag.
+    let next_index = (0..32u32).find(|i| flags.defs.iter().all(|d| d.index != *i)).unwrap_or(0);
+    out.items.push(item(
+        "Flag",
+        CompletionKind::Snippet,
+        "Flag <name> <index> { <targets> }",
+        Some(format!("Flag ${{1:Name}} ${{2:{next_index}}}\n{{\n\t${{3:Script}}\n}}$0")),
+        "0",
+    ));
+    out.items.push(item("Flag", CompletionKind::Keyword, "keyword", None, "1"));
+    out
 }

@@ -1,6 +1,6 @@
 {
-  "name": "papyrus-lsp",
-  "displayName": "Papyrus Language Server",
+  "name": "papyrus-analyzer",
+  "displayName": "Papyrus Analyzer",
   "description": "Language support for Skyrim's Papyrus scripting language: diagnostics, completion, hover, go to definition, references and more.",
   "version": "0.0.1",
   "publisher": "SARDONYX",
@@ -31,6 +31,16 @@
           ".psc"
         ],
         "configuration": "./language-configuration.json"
+      },
+      {
+        "extensions": [
+          ".flg"
+        ],
+        "aliases": [
+          "Papyrus Flags"
+        ],
+        "configuration": "./flags-language-configuration.json",
+        "id": "papyrus-flags"
       }
     ],
     "grammars": [
@@ -38,6 +48,11 @@
         "language": "papyrus",
         "scopeName": "source.papyrus",
         "path": "./syntaxes/papyrus.tmLanguage.json"
+      },
+      {
+        "path": "./syntaxes/papyrus-flags.tmLanguage.json",
+        "language": "papyrus-flags",
+        "scopeName": "source.papyrus-flags"
       }
     ],
     "commands": [
@@ -55,6 +70,29 @@
         "command": "papyrus.showSyntaxTree",
         "title": "Show Syntax Tree",
         "category": "Papyrus"
+      },
+      {
+        "title": "Compile Script",
+        "icon": "$(play)",
+        "command": "papyrus.compile",
+        "category": "Papyrus"
+      },
+      {
+        "title": "Compile All Scripts",
+        "icon": "$(run-all)",
+        "command": "papyrus.compileAll",
+        "category": "Papyrus"
+      },
+      {
+        "title": "Create papyrus.toml",
+        "command": "papyrus.createManifest",
+        "category": "Papyrus"
+      },
+      {
+        "title": "Compile Selected Scripts…",
+        "category": "Papyrus",
+        "icon": "$(run-all)",
+        "command": "papyrus.compileSelected"
       }
     ],
     "configuration": {
@@ -63,7 +101,8 @@
         "papyrus.server.path": {
           "type": "string",
           "default": "",
-          "description": "Path of the `papyrus_lsp` executable. Empty uses the bundled server."
+          "description": "Path of the `papyrus_analyzer` executable. Empty uses the bundled server.",
+          "scope": "machine-overridable"
         },
         "papyrus.importDirectories": {
           "type": "array",
@@ -71,7 +110,8 @@
             "type": "string"
           },
           "default": [],
-          "markdownDescription": "Directories with script sources used for name resolution, e.g. the game's `Data/Source/Scripts` and the sources of required mods. Earlier entries win when several declare the same script. Supports `~` and `${workspaceFolder}`. Changing this setting re-indexes the workspace."
+          "markdownDescription": "Extra script source directories, in lookup order. Supports `${NAME}` variables (see `#papyrus.var#`), `${env:NAME}`, `${workspaceFolder}` and `~`. Without `papyrus.toml`, the game scripts of `SKYRIM_DIR` (or of the installation found in the registry) are imported automatically.",
+          "scope": "machine-overridable"
         },
         "papyrus.semanticDiagnostics": {
           "type": "boolean",
@@ -87,6 +127,30 @@
           ],
           "default": "off",
           "description": "Traces the communication between VS Code and the language server."
+        },
+        "papyrus.flagsFile": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "The flags file (`TESV_Papyrus_Flags.flg`) when `papyrus.toml` does not set `[build] flags`. Empty: the first `.flg` found in the workspace or import directories, else the built-in Skyrim flags.",
+          "scope": "machine-overridable"
+        },
+        "papyrus.server.extraArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "machine-overridable",
+          "markdownDescription": "Extra command line arguments of the server, e.g. `[\"--var\", \"SKYRIM_DIR=...\"]`. See `papyrus_analyzer --help`. Takes effect after reloading the window."
+        },
+        "papyrus.var": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "scope": "machine-overridable",
+          "markdownDescription": "Values of `${NAME}` variables used by `papyrus.toml` and by the path settings, e.g. `{ \"SKYRIM_DIR\": \"${game:SkyrimSE}\" }`. Put machine specific paths here (user settings) instead of in the committed `papyrus.toml`. Wins over `[var]` of `papyrus.local.toml` and `papyrus.toml`; an undefined variable is an error. Values may use `${game:SkyrimSE}` (installation from the registry, Windows only: `SkyrimLE`, `SkyrimSE`, `SkyrimVR`, `Enderal`, `EnderalSE`), `${env:NAME}` (environment variables) and `${workspaceFolder}`."
         }
       }
     },
@@ -101,6 +165,90 @@
             "storage.modifier.papyrus"
           ]
         }
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "when": "resourceLangId == papyrus && papyrus.hasManifest",
+          "command": "papyrus.compile",
+          "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "papyrus.compile",
+          "when": "papyrus.hasManifest && resourceLangId == papyrus"
+        },
+        {
+          "command": "papyrus.compileAll",
+          "when": "papyrus.hasManifest"
+        },
+        {
+          "command": "papyrus.createManifest",
+          "when": "!papyrus.hasManifest"
+        },
+        {
+          "command": "papyrus.compileSelected",
+          "when": "papyrus.hasManifest"
+        }
+      ],
+      "explorer/context": [
+        {
+          "when": "resourceExtname == .psc && papyrus.hasManifest",
+          "command": "papyrus.compile",
+          "group": "navigation@9"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "when": "editorLangId == papyrus && papyrus.hasManifest",
+        "command": "papyrus.compile",
+        "key": "ctrl+shift+b"
+      }
+    ],
+    "problemMatchers": [
+      {
+        "name": "papyrus",
+        "owner": "papyrus",
+        "source": "PapyrusCompiler",
+        "pattern": {
+          "regexp": "^(.*?\\.psc)\\((\\d+),(\\d+)\\):\\s*(.*)$",
+          "line": 2,
+          "message": 4,
+          "column": 3,
+          "file": 1
+        },
+        "fileLocation": [
+          "autoDetect",
+          "${workspaceFolder}"
+        ]
+      }
+    ],
+    "taskDefinitions": [
+      {
+        "properties": {
+          "all": {
+            "description": "Compile every script of [build] sources.",
+            "type": "boolean"
+          },
+          "files": {
+            "type": "array",
+            "description": "The scripts to compile.",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [],
+        "type": "papyrus"
+      }
+    ],
+    "tomlValidation": [
+      {
+        "fileMatch": "papyrus.toml",
+        "url": "./schemas/papyrus.schema.json"
       }
     ]
   },

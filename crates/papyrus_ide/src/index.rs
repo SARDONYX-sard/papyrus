@@ -110,7 +110,10 @@ pub enum MemberKind {
     State,
 }
 
-/// Flags of a declaration, as a bit set.
+/// The language flags (keywords) of a declaration, as a bit set.
+///
+/// User flags such as `Hidden` come from the flags file and are kept by name,
+/// see [`Member::user_flags`] and [`crate::flags`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Flags(u8);
 
@@ -123,18 +126,12 @@ impl Flags {
     pub const AUTO: Flags = Flags(1 << 2);
     /// `AutoReadOnly`
     pub const AUTO_READONLY: Flags = Flags(1 << 3);
-    /// `Hidden`
-    pub const HIDDEN: Flags = Flags(1 << 4);
-    /// `Conditional`
-    pub const CONDITIONAL: Flags = Flags(1 << 5);
 
-    const NAMES: [(Flags, &'static str); 6] = [
+    const NAMES: [(Flags, &'static str); 4] = [
         (Flags::AUTO, "Auto"),
         (Flags::AUTO_READONLY, "AutoReadOnly"),
         (Flags::GLOBAL, "Global"),
         (Flags::NATIVE, "Native"),
-        (Flags::CONDITIONAL, "Conditional"),
-        (Flags::HIDDEN, "Hidden"),
     ];
 
     /// Returns `true` if all flags of `other` are set.
@@ -151,24 +148,31 @@ impl Flags {
         self.0 |= other.0;
     }
 
-    fn collect<'a>(flags: impl Iterator<Item = ast::Flag<'a>>) -> Flags {
+    /// Splits flags into language flags and user flag names.
+    fn collect<'a>(flags: impl Iterator<Item = ast::Flag<'a>>) -> (Flags, Box<[Name]>) {
         let mut out = Flags::default();
+        let mut user = Vec::new();
         for flag in flags {
-            if let Some(f) = Flags::from_name(flag.text()) {
-                out.insert(f);
+            match Flags::from_name(flag.text()) {
+                Some(f) => out.insert(f),
+                None => user.push(Name::new(flag.text())),
             }
         }
-        out
+        (out, user.into_boxed_slice())
     }
+}
 
-    /// Renders the flags as Papyrus source, e.g. `" Global Native"`.
-    fn render(self, out: &mut String, skip: Flags) {
-        for (flag, name) in Flags::NAMES {
-            if self.contains(flag) && !skip.contains(flag) {
-                out.push(' ');
-                out.push_str(name);
-            }
+/// Renders language and user flags as Papyrus source, e.g. `" Global Native"`.
+pub fn render_flags(out: &mut String, flags: Flags, user: &[Name]) {
+    for (flag, name) in Flags::NAMES {
+        if flags.contains(flag) {
+            out.push(' ');
+            out.push_str(name);
         }
+    }
+    for name in user {
+        out.push(' ');
+        out.push_str(name.as_str());
     }
 }
 
@@ -198,8 +202,10 @@ pub struct Member {
     pub ty: Option<TypeRef>,
     /// Parameters of functions and events.
     pub params: Box<[ParamInfo]>,
-    /// Declaration flags.
+    /// Language flags.
     pub flags: Flags,
+    /// User flags, from the flags file.
+    pub user_flags: Box<[Name]>,
     /// Initial value of properties and variables, as written in the source.
     pub default: Option<Box<str>>,
     /// The state declaring this function or event, `None` for the empty state.
@@ -233,7 +239,7 @@ impl Member {
                     render_param(&mut out, p);
                 }
                 out.push(')');
-                self.flags.render(&mut out, Flags::default());
+                render_flags(&mut out, self.flags, &self.user_flags);
             }
             MemberKind::Property | MemberKind::Variable => {
                 if let Some(ty) = self.ty {
@@ -246,7 +252,7 @@ impl Member {
                 if let Some(default) = &self.default {
                     let _ = write!(out, " = {default}");
                 }
-                self.flags.render(&mut out, Flags::default());
+                render_flags(&mut out, self.flags, &self.user_flags);
             }
             MemberKind::State => {
                 if self.flags.contains(Flags::AUTO) {
@@ -292,8 +298,10 @@ pub struct ScriptIndex {
     pub extends: Option<Name>,
     /// Range of the parent script name.
     pub extends_range: Option<TextRange>,
-    /// Header flags.
+    /// Language flags of the header (Native).
     pub flags: Flags,
+    /// User flags of the header, e.g. Hidden.
+    pub user_flags: Box<[Name]>,
     /// Imported scripts.
     pub imports: Box<[Name]>,
     /// All declarations, in source order, including functions of states and
@@ -364,7 +372,7 @@ fn collect_item(
                 index.extends = Some(Name::new(ext.text()));
                 index.extends_range = Some(ext.syntax().text_range());
             }
-            index.flags = Flags::collect(header.flags());
+            (index.flags, index.user_flags) = Flags::collect(header.flags());
             index.docs = doc_ranges(header.syntax()).into_boxed_slice();
         }
         ast::Item::Import(import) => {
@@ -374,6 +382,7 @@ fn collect_item(
         }
         ast::Item::VarDecl(var) => {
             let Some(name) = var.name() else { return };
+            let (flags, user_flags) = Flags::collect(var.flags());
             members.push(Member {
                 kind: MemberKind::Variable,
                 name: Name::new(name.text()),
@@ -381,7 +390,8 @@ fn collect_item(
                 full_range: var.syntax().trimmed_range(),
                 ty: var.ty().and_then(TypeRef::from_ast),
                 params: Box::new([]),
-                flags: Flags::collect(var.flags()),
+                flags,
+                user_flags,
                 default: var.initializer().map(|e| expr_text(e.syntax())),
                 state,
                 property: None,
@@ -390,6 +400,7 @@ fn collect_item(
         }
         ast::Item::Property(prop) => {
             let Some(name) = prop.name() else { return };
+            let (flags, user_flags) = Flags::collect(prop.flags());
             let prop_name = Name::new(name.text());
             members.push(Member {
                 kind: MemberKind::Property,
@@ -398,7 +409,8 @@ fn collect_item(
                 full_range: prop.syntax().trimmed_range(),
                 ty: prop.ty().and_then(TypeRef::from_ast),
                 params: Box::new([]),
-                flags: Flags::collect(prop.flags()),
+                flags,
+                user_flags,
                 default: prop.initializer().map(|e| expr_text(e.syntax())),
                 state,
                 property: None,
@@ -426,6 +438,7 @@ fn collect_item(
                 ty: None,
                 params: Box::new([]),
                 flags,
+                user_flags: Box::new([]),
                 default: None,
                 state: None,
                 property: None,
@@ -438,6 +451,7 @@ fn collect_item(
         ast::Item::Function(f) => members.extend(function_member(f, state)),
         ast::Item::Event(e) => {
             let Some(name) = e.name() else { return };
+            let (flags, user_flags) = Flags::collect(e.flags());
             members.push(Member {
                 kind: MemberKind::Event,
                 name: Name::new(name.text()),
@@ -445,7 +459,8 @@ fn collect_item(
                 full_range: e.syntax().trimmed_range(),
                 ty: None,
                 params: params(e.param_list()),
-                flags: Flags::collect(e.flags()),
+                flags,
+                user_flags,
                 default: None,
                 state,
                 property: None,
@@ -457,6 +472,7 @@ fn collect_item(
 
 fn function_member(f: ast::Function<'_>, state: Option<Name>) -> Option<Member> {
     let name = f.name()?;
+    let (flags, user_flags) = Flags::collect(f.flags());
     Some(Member {
         kind: MemberKind::Function,
         name: Name::new(name.text()),
@@ -464,7 +480,8 @@ fn function_member(f: ast::Function<'_>, state: Option<Name>) -> Option<Member> 
         full_range: f.syntax().trimmed_range(),
         ty: f.return_type().and_then(TypeRef::from_ast),
         params: params(f.param_list()),
-        flags: Flags::collect(f.flags()),
+        flags,
+        user_flags,
         default: None,
         state,
         property: None,
@@ -630,7 +647,7 @@ mod tests {
         );
         assert_eq!(idx.name_str(), "Foo");
         assert_eq!(idx.extends.unwrap().as_str(), "Quest");
-        assert!(idx.flags.contains(Flags::HIDDEN));
+        assert_eq!(idx.user_flags[0].as_str(), "Hidden");
         assert_eq!(idx.imports.len(), 1);
         let sigs: Vec<_> = idx.members.iter().map(|m| m.signature()).collect();
         assert_eq!(

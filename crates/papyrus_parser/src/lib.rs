@@ -9,7 +9,7 @@
 //!
 //! 1. [`papyrus_lexer`] splits the text into borrowed tokens;
 //! 2. trivia is filtered out, newlines are kept (Papyrus is line oriented);
-//! 3. the [grammar](grammar) emits open/close/advance events;
+//! 3. the grammar emits open/close/advance events;
 //! 4. the events are replayed together with the trivia into a flat tree.
 //!
 //! The [`ast`] module offers typed accessors on top of the untyped tree.

@@ -82,6 +82,13 @@ impl Lines {
         Some(Lines { text, index })
     }
 
+    /// The lines of the flags file.
+    pub(crate) fn flags(ws: &Workspace) -> Lines {
+        let text = ws.flags().text.clone();
+        let index = Arc::new(LineIndex::new(&text));
+        Lines { text, index }
+    }
+
     pub(crate) fn offset(&self, pos: Position) -> TextSize {
         self.index.offset(&self.text, LineCol { line: pos.line, col: pos.character })
     }

@@ -1,0 +1,37 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Papyrus Flags",
+  "scopeName": "source.papyrus-flags",
+  "comment": "Papyrus compiler flags files (*.flg): `Flag <name> <index> { <targets> }`.",
+  "patterns": [
+    { "include": "#comments" },
+    {
+      "match": "(?i)\\b(flag)\\s+([A-Za-z_]\\w*)\\s+(\\d+)",
+      "captures": {
+        "1": { "name": "keyword.other.flag.papyrus-flags" },
+        "2": { "name": "entity.name.constant.flag.papyrus-flags" },
+        "3": { "name": "constant.numeric.papyrus-flags" }
+      }
+    },
+    {
+      "begin": "\\{",
+      "end": "\\}",
+      "beginCaptures": { "0": { "name": "punctuation.section.block.begin.papyrus-flags" } },
+      "endCaptures": { "0": { "name": "punctuation.section.block.end.papyrus-flags" } },
+      "patterns": [
+        { "include": "#comments" },
+        { "name": "support.type.target.papyrus-flags", "match": "(?i)\\b(script|property|variable|function)\\b" },
+        { "name": "invalid.illegal.target.papyrus-flags", "match": "[A-Za-z_]\\w*" }
+      ]
+    },
+    { "name": "constant.numeric.papyrus-flags", "match": "\\b\\d+\\b" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        { "name": "comment.block.papyrus-flags", "begin": "/\\*", "end": "\\*/" },
+        { "name": "comment.line.double-slash.papyrus-flags", "match": "//.*$" }
+      ]
+    }
+  }
+}

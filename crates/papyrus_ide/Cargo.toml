@@ -16,8 +16,5 @@ papyrus_lexer.workspace = true
 papyrus_parser.workspace = true
 rustc-hash.workspace = true
 
-[dev-dependencies]
-expect-test.workspace = true
-
 [lints]
 workspace = true

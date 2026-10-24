@@ -1,0 +1,772 @@
+//! The `papyrus.toml` project manifest.
+//!
+//! A manifest describes where the scripts of a mod live, which other sources
+//! they import, the flags file and how to invoke the Papyrus compiler. Its
+//! layout follows `Cargo.toml`:
+//!
+//! ```toml
+//! [package]
+//! name = "MyMod"
+//! version = "0.1.0"
+//!
+
+//! [compiler]
+//! path = "${SKYRIM_DIR}/Papyrus Compiler/PapyrusCompiler.exe"
+//! args = []                                     # extra arguments
+//!
+//! [build]
+//! sources = ["papyrus"]                         # directories of the scripts to compile
+//! output = "papyrus/prebuilt"                   # where `.pex` files go
+//! imports = ["${SKYRIM_DIR}/Data/Scripts/Source"]
+//! flags = "${SKYRIM_DIR}/Data/Scripts/Source/TESV_Papyrus_Flags.flg"
+//! optimize = true
+//! release = false
+//! final = false
+//! quiet = true
+//! ```
+//!
+//! Relative paths are relative to the directory of the manifest. Values may
+//! use `${NAME}` variables and a leading `~` for the home directory. The
+//! manifest is meant to be committed, so machine specific paths are written
+//! as variables, see [`Variables`] for where their values come from.
+
+use std::{
+    collections::BTreeMap,
+    fmt,
+    ops::Range,
+    path::{Path, PathBuf},
+};
+
+use serde::Deserialize;
+use toml::Spanned;
+
+mod vars;
+
+pub use crate::vars::{
+    SKYRIM_DIR, VarSource, Variables, detect_skyrim_dir, game_dir, game_script_dirs,
+};
+
+/// The file name of a manifest.
+pub const MANIFEST_NAME: &str = "papyrus.toml";
+
+/// A problem in a manifest, with its byte range when known.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ManifestError {
+    /// The message.
+    pub message: String,
+    /// The byte range in the manifest.
+    pub span: Option<Range<usize>>,
+}
+
+impl ManifestError {
+    fn new(message: impl Into<String>, span: Option<Range<usize>>) -> ManifestError {
+        ManifestError { message: message.into(), span }
+    }
+}
+
+impl fmt::Display for ManifestError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+struct RawManifest {
+    #[serde(default)]
+    package: RawPackage,
+    #[serde(default)]
+    var: BTreeMap<String, String>,
+    #[serde(default)]
+    compiler: RawCompiler,
+    #[serde(default)]
+    build: RawBuild,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+struct RawPackage {
+    name: Option<String>,
+    version: Option<String>,
+    description: Option<String>,
+    authors: Option<Vec<String>>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+struct RawCompiler {
+    path: Option<Spanned<String>>,
+    #[serde(default)]
+    args: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+struct RawBuild {
+    #[serde(default = "default_sources")]
+    sources: Vec<Spanned<String>>,
+    output: Option<Spanned<String>>,
+    #[serde(default)]
+    imports: Vec<Spanned<String>>,
+    flags: Option<Spanned<String>>,
+    #[serde(default = "yes")]
+    optimize: bool,
+    #[serde(default)]
+    release: bool,
+    #[serde(default)]
+    r#final: bool,
+    #[serde(default = "yes")]
+    quiet: bool,
+}
+
+impl Default for RawBuild {
+    fn default() -> Self {
+        RawBuild {
+            sources: default_sources(),
+            output: None,
+            imports: Vec::new(),
+            flags: None,
+            optimize: true,
+            release: false,
+            r#final: false,
+            quiet: true,
+        }
+    }
+}
+
+fn default_sources() -> Vec<Spanned<String>> {
+    vec![Spanned::new(0..0, ".".to_owned())]
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// A loaded manifest with every path resolved.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Project {
+    /// The directory of the manifest.
+    pub root: PathBuf,
+    /// The manifest file.
+    pub manifest_path: PathBuf,
+    /// `package.name`.
+    pub name: Option<String>,
+    /// `package.version`.
+    pub version: Option<String>,
+    /// `package.description`.
+    pub description: Option<String>,
+    /// `package.authors`.
+    pub authors: Vec<String>,
+    /// `compiler.path`.
+    pub compiler: Option<PathBuf>,
+    /// `compiler.args`: extra compiler arguments.
+    pub extra_args: Vec<String>,
+    /// `build.sources`: directories of the scripts of the project.
+    pub sources: Vec<PathBuf>,
+    /// `build.output`: the directory of the compiled `.pex` files.
+    pub output: PathBuf,
+    /// `build.imports`: other source directories, in priority order.
+    pub imports: Vec<PathBuf>,
+    /// `build.flags`: the flags file.
+    pub flags: Option<PathBuf>,
+    /// `build.optimize`
+    pub optimize: bool,
+    /// `build.release`: strip `DebugOnly` calls.
+    pub release: bool,
+    /// `build.final`: strip `BetaOnly` calls.
+    pub r#final: bool,
+    /// `build.quiet`: only report errors.
+    pub quiet: bool,
+    /// The variables used by the manifest, with their value and origin.
+    pub variables: BTreeMap<String, (String, VarSource)>,
+    /// Non-fatal problems, e.g. directories that do not exist.
+    pub warnings: Vec<ManifestError>,
+}
+
+/// One compiler invocation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CompileCommand {
+    /// The compiler executable.
+    pub program: PathBuf,
+    /// Its arguments.
+    pub args: Vec<String>,
+    /// The working directory.
+    pub cwd: PathBuf,
+    /// The output directory of this invocation, which must exist.
+    pub output: PathBuf,
+}
+
+impl fmt::Display for CompileCommand {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", quote(&self.program.to_string_lossy()))?;
+        for arg in &self.args {
+            write!(f, " {}", quote(arg))?;
+        }
+        Ok(())
+    }
+}
+
+fn quote(s: &str) -> String {
+    if s.contains([' ', '\t', '"']) {
+        format!("\"{}\"", s.replace('"', "\\\""))
+    } else {
+        s.to_owned()
+    }
+}
+
+/// Searches `dir` and its ancestors for a manifest, then the subdirectories
+/// of `dir` up to three levels deep (a workspace folder often contains the
+/// mod in a subdirectory).
+pub fn find_manifest(dir: &Path) -> Option<PathBuf> {
+    dir.ancestors()
+        .map(|d| d.join(MANIFEST_NAME))
+        .find(|p| p.is_file())
+        .or_else(|| find_manifest_below(dir, 3))
+}
+
+fn find_manifest_below(dir: &Path, depth: usize) -> Option<PathBuf> {
+    if depth == 0 {
+        return None;
+    }
+    let mut subdirs: Vec<PathBuf> = std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .filter(|e| {
+            let name = e.file_name();
+            let name = name.to_string_lossy();
+            !name.starts_with('.') && name != "node_modules" && name != "target"
+        })
+        .map(|e| e.path())
+        .collect();
+    subdirs.sort();
+    // Breadth first: the shallowest manifest wins.
+    subdirs
+        .iter()
+        .map(|d| d.join(MANIFEST_NAME))
+        .find(|p| p.is_file())
+        .or_else(|| subdirs.iter().find_map(|d| find_manifest_below(d, depth - 1)))
+}
+
+/// The file name of the machine local, uncommitted companion of a manifest.
+pub const LOCAL_MANIFEST_NAME: &str = "papyrus.local.toml";
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawLocal {
+    #[serde(default)]
+    var: BTreeMap<String, String>,
+}
+
+/// Reads and resolves a manifest file, with the `papyrus.local.toml` next to
+/// it if any.
+pub fn load(manifest_path: &Path, vars: &Variables) -> Result<Project, Vec<ManifestError>> {
+    let text = std::fs::read_to_string(manifest_path).map_err(|e| {
+        vec![ManifestError::new(format!("cannot read {}: {e}", manifest_path.display()), None)]
+    })?;
+    let local = read_local(manifest_path);
+    parse(manifest_path, &text, local.as_deref(), vars)
+}
+
+/// Reads the `papyrus.local.toml` next to a manifest.
+pub fn read_local(manifest_path: &Path) -> Option<String> {
+    std::fs::read_to_string(manifest_path.with_file_name(LOCAL_MANIFEST_NAME)).ok()
+}
+
+/// Parses manifest text and the text of its `papyrus.local.toml`. `vars`
+/// provides the editor and process variables; its `local` and `manifest`
+/// tables are filled from the files.
+pub fn parse(
+    manifest_path: &Path,
+    text: &str,
+    local: Option<&str>,
+    vars: &Variables,
+) -> Result<Project, Vec<ManifestError>> {
+    let raw: RawManifest = toml::from_str(text)
+        .map_err(|e| vec![ManifestError::new(e.message().to_owned(), e.span())])?;
+    let mut vars = vars.clone();
+    vars.manifest = raw.var.clone();
+    if let Some(local) = local {
+        let raw_local: RawLocal = toml::from_str(local).map_err(|e| {
+            vec![ManifestError::new(format!("{LOCAL_MANIFEST_NAME}: {}", e.message()), None)]
+        })?;
+        vars.local = raw_local.var;
+    }
+
+    let root = manifest_path.parent().map(Path::to_path_buf).unwrap_or_default();
+    let mut resolver =
+        Resolver { root: &root, vars: &vars, used: BTreeMap::new(), errors: Vec::new() };
+
+    let compiler = raw.compiler.path.as_ref().map(|p| resolver.path(p));
+    let sources: Vec<PathBuf> = raw.build.sources.iter().map(|p| resolver.path(p)).collect();
+    let output = match &raw.build.output {
+        Some(p) => resolver.path(p),
+        None => root.join("output"),
+    };
+    let imports: Vec<PathBuf> = raw.build.imports.iter().map(|p| resolver.path(p)).collect();
+    let flags = raw.build.flags.as_ref().map(|p| resolver.path(p));
+    let extra_args = raw.compiler.args.iter().map(|a| resolver.expand(a, None)).collect();
+
+    if !resolver.errors.is_empty() {
+        return Err(resolver.errors);
+    }
+    let variables = resolver.used;
+
+    let mut warnings = Vec::new();
+    let span = |s: &Spanned<String>| Some(s.span()).filter(|r| !r.is_empty());
+    for (path, raw) in
+        sources.iter().zip(&raw.build.sources).chain(imports.iter().zip(&raw.build.imports))
+    {
+        if !path.is_dir() {
+            warnings.push(ManifestError::new(
+                format!("directory not found: {}", path.display()),
+                span(raw),
+            ));
+        }
+    }
+    if let (Some(path), Some(raw)) = (&flags, &raw.build.flags)
+        && !path.is_file()
+    {
+        warnings.push(ManifestError::new(
+            format!("flags file not found: {}", path.display()),
+            span(raw),
+        ));
+    }
+    if let (Some(path), Some(raw)) = (&compiler, &raw.compiler.path)
+        && !path.is_file()
+    {
+        warnings
+            .push(ManifestError::new(format!("compiler not found: {}", path.display()), span(raw)));
+    }
+
+    Ok(Project {
+        manifest_path: manifest_path.to_path_buf(),
+        root,
+        name: raw.package.name,
+        version: raw.package.version,
+        description: raw.package.description,
+        authors: raw.package.authors.unwrap_or_default(),
+        compiler,
+        extra_args,
+        sources,
+        output,
+        imports,
+        flags,
+        optimize: raw.build.optimize,
+        release: raw.build.release,
+        r#final: raw.build.r#final,
+        quiet: raw.build.quiet,
+        variables,
+        warnings,
+    })
+}
+
+struct Resolver<'a> {
+    root: &'a Path,
+    vars: &'a Variables,
+    used: BTreeMap<String, (String, VarSource)>,
+    errors: Vec<ManifestError>,
+}
+
+impl Resolver<'_> {
+    fn path(&mut self, value: &Spanned<String>) -> PathBuf {
+        let span = Some(value.span()).filter(|r| !r.is_empty());
+        let expanded = self.expand(value.get_ref(), span);
+        resolve_path(self.root, &expanded)
+    }
+
+    fn expand(&mut self, value: &str, span: Option<Range<usize>>) -> String {
+        match self.vars.expand(value, &mut self.used) {
+            Ok(v) => v,
+            Err(message) => {
+                self.errors.push(ManifestError::new(message, span));
+                String::new()
+            }
+        }
+    }
+}
+
+/// The variables seen from a manifest: `vars` with the `[var]` tables of the
+/// manifest and of its local file filled in. Invalid TOML is tolerated, so
+/// that hovers keep working while the file is edited.
+pub fn manifest_variables(text: &str, local: Option<&str>, vars: &Variables) -> Variables {
+    fn var_table(text: &str) -> BTreeMap<String, String> {
+        let Ok(table) = text.parse::<toml::Table>() else { return BTreeMap::new() };
+        let Some(toml::Value::Table(vars)) = table.get("var") else { return BTreeMap::new() };
+        vars.iter().filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_owned()))).collect()
+    }
+    let mut vars = vars.clone();
+    vars.manifest = var_table(text);
+    vars.local = local.map(var_table).unwrap_or_default();
+    vars
+}
+
+/// The variable referenced at byte `offset` of a manifest: inside a `${...}`
+/// reference, or a key of the `[var]` table. Returns the name and its byte
+/// range.
+pub fn variable_at(text: &str, offset: usize) -> Option<(String, Range<usize>)> {
+    let offset = offset.min(text.len());
+    let line_start = text[..offset].rfind('\n').map_or(0, |i| i + 1);
+    let line_end = text[offset..].find('\n').map_or(text.len(), |i| offset + i);
+    let line = &text[line_start..line_end];
+
+    // `${NAME}` around the offset.
+    let mut search = 0;
+    while let Some(open) = line[search..].find("${") {
+        let open = search + open;
+        let Some(close) = line[open..].find('}') else { break };
+        let close = open + close;
+        let (start, end) = (line_start + open, line_start + close + 1);
+        if (start..end).contains(&offset) {
+            return Some((line[open + 2..close].trim().to_owned(), start..end));
+        }
+        search = close + 1;
+    }
+
+    // `NAME = ...` inside `[var]`.
+    let key_end = line.find('=')?;
+    let key = line[..key_end].trim();
+    let key_start = line_start + line.find(key)?;
+    if key.is_empty() || !(key_start..=key_start + key.len()).contains(&offset) {
+        return None;
+    }
+    let section = text[..line_start].lines().rev().map(str::trim).find(|l| l.starts_with('['))?;
+    (section == "[var]")
+        .then(|| (key.trim_matches('"').to_owned(), key_start..key_start + key.len()))
+}
+
+/// Joins a relative path to `root` and normalizes separators.
+pub fn resolve_path(root: &Path, value: &str) -> PathBuf {
+    let path = PathBuf::from(value);
+    let path = if path.is_absolute() { path } else { root.join(path) };
+    // Rebuilding from components normalizes separators and drops `.`.
+    path.components().collect()
+}
+impl Project {
+    /// Every directory that provides scripts for name resolution, in compiler
+    /// lookup order: the sources, then the imports.
+    pub fn import_dirs(&self) -> Vec<PathBuf> {
+        let mut dirs: Vec<PathBuf> = Vec::new();
+        for dir in self.sources.iter().chain(&self.imports) {
+            if !dirs.contains(dir) {
+                dirs.push(dir.clone());
+            }
+        }
+        dirs
+    }
+
+    /// The compiler `-import` list: every directory below the sources that
+    /// contains scripts, then the imports. Skyrim scripts live in one flat
+    /// namespace, so a script in `sources/a` may use one in `sources/b`, and
+    /// the compiler only looks in the listed directories, not below them.
+    pub fn compiler_import_dirs(&self) -> Vec<PathBuf> {
+        let mut dirs: Vec<PathBuf> = Vec::new();
+        for script in self.scripts() {
+            if let Some(parent) = script.parent()
+                && !dirs.iter().any(|d| d == parent)
+            {
+                dirs.push(parent.to_path_buf());
+            }
+        }
+        for dir in self.sources.iter().chain(&self.imports) {
+            if !dirs.contains(dir) {
+                dirs.push(dir.clone());
+            }
+        }
+        dirs
+    }
+
+    /// The command compiling one script.
+    ///
+    /// The compiler only accepts single files, so the directory structure is
+    /// kept by hand: `sources/a/b/X.psc` compiles into `output/a/b/X.pex`.
+    pub fn compile_file(&self, script: &Path) -> Result<CompileCommand, String> {
+        let dirs = self.compiler_import_dirs();
+        self.compile_file_with(script, dirs)
+    }
+
+    fn compile_file_with(
+        &self,
+        script: &Path,
+        mut dirs: Vec<PathBuf>,
+    ) -> Result<CompileCommand, String> {
+        // The directory of the script first, so that it wins over duplicates.
+        let parent = script.parent().unwrap_or(&self.root);
+        dirs.retain(|d| d != parent);
+        dirs.insert(0, parent.to_path_buf());
+        // The innermost source directory containing the script.
+        let relative = self
+            .sources
+            .iter()
+            .filter_map(|src| parent.strip_prefix(src).ok())
+            .min_by_key(|rel| rel.components().count());
+        let output = match relative {
+            Some(rel) if rel.components().next().is_some() => self.output.join(rel),
+            _ => self.output.clone(),
+        };
+        self.command(script, &dirs, output)
+    }
+
+    /// Every script below the source directories, recursively. The output
+    /// directory and hidden, `node_modules` and `target` directories are
+    /// skipped.
+    pub fn scripts(&self) -> Vec<PathBuf> {
+        let mut out = Vec::new();
+        for src in &self.sources {
+            collect_scripts(src, &self.output, &mut out);
+        }
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    /// The commands compiling every script below the source directories.
+    pub fn compile_all(&self) -> Result<Vec<CompileCommand>, String> {
+        let dirs = self.compiler_import_dirs();
+        self.scripts().iter().map(|s| self.compile_file_with(s, dirs.clone())).collect()
+    }
+
+    fn command(
+        &self,
+        script: &Path,
+        imports: &[PathBuf],
+        output: PathBuf,
+    ) -> Result<CompileCommand, String> {
+        let program = self
+            .compiler
+            .clone()
+            .ok_or_else(|| format!("set `[compiler] path` in {}", self.manifest_path.display()))?;
+        let flags = self
+            .flags
+            .as_ref()
+            .ok_or_else(|| format!("set `[build] flags` in {}", self.manifest_path.display()))?;
+        let mut args = vec![script.display().to_string()];
+        args.push(format!("-f={}", flags.display()));
+        let imports: Vec<String> = imports.iter().map(|d| d.display().to_string()).collect();
+        args.push(format!("-import={}", imports.join(";")));
+        args.push(format!("-output={}", output.display()));
+        for (on, flag) in [
+            (self.optimize, "-optimize"),
+            (self.release, "-release"),
+            (self.r#final, "-final"),
+            (self.quiet, "-quiet"),
+        ] {
+            if on {
+                args.push(flag.to_owned());
+            }
+        }
+        args.extend(self.extra_args.iter().cloned());
+        Ok(CompileCommand { program, args, cwd: self.root.clone(), output })
+    }
+}
+
+fn collect_scripts(dir: &Path, output: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if entry.file_type().is_ok_and(|t| t.is_dir()) {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            let skipped = name.starts_with('.') || name == "node_modules" || name == "target";
+            if !skipped && path != output {
+                collect_scripts(&path, output, out);
+            }
+        } else if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("psc")) {
+            out.push(path);
+        }
+    }
+}
+/// A commented manifest to start from.
+pub const TEMPLATE: &str = r#"[package]
+name = "MyMod"
+version = "0.1.0"
+
+# This file is shared with your team: keep machine specific paths out of it and
+# write them as `${NAME}` variables. A variable is taken from, first wins:
+#   1. the `papyrus.var` editor setting, or `papyrus_analyzer --var NAME=VALUE`
+#   2. `[var]` of papyrus.local.toml next to this file (add it to .gitignore)
+#   3. `[var]` of this file, for values shared by everyone
+# An undefined variable is an error. `${env:NAME}` reads the environment
+# variable NAME, `${workspaceFolder}` is the workspace folder and
+# `${game:SkyrimSE}` (SkyrimLE, SkyrimVR, Enderal, EnderalSE) is the game
+# installation found in the registry. The registry only exists on Windows: on
+# other systems set SKYRIM_DIR in `papyrus.var` or papyrus.local.toml instead.
+[var]
+SKYRIM_DIR = "${game:SkyrimSE}"
+
+[compiler]
+path = "${SKYRIM_DIR}/Papyrus Compiler/PapyrusCompiler.exe"
+# Extra arguments passed as is.
+args = []
+
+[build]
+# Directories of the scripts to compile, searched recursively (relative to this file).
+sources = ["."]
+# Where the compiled `.pex` files go, keeping the directory structure of `sources`.
+output = "output"
+# Other script sources, in lookup order (after `sources`).
+imports = ["${SKYRIM_DIR}/Data/Scripts/Source"]
+# The flags file (`Hidden`, `Conditional`, ...).
+flags = "${SKYRIM_DIR}/Data/Scripts/Source/TESV_Papyrus_Flags.flg"
+optimize = true
+release = false
+final = false
+quiet = true
+"#;
+
+/// A `papyrus.local.toml` to start from.
+pub const LOCAL_TEMPLATE: &str = r#"# Machine specific values for papyrus.toml. Do not commit this file.
+[var]
+# SKYRIM_DIR = "${game:SkyrimSE}"
+"#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fake_env(name: &str) -> Option<String> {
+        match name {
+            "GAME_ENV" => Some("/env/game".to_owned()),
+            "HOME" => Some("/home/me".to_owned()),
+            _ => None,
+        }
+    }
+
+    fn vars() -> Variables {
+        let mut v = Variables { process_env: fake_env, ..Variables::default() };
+        v.editor.insert("SKYRIM_DIR".to_owned(), "/games/skyrim".to_owned());
+        v
+    }
+
+    fn parse_str(text: &str) -> Result<Project, Vec<ManifestError>> {
+        parse(Path::new("/m/papyrus.toml"), text, None, &vars())
+    }
+
+    /// Paths with `/` separators, for platform independent assertions.
+    fn s(path: &Path) -> String {
+        path.display().to_string().replace('\\', "/")
+    }
+
+    fn all(paths: &[PathBuf]) -> Vec<String> {
+        paths.iter().map(|p| s(p)).collect()
+    }
+
+    #[test]
+    fn template_resolves() {
+        let p = parse(Path::new("/mods/my/papyrus.toml"), TEMPLATE, None, &vars()).unwrap();
+        assert_eq!(p.name.as_deref(), Some("MyMod"));
+        assert_eq!(
+            s(p.compiler.as_deref().unwrap()),
+            "/games/skyrim/Papyrus Compiler/PapyrusCompiler.exe"
+        );
+        assert_eq!(all(&p.sources), ["/mods/my"]);
+        assert_eq!(s(&p.output), "/mods/my/output");
+        assert_eq!(all(&p.imports), ["/games/skyrim/Data/Scripts/Source"]);
+        assert!(p.optimize && p.quiet && !p.release);
+    }
+
+    #[test]
+    fn var_table_and_env() {
+        let text = "[var]\nGAME = \"${env:GAME_ENV}\"\n[build]\nimports = [\"${GAME}/a\", \"${SKYRIM_DIR}/b\", \"~/c\"]\n";
+        let p = parse_str(text).unwrap();
+        assert_eq!(all(&p.imports), ["/env/game/a", "/games/skyrim/b", "/home/me/c"]);
+        assert_eq!(p.variables["SKYRIM_DIR"].1, VarSource::Editor);
+        assert!(parse_str("[env]\n").unwrap_err()[0].message.contains("unknown field `env`"));
+    }
+
+    #[test]
+    fn local_file_and_editor_override_the_manifest() {
+        let text = "[var]\nMODS = \"/shared\"\n[build]\nimports = [\"${MODS}/a\"]\n";
+        let local = "[var]\nMODS = \"/local\"\n";
+        let p = parse(Path::new("/m/papyrus.toml"), text, Some(local), &vars()).unwrap();
+        assert_eq!(all(&p.imports), ["/local/a"]);
+        assert_eq!(p.variables["MODS"].1, VarSource::Local);
+
+        let mut editor = vars();
+        editor.editor.insert("MODS".to_owned(), "/editor".to_owned());
+        let p = parse(Path::new("/m/papyrus.toml"), text, Some(local), &editor).unwrap();
+        assert_eq!(all(&p.imports), ["/editor/a"]);
+
+        let errors =
+            parse(Path::new("/m/papyrus.toml"), text, Some("[build]\n"), &vars()).unwrap_err();
+        assert!(errors[0].message.starts_with("papyrus.local.toml:"), "{}", errors[0].message);
+    }
+
+    #[test]
+    fn variable_lookup_for_hovers() {
+        let text = "[var]\nGAME = \"${env:GAME_ENV}\"\n[build]\nimports = [\"${GAME}/x\"]\n";
+        let at = |needle: &str| text.find(needle).unwrap();
+        assert_eq!(variable_at(text, at("GAME =") + 1).unwrap().0, "GAME");
+        assert_eq!(variable_at(text, at("${GAME}") + 3).unwrap().0, "GAME");
+        assert_eq!(variable_at(text, at("env:") + 1).unwrap().0, "env:GAME_ENV");
+        assert!(variable_at(text, at("imports") + 1).is_none(), "not in [var]");
+        let vars = manifest_variables(text, Some("[var]\nLOCAL = \"1\"\n"), &vars());
+        assert_eq!(vars.lookup("GAME").unwrap(), ("/env/game".to_owned(), VarSource::Manifest));
+        assert_eq!(vars.lookup("LOCAL").unwrap().1, VarSource::Local);
+    }
+
+    #[test]
+    fn errors_have_spans() {
+        let text = "[build]\nimports = [\"${MISSING}/x\"]\n";
+        let errors = parse_str(text).unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("`MISSING`"));
+        assert_eq!(&text[errors[0].span.clone().unwrap()], "\"${MISSING}/x\"");
+
+        let errors = parse_str("[build]\nsource = []\n").unwrap_err();
+        assert!(errors[0].message.contains("unknown field `source`"), "{}", errors[0].message);
+        assert!(errors[0].span.is_some());
+    }
+
+    #[test]
+    fn compile_commands() {
+        let p =
+            parse_str(&TEMPLATE.replace(r#"sources = ["."]"#, r#"sources = ["papyrus"]"#)).unwrap();
+        let cmd = p.compile_file(Path::new("/m/papyrus/Foo.psc")).unwrap();
+        let args: Vec<String> = cmd.args.iter().map(|a| a.replace('\\', "/")).collect();
+        assert_eq!(
+            args,
+            [
+                "/m/papyrus/Foo.psc",
+                "-f=/games/skyrim/Data/Scripts/Source/TESV_Papyrus_Flags.flg",
+                "-import=/m/papyrus;/games/skyrim/Data/Scripts/Source",
+                "-output=/m/output",
+                "-optimize",
+                "-quiet",
+            ]
+        );
+
+        // Nested scripts keep their directory below `output`.
+        let nested = p.compile_file(Path::new("/m/papyrus/quests/main/Bar.psc")).unwrap();
+        assert_eq!(s(&nested.output), "/m/output/quests/main");
+        assert!(
+            nested.args[2]
+                .replace('\\', "/")
+                .starts_with("-import=/m/papyrus/quests/main;/m/papyrus;")
+        );
+
+        let bare = parse_str("").unwrap();
+        assert!(bare.compile_file(Path::new("/m/X.psc")).unwrap_err().contains("[compiler] path"));
+    }
+
+    #[test]
+    fn compile_all_walks_sources() {
+        let dir = std::env::temp_dir().join(format!("papyrus-project-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("src/sub")).unwrap();
+        for f in ["src/A.psc", "src/sub/B.psc", "src/readme.txt"] {
+            std::fs::write(dir.join(f), "").unwrap();
+        }
+        let text =
+            "[compiler]\npath = \"c.exe\"\n[build]\nsources = [\"src\"]\nflags = \"f.flg\"\n";
+        let p = parse(&dir.join("papyrus.toml"), text, None, &vars()).unwrap();
+        let commands = p.compile_all().unwrap();
+        let outputs: Vec<String> =
+            commands.iter().map(|c| s(c.output.strip_prefix(&dir).unwrap())).collect();
+        assert_eq!(outputs, ["output", "output/sub"]);
+        // A script may use scripts of sibling directories.
+        let imports = commands[0].args[2].replace('\\', "/");
+        assert!(imports.contains("/src/sub") && imports.contains("/src;"), "{imports}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

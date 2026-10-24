@@ -7,6 +7,7 @@ mod config;
 mod conv;
 mod ext;
 mod handlers;
+mod project;
 mod server;
 
 use lsp_types::{
@@ -18,19 +19,23 @@ use lsp_types::{
 };
 use papyrus_ide::{TokenModifier, TokenType};
 
+#[allow(clippy::print_stdout)]
 fn main() -> anyhow::Result<()> {
-    if std::env::args().any(|a| a == "--version" || a == "-V") {
-        #[allow(clippy::print_stdout)]
-        {
-            println!("papyrus_lsp {}", env!("CARGO_PKG_VERSION"));
-        }
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        println!("papyrus_analyzer {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        println!("{}", config::USAGE);
+        return Ok(());
+    }
+    let cli = config::CliOptions::parse(args).map_err(anyhow::Error::msg)?;
 
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .target(env_logger::Target::Stderr)
         .init();
-    log::info!("papyrus_lsp {} starting", env!("CARGO_PKG_VERSION"));
+    log::info!("papyrus_analyzer {} starting", env!("CARGO_PKG_VERSION"));
 
     let (connection, io_threads) = lsp_server::Connection::stdio();
     let (id, params) = connection.initialize_start()?;
@@ -38,16 +43,16 @@ fn main() -> anyhow::Result<()> {
     let result = InitializeResult {
         capabilities: capabilities(),
         server_info: Some(ServerInfo {
-            name: "papyrus_lsp".to_owned(),
+            name: "papyrus_analyzer".to_owned(),
             version: Some(env!("CARGO_PKG_VERSION").to_owned()),
         }),
     };
     connection.initialize_finish(id, serde_json::to_value(result)?)?;
 
-    server::Server::new(connection.sender.clone(), &init).run(&connection)?;
+    server::Server::new(connection.sender.clone(), &init, cli).run(&connection)?;
     drop(connection);
     io_threads.join()?;
-    log::info!("papyrus_lsp stopped");
+    log::info!("papyrus_analyzer stopped");
     Ok(())
 }
 
@@ -69,6 +74,7 @@ fn capabilities() -> ServerCapabilities {
         document_symbol_provider: Some(OneOf::Left(true)),
         workspace_symbol_provider: Some(OneOf::Left(true)),
         folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
+        code_lens_provider: Some(lsp_types::CodeLensOptions { resolve_provider: Some(false) }),
         completion_provider: Some(CompletionOptions {
             resolve_provider: Some(true),
             trigger_characters: Some(vec![".".to_owned()]),

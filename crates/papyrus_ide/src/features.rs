@@ -4,6 +4,7 @@ pub(crate) mod completion;
 pub(crate) mod diagnostics;
 pub(crate) mod folding;
 pub(crate) mod hover;
+pub(crate) mod keyword_docs;
 pub(crate) mod navigation;
 pub(crate) mod semantic_tokens;
 pub(crate) mod signature_help;
@@ -17,6 +18,7 @@ use papyrus_parser::{
 
 use crate::{
     FileId,
+    features::navigation::NavFile,
     index::{MemberKind, TypeRef, render_docs},
     sema::{Def, FileSource, LocalKind, Sema},
 };
@@ -24,12 +26,15 @@ use crate::{
 /// The identifier-like token at `offset`, preferring identifiers over
 /// punctuation when the offset is between two tokens.
 pub(crate) fn ident_at<'a>(sema: &Sema<'a>, offset: TextSize) -> Option<SyntaxToken<'a>> {
-    let tok = sema.root.token_at_offset(offset).max_by_key(|t| {
+    let is_ident = |t: &SyntaxToken<'_>| {
         matches!(t.kind(), SyntaxKind::IDENT | SyntaxKind::SELF_KW | SyntaxKind::PARENT_KW)
-            || t.kind().is_primitive_type()
-    })?;
-    matches!(tok.kind(), SyntaxKind::IDENT | SyntaxKind::SELF_KW | SyntaxKind::PARENT_KW)
-        .then_some(tok)
+            || (t.kind().is_keyword() && t.parent().is_some_and(|p| p.kind() == SyntaxKind::FLAG))
+    };
+    let tok = sema
+        .root
+        .token_at_offset(offset)
+        .max_by_key(|t| is_ident(t) || t.kind().is_primitive_type())?;
+    is_ident(&tok).then_some(tok)
 }
 
 /// What the identifier at `offset` refers to, with the identifier range.
@@ -41,9 +46,38 @@ pub(crate) fn def_at(sema: &Sema<'_>, offset: TextSize) -> Option<(TextRange, De
         SyntaxKind::NAME => decl_def(sema, parent)?,
         SyntaxKind::NAME_REF => sema.resolve_name_ref(ast::NameRef::cast(parent)?)?,
         SyntaxKind::TYPE => sema.resolve_type(ast::Type::cast(parent)?)?,
+        SyntaxKind::FLAG => flag_def(sema, tok)?,
         _ => return None,
     };
     Some((range, def))
+}
+
+/// The definition of a flag token.
+pub(crate) fn flag_def(sema: &Sema<'_>, tok: SyntaxToken<'_>) -> Option<Def> {
+    if tok.kind() == SyntaxKind::IDENT {
+        let (i, _) = sema.ws.flags().get(tok.text())?;
+        Some(Def::Flag(i as u32))
+    } else {
+        Some(Def::LanguageFlag(tok.kind()))
+    }
+}
+
+/// Documentation of the language flags.
+pub(crate) fn language_flag_docs(kind: SyntaxKind) -> (&'static str, &'static str) {
+    match kind {
+        SyntaxKind::NATIVE_KW => (
+            "Native",
+            "On a function or event: implemented by the game engine, declared without body.\n\nOn a script: the script is an engine object type.",
+        ),
+        SyntaxKind::GLOBAL_KW => {
+            ("Global", "A function without `Self`, called as `ScriptName.Function()`.")
+        }
+        SyntaxKind::AUTO_KW => ("Auto", "An auto property, backed by a hidden variable."),
+        SyntaxKind::AUTOREADONLY_KW => {
+            ("AutoReadOnly", "A read-only auto property whose value is its initializer.")
+        }
+        _ => ("", ""),
+    }
 }
 
 /// The definition introduced by a `NAME` node.
@@ -132,16 +166,7 @@ pub(crate) fn def_info(sema: &Sema<'_>, def: Def) -> DefInfo {
             if let Some(ext) = index.extends {
                 signature.push_str(&format!(" extends {ext}"));
             }
-            for (flag, name) in [
-                (crate::index::Flags::NATIVE, "Native"),
-                (crate::index::Flags::CONDITIONAL, "Conditional"),
-                (crate::index::Flags::HIDDEN, "Hidden"),
-            ] {
-                if index.flags.contains(flag) {
-                    signature.push(' ');
-                    signature.push_str(name);
-                }
-            }
+            crate::index::render_flags(&mut signature, index.flags, &index.user_flags);
             DefInfo { signature, container: None, docs: docs_in(sema, file, &index.docs) }
         }
         Def::Builtin(b, elem) => DefInfo {
@@ -149,6 +174,23 @@ pub(crate) fn def_info(sema: &Sema<'_>, def: Def) -> DefInfo {
             container: Some("built-in".to_owned()),
             docs: b.docs().to_owned(),
         },
+        Def::Flag(i) => {
+            let flags = sema.ws.flags();
+            let def = &flags.defs[i as usize];
+            DefInfo {
+                signature: def.signature(),
+                container: Some(flags.source_name()),
+                docs: def.docs.clone(),
+            }
+        }
+        Def::LanguageFlag(kind) => {
+            let (name, docs) = language_flag_docs(kind);
+            DefInfo {
+                signature: name.to_owned(),
+                container: Some("language flag".to_owned()),
+                docs: docs.to_owned(),
+            }
+        }
     }
 }
 
@@ -164,26 +206,32 @@ pub(crate) fn docs_in(sema: &Sema<'_>, file: FileId, ranges: &[TextRange]) -> St
 }
 
 /// The declaration location of a definition: `(file, name range, full range)`.
-pub(crate) fn def_location(sema: &Sema<'_>, def: Def) -> Option<(FileId, TextRange, TextRange)> {
+pub(crate) fn def_location(sema: &Sema<'_>, def: Def) -> Option<(NavFile, TextRange, TextRange)> {
+    let script = |file, focus, full| Some((NavFile::Script(file), focus, full));
     match def {
-        Def::Local { file, range, .. } => Some((file, range, range)),
+        Def::Local { file, range, .. } => script(file, range, range),
         Def::Member { file, index } => {
             let m = sema.member(file, index);
-            Some((file, m.name_range, m.full_range))
+            script(file, m.name_range, m.full_range)
         }
         Def::Param { file, member, .. } => {
             let m = sema.member(file, member);
-            Some((file, m.name_range, m.full_range))
+            script(file, m.name_range, m.full_range)
         }
         Def::Script { file } => {
-            let index = &sema.ws.file(file).index;
-            let range = index.name_range?;
-            Some((file, range, range))
+            let range = sema.ws.file(file).index.name_range?;
+            script(file, range, range)
         }
-        Def::Builtin(..) => None,
+        Def::Flag(i) => {
+            let flags = sema.ws.flags();
+            // The built-in defaults have no file to jump to.
+            flags.path.as_ref()?;
+            let def = flags.defs.get(i as usize)?;
+            Some((NavFile::Flags, def.name_range, def.full_range))
+        }
+        Def::Builtin(..) | Def::LanguageFlag(_) => None,
     }
 }
-
 /// A short label for completion details, e.g. `Int Function`.
 pub(crate) fn member_kind_label(kind: MemberKind) -> &'static str {
     match kind {

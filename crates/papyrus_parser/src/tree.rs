@@ -29,7 +29,7 @@ struct Elem {
     subtree_end: u32,
 }
 
-/// The owned storage of a syntax tree. See the [module docs](self).
+/// The owned storage of a syntax tree, see the module documentation.
 #[derive(Clone, Default)]
 pub struct SyntaxTree {
     elems: Vec<Elem>,
