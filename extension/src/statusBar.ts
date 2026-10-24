@@ -43,7 +43,15 @@ export function showStopped(): void {
 /** Shows a status of the server. */
 export function updateStatus(status: ServerStatus): void {
   state.hasManifest = !!status.manifest;
+  // The scripts view lists other files when these change.
+  const before = JSON.stringify([state.sources, state.buildDirs]);
   state.sources = status.sources ?? [];
+  state.buildDirs = status.buildDirs ?? [];
+  if (JSON.stringify([state.sources, state.buildDirs]) !== before) {
+    for (const listener of state.statusListeners) {
+      listener();
+    }
+  }
   void vscode.commands.executeCommand("setContext", "papyrus.hasManifest", state.hasManifest);
   // Without papyrus.toml, the built-in compiler still compiles.
   compileItem.show();

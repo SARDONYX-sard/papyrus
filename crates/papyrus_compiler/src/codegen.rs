@@ -1004,6 +1004,8 @@ impl<'a> FnGen<'_, 'a> {
                 let ty = p.ty.map_or_else(|| VTy::of_const(&d), VTy::Value);
                 Val::constant(d, ty)
             });
+            // Converted after all arguments are evaluated, like the official
+            // compiler does.
             out.push(self.coerce_opt(v, p.ty));
         }
         out

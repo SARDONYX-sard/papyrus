@@ -2,7 +2,9 @@ import * as vscode from "vscode";
 
 import { compileAll, compileCommand, compileSelected } from "./compile/commands";
 import { compileTask, type PapyrusTaskDefinition } from "./compile/task";
+import { registerDecompiler } from "./decompile";
 import { createManifest } from "./manifest";
+import { registerScriptsView } from "./scriptsView";
 import { restartServer, startServer, stopServer } from "./server";
 import { state } from "./state";
 import { createStatusBar } from "./statusBar";
@@ -14,6 +16,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   state.output = vscode.window.createOutputChannel("Papyrus Analyzer", { log: true });
   context.subscriptions.push(state.output);
   createStatusBar(context);
+  registerDecompiler(context);
+  registerScriptsView(context);
 
   context.subscriptions.push(
     vscode.commands.registerCommand("papyrus.restartServer", restartServer),

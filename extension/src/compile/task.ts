@@ -12,6 +12,20 @@ export interface PapyrusTaskDefinition extends vscode.TaskDefinition {
   files?: string[];
 }
 
+/** The state of one script while a compile task runs. */
+export interface CompileEvent {
+  script: string;
+  status: "running" | "passed" | "failed";
+}
+
+/** Fired for every script a compile task runs, for the scripts view. */
+export const compileEvents = new vscode.EventEmitter<CompileEvent>();
+
+/** The script a command compiles: the built-in compiler takes leading arguments. */
+function scriptOf(command: CompileCommand): string {
+  return command.args.find((a) => a.toLowerCase().endsWith(".psc")) ?? command.args[0];
+}
+
 /** Saves the open documents and runs a compile task. */
 export async function runCompile(definition: PapyrusTaskDefinition): Promise<void> {
   // Compile what is on screen, not the last saved version.
@@ -87,9 +101,13 @@ class CompileTerminal implements vscode.Pseudoterminal {
       // The compiler does not create nested output directories itself.
       fs.mkdirSync(command.output, { recursive: true });
       this.writeLine(`\x1b[2m> ${command.commandLine}\x1b[0m`);
+      const script = scriptOf(command);
+      compileEvents.fire({ script, status: "running" });
       // The compiler exits with -1, which Node reports as an unsigned value.
-      const code = await this.spawn(command);
-      results.push({ script: command.args[0], code: code > 0x7fffffff ? code - 0x100000000 : code });
+      const raw = await this.spawn(command);
+      const code = raw > 0x7fffffff ? raw - 0x100000000 : raw;
+      compileEvents.fire({ script, status: code === 0 ? "passed" : "failed" });
+      results.push({ script, code });
     }
 
     // One line per script: a failure in the middle of a long output is easy to miss.

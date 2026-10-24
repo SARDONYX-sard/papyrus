@@ -13,8 +13,16 @@ export interface ServerStatus {
   manifest?: string | null;
   manifestError?: string | null;
   sources?: string[];
+  buildDirs?: BuildDirs[];
   flagsFile?: string | null;
   variables?: Record<string, string>;
+}
+
+/** Where a workspace folder builds: `.pex` files and decompiled scripts. */
+export interface BuildDirs {
+  root: string;
+  compile: string;
+  decompile: string;
 }
 
 /** One compiler invocation of `papyrus/compileCommands`. */
@@ -57,3 +65,22 @@ export const CompileCommandsRequest = new RequestType<
 
 /** `papyrus/manifestTemplate`: a commented `papyrus.toml` to start from. */
 export const ManifestTemplateRequest = new RequestType0<string, void>("papyrus/manifestTemplate");
+
+/** `papyrus/decompile`: the source of a `.pex` file, or its assembly. */
+export const DecompileRequest = new RequestType<{ uri: string; assembly?: boolean }, string, void>(
+  "papyrus/decompile",
+);
+
+/** Result of `papyrus/decompileFiles`. */
+export interface DecompileFilesResult {
+  output: string;
+  results: { file: string; psc?: string | null; error?: string | null }[];
+}
+
+/**
+ * `papyrus/decompileFiles`: writes the source of `.pex` files below the
+ * decompile directory, keeping their path relative to their workspace folder.
+ */
+export const DecompileFilesRequest = new RequestType<{ files: string[] }, DecompileFilesResult, void>(
+  "papyrus/decompileFiles",
+);

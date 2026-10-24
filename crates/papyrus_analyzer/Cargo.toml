@@ -13,6 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 papyrus_compiler.workspace = true
+papyrus_decompiler.workspace = true
 papyrus_fmt.workspace = true
 papyrus_ide.workspace = true
 papyrus_parser.workspace = true

@@ -124,10 +124,8 @@ fn list_scripts(dir: &Path, out: &mut Vec<PathBuf>) {
     // The type comes with the entry: no `stat` per file, which matters with
     // thousands of scripts.
     let Ok(entries) = std::fs::read_dir(dir) else { return };
-    let mut entries: Vec<(PathBuf, bool)> = entries
-        .flatten()
-        .map(|e| (e.path(), e.file_type().is_ok_and(|t| t.is_dir())))
-        .collect();
+    let mut entries: Vec<(PathBuf, bool)> =
+        entries.flatten().map(|e| (e.path(), e.file_type().is_ok_and(|t| t.is_dir()))).collect();
     entries.sort();
     for (path, is_dir) in entries {
         if is_dir {

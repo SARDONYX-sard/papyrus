@@ -93,6 +93,82 @@
         "category": "Papyrus",
         "icon": "$(run-all)",
         "command": "papyrus.compileSelected"
+      },
+      {
+        "title": "Decompile",
+        "category": "Papyrus",
+        "icon": "$(file-code)",
+        "command": "papyrus.decompile"
+      },
+      {
+        "title": "Show Assembly",
+        "category": "Papyrus",
+        "icon": "$(file-binary)",
+        "command": "papyrus.showAssembly"
+      },
+      {
+        "title": "Switch to Compile Mode",
+        "category": "Papyrus",
+        "icon": "$(file-code)",
+        "command": "papyrus.scripts.compileMode"
+      },
+      {
+        "title": "Switch to Decompile Mode",
+        "category": "Papyrus",
+        "icon": "$(file-binary)",
+        "command": "papyrus.scripts.decompileMode"
+      },
+      {
+        "title": "Run All",
+        "category": "Papyrus",
+        "icon": "$(run-all)",
+        "command": "papyrus.scripts.runAll"
+      },
+      {
+        "title": "Refresh",
+        "category": "Papyrus",
+        "icon": "$(refresh)",
+        "command": "papyrus.scripts.refresh"
+      },
+      {
+        "title": "Run",
+        "category": "Papyrus",
+        "icon": "$(play)",
+        "command": "papyrus.scripts.run"
+      },
+      {
+        "title": "Open",
+        "category": "Papyrus",
+        "command": "papyrus.scripts.open"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "papyrus",
+          "title": "Papyrus",
+          "icon": "resources/papyrus.svg"
+        }
+      ]
+    },
+    "views": {
+      "papyrus": [
+        {
+          "id": "papyrus.scripts",
+          "name": "Scripts"
+        }
+      ]
+    },
+    "customEditors": [
+      {
+        "viewType": "papyrus.pexViewer",
+        "displayName": "Papyrus Decompiler",
+        "selector": [
+          {
+            "filenamePattern": "*.pex"
+          }
+        ],
+        "priority": "default"
       }
     ],
     "configuration": {
@@ -175,19 +251,45 @@
     "menus": {
       "editor/title": [
         {
-          "when": "resourceLangId == papyrus",
+          "when": "resourceLangId == papyrus && resourceScheme == file",
           "command": "papyrus.compile",
+          "group": "navigation"
+        },
+        {
+          "when": "resourceScheme == papyrus-pex && resourceExtname == .psc",
+          "command": "papyrus.showAssembly",
+          "group": "navigation"
+        },
+        {
+          "when": "resourceScheme == papyrus-pex && resourceExtname == .pas",
+          "command": "papyrus.decompile",
           "group": "navigation"
         }
       ],
       "commandPalette": [
         {
           "command": "papyrus.compile",
-          "when": "resourceLangId == papyrus"
+          "when": "resourceLangId == papyrus && resourceScheme == file"
         },
         {
           "command": "papyrus.createManifest",
           "when": "!papyrus.hasManifest"
+        },
+        {
+          "command": "papyrus.decompile",
+          "when": "resourceScheme == papyrus-pex"
+        },
+        {
+          "command": "papyrus.showAssembly",
+          "when": "resourceScheme == papyrus-pex"
+        },
+        {
+          "command": "papyrus.scripts.run",
+          "when": "false"
+        },
+        {
+          "command": "papyrus.scripts.open",
+          "when": "false"
         }
       ],
       "explorer/context": [
@@ -196,11 +298,50 @@
           "command": "papyrus.compile",
           "group": "navigation@9"
         }
+      ],
+      "view/title": [
+        {
+          "command": "papyrus.scripts.decompileMode",
+          "when": "view == papyrus.scripts && papyrus.scriptsMode != decompile",
+          "group": "navigation@1"
+        },
+        {
+          "command": "papyrus.scripts.compileMode",
+          "when": "view == papyrus.scripts && papyrus.scriptsMode == decompile",
+          "group": "navigation@1"
+        },
+        {
+          "command": "papyrus.scripts.runAll",
+          "when": "view == papyrus.scripts",
+          "group": "navigation@2"
+        },
+        {
+          "command": "papyrus.scripts.refresh",
+          "when": "view == papyrus.scripts",
+          "group": "navigation@3"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "papyrus.scripts.run",
+          "when": "view == papyrus.scripts && viewItem == papyrusFolder",
+          "group": "inline"
+        },
+        {
+          "command": "papyrus.scripts.run",
+          "when": "view == papyrus.scripts && viewItem =~ /^papyrus(File|Folder)$/",
+          "group": "1_run"
+        },
+        {
+          "command": "papyrus.scripts.open",
+          "when": "view == papyrus.scripts && viewItem == papyrusFile",
+          "group": "1_run"
+        }
       ]
     },
     "keybindings": [
       {
-        "when": "editorLangId == papyrus",
+        "when": "editorLangId == papyrus && resourceScheme == file",
         "command": "papyrus.compile",
         "key": "ctrl+shift+b"
       }

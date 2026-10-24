@@ -52,6 +52,15 @@ pub use crate::vars::{
 /// The file name of a manifest.
 pub const MANIFEST_NAME: &str = "papyrus.toml";
 
+/// Where a workspace without manifest builds, relative to its folder:
+/// `compile` and `decompile` below it.
+pub const DEFAULT_BUILD_DIR: &str = "build/papyrus";
+
+/// [`DEFAULT_BUILD_DIR`] of `root`, with the separators of the platform.
+pub fn default_build_dir(root: &Path) -> PathBuf {
+    root.join(DEFAULT_BUILD_DIR).components().collect()
+}
+
 /// A problem in a manifest, with its byte range when known.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ManifestError {
@@ -311,9 +320,7 @@ pub struct Project {
     /// and its leading arguments (e.g. `papyrus_analyzer compile`), followed
     /// by the arguments of `PapyrusCompiler.exe`.
     pub builtin_compiler: Option<(PathBuf, Vec<String>)>,
-    /// No manifest: the `.pex` of `Scripts/Source/X.psc` goes to `Scripts`,
-    /// others next to their source.
-    pub loose: bool,
+
     /// `compiler.args`: extra compiler arguments.
     pub extra_args: Vec<String>,
     /// `build.sources`: directories of the scripts of the project.
@@ -547,7 +554,6 @@ pub fn parse(
         authors: raw.package.authors.unwrap_or_default(),
         compiler,
         builtin_compiler: None,
-        loose: false,
         extra_args,
         sources,
         output,
@@ -647,8 +653,8 @@ pub fn resolve_path(root: &Path, value: &str) -> PathBuf {
 impl Project {
     /// A project for a folder without manifest: its scripts compile with the
     /// built-in compiler (set [`Project::builtin_compiler`]), with the given
-    /// imports and flags file. Each `.pex` goes to the `Scripts` folder above
-    /// `Scripts/Source`, or else next to its source.
+    /// imports and flags file, into [`DEFAULT_BUILD_DIR`]`/compile`, keeping
+    /// the directory structure.
     pub fn without_manifest(
         root: PathBuf,
         imports: Vec<PathBuf>,
@@ -656,7 +662,7 @@ impl Project {
     ) -> Project {
         Project {
             manifest_path: root.join(MANIFEST_NAME),
-            output: root.clone(),
+            output: default_build_dir(&root).join("compile"),
             sources: vec![root.clone()],
             root,
             name: None,
@@ -665,7 +671,6 @@ impl Project {
             authors: Vec::new(),
             compiler: None,
             builtin_compiler: None,
-            loose: true,
             extra_args: Vec::new(),
             imports,
             flags,
@@ -737,11 +742,16 @@ impl Project {
             .filter_map(|src| parent.strip_prefix(src).ok())
             .min_by_key(|rel| rel.components().count());
         let output = match relative {
-            _ if self.loose => loose_output(parent),
             Some(rel) if rel.components().next().is_some() => self.output.join(rel),
             _ => self.output.clone(),
         };
         self.command(script, &dirs, output)
+    }
+
+    /// Directories never searched for scripts: the output, and the default
+    /// build directory, which holds decompiled scripts.
+    fn skipped_dirs(&self) -> Vec<PathBuf> {
+        vec![self.output.clone(), default_build_dir(&self.root)]
     }
 
     /// Every script below the source directories, recursively. The output
@@ -750,7 +760,7 @@ impl Project {
     pub fn scripts(&self) -> Vec<PathBuf> {
         let mut out = Vec::new();
         for src in &self.sources {
-            collect_scripts(src, &self.output, &mut out);
+            collect_scripts(src, &self.skipped_dirs(), &mut out);
         }
         out.sort();
         out.dedup();
@@ -805,30 +815,16 @@ impl Project {
     }
 }
 
-/// Where the `.pex` of a script in `dir` goes without manifest: the usual mod
-/// layout keeps sources in `Scripts/Source` and `.pex` files in `Scripts`.
-fn loose_output(dir: &Path) -> PathBuf {
-    let is = |p: Option<&Path>, name: &str| {
-        p.and_then(Path::file_name).is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(name))
-    };
-    match dir.parent() {
-        Some(scripts) if is(Some(dir), "Source") && is(Some(scripts), "Scripts") => {
-            scripts.to_path_buf()
-        }
-        _ => dir.to_path_buf(),
-    }
-}
-
-fn collect_scripts(dir: &Path, output: &Path, out: &mut Vec<PathBuf>) {
+fn collect_scripts(dir: &Path, skipped: &[PathBuf], out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for entry in entries.flatten() {
         let path = entry.path();
         if entry.file_type().is_ok_and(|t| t.is_dir()) {
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            let skipped = name.starts_with('.') || name == "node_modules" || name == "target";
-            if !skipped && path != output {
-                collect_scripts(&path, output, out);
+            let hidden = name.starts_with('.') || name == "node_modules" || name == "target";
+            if !hidden && !skipped.contains(&path) {
+                collect_scripts(&path, skipped, out);
             }
         } else if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("psc")) {
             out.push(path);
@@ -1059,8 +1055,11 @@ mod tests {
             Project::without_manifest(PathBuf::from("/mod"), vec![PathBuf::from("/game")], None);
         p.builtin_compiler = Some((PathBuf::from("pa"), Vec::new()));
         let output = |script: &str| s(&p.compile_file(Path::new(script)).unwrap().output);
-        assert_eq!(output("/mod/Scripts/Source/A.psc"), "/mod/Scripts");
-        assert_eq!(output("/mod/other/B.psc"), "/mod/other");
+        assert_eq!(
+            output("/mod/Scripts/Source/A.psc"),
+            "/mod/build/papyrus/compile/Scripts/Source"
+        );
+        assert_eq!(output("/mod/B.psc"), "/mod/build/papyrus/compile");
     }
 
     #[test]

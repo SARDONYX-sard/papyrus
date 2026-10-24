@@ -6,6 +6,7 @@
 mod compile;
 mod config;
 mod conv;
+mod decompile;
 mod disasm;
 mod ext;
 mod fmt;
@@ -35,6 +36,9 @@ fn main() -> anyhow::Result<()> {
     }
     if args.first().is_some_and(|a| a == "compile") {
         std::process::exit(compile::run(&args[1..]));
+    }
+    if args.first().is_some_and(|a| a == "decompile") {
+        std::process::exit(decompile::run(&args[1..]));
     }
     if args.first().is_some_and(|a| a == "disasm") {
         std::process::exit(disasm::run(&args[1..]));

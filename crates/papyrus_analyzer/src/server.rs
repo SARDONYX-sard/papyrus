@@ -236,6 +236,15 @@ impl Server {
                     papyrus_project::TEMPLATE.to_owned()
                 })
             }
+            crate::ext::Decompile::METHOD => {
+                let params = serde_json::from_value(params)
+                    .map_err(|e| (ErrorCode::InvalidParams, format!("invalid params: {e}")))?;
+                let text = self.decompile(params).map_err(|m| (ErrorCode::RequestFailed, m))?;
+                Ok(Value::String(text))
+            }
+            crate::ext::DecompileFiles::METHOD => {
+                handle::<crate::ext::DecompileFiles>(self, params, Server::decompile_files)
+            }
             crate::ext::CompileCommands::METHOD => {
                 let params = serde_json::from_value(params)
                     .map_err(|e| (ErrorCode::InvalidParams, format!("invalid params: {e}")))?;
@@ -478,6 +487,7 @@ impl Server {
             manifest_error: self.manifest_error.clone(),
             flags_file: self.ws.flags().path.as_ref().map(|p| p.display().to_string()),
             variables: self.variables_report(),
+            build_dirs: self.build_dirs(),
             sources: self
                 .project
                 .iter()
@@ -527,10 +537,17 @@ impl Server {
             });
         }
 
+        // Build outputs hold copies of scripts (decompiled ones): not sources.
+        let skipped: Vec<PathBuf> = self
+            .build_dirs()
+            .into_iter()
+            .flat_map(|b| [PathBuf::from(b.compile), PathBuf::from(b.decompile)])
+            .chain(self.roots.iter().map(|r| papyrus_project::default_build_dir(r)))
+            .collect();
         let tx = self.index_tx.clone();
         let spawned = std::thread::Builder::new()
             .name("papyrus-indexer".to_owned())
-            .spawn(move || index_workspace(generation, &dirs, &tx));
+            .spawn(move || index_workspace(generation, &dirs, &skipped, &tx));
         if let Err(err) = spawned {
             log::error!("cannot spawn the indexer: {err}");
             self.indexing = false;
@@ -693,12 +710,17 @@ fn apply_changes(text: &mut String, changes: Vec<lsp_types::TextDocumentContentC
 }
 
 /// Finds and indexes every script below `dirs`, in parallel.
-fn index_workspace(generation: u64, dirs: &[(PathBuf, Origin)], tx: &Sender<IndexEvent>) {
+fn index_workspace(
+    generation: u64,
+    dirs: &[(PathBuf, Origin)],
+    skipped: &[PathBuf],
+    tx: &Sender<IndexEvent>,
+) {
     let start = Instant::now();
     let mut paths = Vec::new();
     let mut flag_files = Vec::new();
     for (dir, origin) in dirs {
-        collect_scripts(dir, *origin, &mut paths, &mut flag_files);
+        collect_scripts(dir, *origin, skipped, &mut paths, &mut flag_files);
     }
     let total = paths.len();
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).min(16);
@@ -735,6 +757,7 @@ fn index_workspace(generation: u64, dirs: &[(PathBuf, Origin)], tx: &Sender<Inde
 fn collect_scripts(
     dir: &Path,
     origin: Origin,
+    skipped: &[PathBuf],
     out: &mut Vec<(PathBuf, Origin)>,
     flag_files: &mut Vec<PathBuf>,
 ) {
@@ -745,10 +768,14 @@ fn collect_scripts(
         if ty.is_dir() {
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            if name.starts_with('.') || name == "node_modules" || name == "target" {
+            if name.starts_with('.')
+                || name == "node_modules"
+                || name == "target"
+                || skipped.contains(&path)
+            {
                 continue;
             }
-            collect_scripts(&path, origin, out, flag_files);
+            collect_scripts(&path, origin, skipped, out, flag_files);
         } else if is_script(&path) {
             out.push((path, origin));
         } else if is_flags(&path) {

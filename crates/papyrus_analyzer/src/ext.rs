@@ -61,6 +61,10 @@ pub(crate) struct StatusResult {
     pub(crate) problems: Vec<String>,
     /// `[build] sources` of `papyrus.toml`.
     pub(crate) sources: Vec<String>,
+    /// Where compiled (`compile`) and decompiled (`decompile`) scripts go,
+    /// per workspace folder: `[build] output` of `papyrus.toml`, or the
+    /// default build directory.
+    pub(crate) build_dirs: Vec<BuildDirs>,
     /// Known `${NAME}` variables: `"value (source)"`.
     pub(crate) variables: std::collections::BTreeMap<String, String>,
 }
@@ -141,4 +145,77 @@ impl Request for SyntaxTree {
 pub(crate) struct SyntaxTreeParams {
     /// The document.
     pub(crate) text_document: TextDocumentIdentifier,
+}
+
+/// `papyrus/decompile`: the source of a `.pex` file, or its assembly.
+pub(crate) enum Decompile {}
+
+impl Request for Decompile {
+    type Params = DecompileParams;
+    type Result = String;
+    const METHOD: &'static str = "papyrus/decompile";
+}
+
+/// Parameters of [`Decompile`].
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DecompileParams {
+    /// The `.pex` file.
+    pub(crate) uri: lsp_types::Uri,
+    /// The assembly (`.pas`) instead of the source.
+    #[serde(default)]
+    pub(crate) assembly: bool,
+}
+
+/// `papyrus/decompileFiles`: writes the source of `.pex` files, keeping their
+/// path relative to their workspace folder.
+pub(crate) enum DecompileFiles {}
+
+impl Request for DecompileFiles {
+    type Params = DecompileFilesParams;
+    type Result = DecompileFilesResult;
+    const METHOD: &'static str = "papyrus/decompileFiles";
+}
+
+/// Parameters of [`DecompileFiles`].
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DecompileFilesParams {
+    /// The `.pex` files.
+    pub(crate) files: Vec<lsp_types::Uri>,
+}
+
+/// Result of [`DecompileFiles`].
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DecompileFilesResult {
+    /// The output directory: `decompile` in the output directory of
+    /// `papyrus.toml`, else `build/papyrus/decompile` of the workspace folder.
+    pub(crate) output: String,
+    /// For each file, in order: the written `.psc`, or the error.
+    pub(crate) results: Vec<DecompileFileResult>,
+}
+
+/// One file of [`DecompileFilesResult`].
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DecompileFileResult {
+    /// The `.pex` file.
+    pub(crate) file: lsp_types::Uri,
+    /// The written source.
+    pub(crate) psc: Option<String>,
+    /// Why it failed.
+    pub(crate) error: Option<String>,
+}
+
+/// The output directories of a workspace folder, see [`StatusResult`].
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct BuildDirs {
+    /// The workspace folder.
+    pub(crate) root: String,
+    /// The `.pex` files.
+    pub(crate) compile: String,
+    /// The decompiled `.psc` files.
+    pub(crate) decompile: String,
 }

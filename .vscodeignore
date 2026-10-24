@@ -8,6 +8,7 @@
 !flags-language-configuration.json
 !syntaxes/**
 !schemas/**
+!resources/**
 
 # The bundled extension (see extension/vite.config.ts) and the server binary (see dist.js).
 !dist/extension.js

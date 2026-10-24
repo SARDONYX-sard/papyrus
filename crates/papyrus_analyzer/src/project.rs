@@ -23,7 +23,10 @@ use papyrus_project::{ManifestError, Project, Variables};
 
 use crate::{
     conv::{self, Lines},
-    ext::{CompileCommand, CompileCommandsParams, CompileCommandsResult},
+    ext::{
+        BuildDirs, CompileCommand, CompileCommandsParams, CompileCommandsResult,
+        DecompileFileResult, DecompileFilesParams, DecompileFilesResult, DecompileParams,
+    },
     server::{Server, is_flags, is_manifest},
 };
 
@@ -425,5 +428,77 @@ impl Server {
                 })
                 .collect(),
         })
+    }
+
+    /// Handles `papyrus/decompile`.
+    pub(crate) fn decompile(&mut self, params: DecompileParams) -> Result<String, String> {
+        let path = conv::uri_to_path(&params.uri).ok_or("not a file")?;
+        crate::decompile::decompile_file(&path, params.assembly).map(|(_, text)| text)
+    }
+
+    /// The output directories of each workspace folder, for `papyrus/status`.
+    pub(crate) fn build_dirs(&self) -> Vec<BuildDirs> {
+        self.roots
+            .iter()
+            .map(|root| {
+                let compile = match &self.project {
+                    Some(p) => p.output.clone(),
+                    None => papyrus_project::default_build_dir(root).join("compile"),
+                };
+                BuildDirs {
+                    root: root.display().to_string(),
+                    compile: compile.display().to_string(),
+                    decompile: self.decompile_output(root).display().to_string(),
+                }
+            })
+            .collect()
+    }
+
+    /// Where decompiled scripts go for a file of the workspace folder `root`.
+    fn decompile_output(&self, root: &Path) -> PathBuf {
+        match &self.project {
+            Some(p) => p.output.join("decompile"),
+            None => papyrus_project::default_build_dir(root).join("decompile"),
+        }
+    }
+
+    /// Handles `papyrus/decompileFiles`.
+    pub(crate) fn decompile_files(&mut self, params: DecompileFilesParams) -> DecompileFilesResult {
+        let mut output = None;
+        let results = params
+            .files
+            .into_iter()
+            .map(|file| {
+                let result = conv::uri_to_path(&file)
+                    .ok_or_else(|| "not a file".to_owned())
+                    .and_then(|path| {
+                        // Relative to the workspace folder (the innermost one).
+                        let root = self
+                            .roots
+                            .iter()
+                            .filter(|r| path.starts_with(r))
+                            .max_by_key(|r| r.components().count())
+                            .cloned()
+                            .or_else(|| path.parent().map(Path::to_path_buf))
+                            .unwrap_or_default();
+                        let out = self.decompile_output(&root);
+                        let relative =
+                            path.strip_prefix(&root).unwrap_or(&path).with_extension("psc");
+                        let target = out.join(relative);
+                        output.get_or_insert(out);
+                        let (_, text) = crate::decompile::decompile_file(&path, false)?;
+                        crate::decompile::write(&target, &text)?;
+                        Ok(target.display().to_string())
+                    });
+                match result {
+                    Ok(psc) => DecompileFileResult { file, psc: Some(psc), error: None },
+                    Err(e) => DecompileFileResult { file, psc: None, error: Some(e) },
+                }
+            })
+            .collect();
+        let output = output.unwrap_or_else(|| {
+            self.decompile_output(&self.roots.first().cloned().unwrap_or_default())
+        });
+        DecompileFilesResult { output: output.display().to_string(), results }
     }
 }

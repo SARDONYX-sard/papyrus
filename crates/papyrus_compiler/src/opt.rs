@@ -89,7 +89,10 @@ pub fn fold_constant_casts(ir: &mut FunctionIr) {
 fn constant_cast(inst: &Inst, types: &FxHashMap<String, String>) -> Option<(String, Operand)> {
     let Inst::Op { opcode: OpCode::Cast, args } = inst else { return None };
     let [Operand::Var(temp), value] = args.as_slice() else { return None };
-    if !temp.starts_with("::temp") || !value.is_const() {
+    let is_temp = temp
+        .strip_prefix("::temp")
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+    if !is_temp || !value.is_const() {
         return None;
     }
     // Float to String depends on the formatting of the game; keep it.
