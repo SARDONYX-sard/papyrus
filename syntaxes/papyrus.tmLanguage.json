@@ -1,0 +1,88 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Papyrus",
+  "scopeName": "source.papyrus",
+  "comment": "Baseline highlighting; the language server refines it with semantic tokens.",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#declarations" },
+    { "include": "#keywords" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        { "name": "comment.block.papyrus", "begin": ";/", "end": "/;" },
+        { "name": "comment.block.documentation.papyrus", "begin": "\\{", "end": "\\}" },
+        { "name": "comment.line.semicolon.papyrus", "match": ";.*$" }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.papyrus",
+      "begin": "\"",
+      "end": "\"|$",
+      "patterns": [{ "name": "constant.character.escape.papyrus", "match": "\\\\[nt\\\\\"]" }]
+    },
+    "numbers": {
+      "patterns": [
+        { "name": "constant.numeric.hex.papyrus", "match": "\\b0[xX][0-9a-fA-F]+\\b" },
+        { "name": "constant.numeric.papyrus", "match": "\\b\\d+(\\.\\d+([eE][+-]?\\d+)?)?\\b" }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "match": "(?i)\\b(scriptname)\\s+([A-Za-z_]\\w*)(?:\\s+(extends)\\s+([A-Za-z_]\\w*))?",
+          "captures": {
+            "1": { "name": "keyword.other.scriptname.papyrus" },
+            "2": { "name": "entity.name.type.class.papyrus" },
+            "3": { "name": "keyword.other.extends.papyrus" },
+            "4": { "name": "entity.other.inherited-class.papyrus" }
+          }
+        },
+        {
+          "match": "(?i)\\b(function|event)\\s+([A-Za-z_]\\w*)",
+          "captures": {
+            "1": { "name": "storage.type.function.papyrus" },
+            "2": { "name": "entity.name.function.papyrus" }
+          }
+        },
+        {
+          "match": "(?i)\\b(state)\\s+([A-Za-z_]\\w*)",
+          "captures": {
+            "1": { "name": "storage.type.state.papyrus" },
+            "2": { "name": "entity.name.section.papyrus" }
+          }
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.papyrus",
+          "match": "(?i)\\b(if|elseif|else|endif|while|endwhile|return)\\b"
+        },
+        {
+          "name": "storage.type.papyrus",
+          "match": "(?i)\\b(function|endfunction|event|endevent|property|endproperty|state|endstate|scriptname|extends|import)\\b"
+        },
+        { "name": "storage.modifier.papyrus", "match": "(?i)\\b(auto|autoreadonly|global|native|hidden|conditional)\\b" },
+        { "name": "support.type.primitive.papyrus", "match": "(?i)\\b(bool|int|float|string)\\b" },
+        { "name": "constant.language.papyrus", "match": "(?i)\\b(true|false|none)\\b" },
+        { "name": "variable.language.papyrus", "match": "(?i)\\b(self|parent)\\b" },
+        { "name": "keyword.operator.word.papyrus", "match": "(?i)\\b(as|new|length)\\b" }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        { "name": "keyword.operator.assignment.papyrus", "match": "[-+*/%]?=(?!=)" },
+        { "name": "keyword.operator.comparison.papyrus", "match": "==|!=|<=|>=|<|>" },
+        { "name": "keyword.operator.logical.papyrus", "match": "&&|\\|\\||!" },
+        { "name": "keyword.operator.arithmetic.papyrus", "match": "[-+*/%]" },
+        { "name": "punctuation.separator.continuation.papyrus", "match": "\\\\\\s*$" }
+      ]
+    }
+  }
+}

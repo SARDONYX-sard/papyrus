@@ -1,686 +1,610 @@
-// SPDX-License-Identifier: Apache-2.0 OR MIT
-// ref: ra-ap-rustc_lexer-0.165.0 lib.rs
-
-// tidy-alphabetical-start
-// We want to be able to build this crate with a stable compiler,
-// so no `#![feature]` attributes should be added.
-#![deny(unstable_features)]
-// tidy-alphabetical-end
+//! Zero-copy lexer for the Papyrus scripting language (Skyrim dialect).
+//!
+//! The lexer never allocates: every [`Token`] borrows its text from the source
+//! string, and the token stream covers the input losslessly, i.e. concatenating
+//! the text of all tokens yields the original source.
+//!
+//! Papyrus is a line-oriented language: a statement or a declaration header ends
+//! at the end of the line. Because of that, line breaks are *not* treated as
+//! whitespace but are emitted as dedicated [`TokenKind::Newline`] tokens. A
+//! backslash at the end of a line joins it with the next one and is emitted as a
+//! single [`TokenKind::LineContinuation`] token (backslash, trailing blanks and
+//! the line break), which the parser treats as trivia.
+//!
+//! Keywords are recognized case-insensitively, as the Papyrus compiler does.
+//!
+//! # Example
+//!
+//! ```
+//! use papyrus_lexer::{Lexer, TokenKind};
+//!
+//! let kinds: Vec<_> = Lexer::new("ScriptName Foo\n").map(|t| t.kind).collect();
+//! assert_eq!(
+//!     kinds,
+//!     [TokenKind::ScriptNameKw, TokenKind::Whitespace, TokenKind::Ident, TokenKind::Newline]
+//! );
+//! ```
 
 #[cfg(test)]
 mod tests;
 
-use std::str::Chars;
+use std::fmt;
 
-use LiteralKind::*;
-use TokenKind::*;
-pub use unicode_ident::UNICODE_VERSION;
-use unicode_properties::UnicodeEmoji;
-
-// Make sure that the Unicode version of the dependencies is the same.
-const _: () = {
-    let properties = unicode_properties::UNICODE_VERSION;
-    let ident = unicode_ident::UNICODE_VERSION;
-
-    if properties.0 != ident.0 as u64
-        || properties.1 != ident.1 as u64
-        || properties.2 != ident.2 as u64
-    {
-        panic!(
-            "unicode-properties and unicode-ident must use the same Unicode version, \
-            `unicode_properties::UNICODE_VERSION` and `unicode_ident::UNICODE_VERSION` are \
-            different."
-        );
-    }
-};
-
-/// Parsed token.
-/// It doesn't contain information about data that has been parsed,
-/// only the type of the token and its size.
-#[derive(Debug)]
-pub struct Token {
-    pub kind: TokenKind,
-    pub len: u32,
-}
-
-impl Token {
-    fn new(kind: TokenKind, len: u32) -> Token {
-        Token { kind, len }
-    }
-}
-
-/// Enum representing common lexeme types.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// The kind of a lexical token.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(u8)]
 pub enum TokenKind {
-    /// A line comment, e.g. `; comment`.
-    LineComment,
-
-    /// A block comment, e.g. `;/ block comment /;`.
-    ///
-    /// Block comments can be recursive, so a sequence like `;/ ;/ /;`
-    /// will not be considered terminated and will result in a parsing error.
-    BlockComment { terminated: bool },
-
-    /// A document block comment, e.g. `{ document block comment }`.
-    ///
-    /// Block comments can be recursive, so a sequence like `{ { }`
-    /// will not be considered terminated and will result in a parsing error.
-    DocComment { terminated: bool },
-
-    /// Any whitespace character sequence.
+    // === Trivia ===
+    /// Horizontal whitespace (spaces, tabs, lone carriage returns, ...).
     Whitespace,
+    /// A line break: `\n` or `\r\n`. Significant: it terminates statements.
+    Newline,
+    /// `; comment` up to, but excluding, the line break.
+    LineComment,
+    /// `;/ comment /;`, possibly spanning multiple lines.
+    BlockComment,
+    /// `{ documentation }`, possibly spanning multiple lines.
+    DocComment,
+    /// `\` followed by optional blanks and a line break.
+    LineContinuation,
 
-    /// Indicates the end of a papyrus statement or the end of a trailing flag in a function signature
-    LineFeed,
-
-    /// An identifier or keyword, e.g. `ident` or `continue`.
+    // === Literals and names ===
+    /// An identifier that is not a keyword.
     Ident,
+    /// An integer literal: `42`, `0x1F`.
+    Int,
+    /// A float literal: `1.5`, `2.0e3`.
+    Float,
+    /// A string literal: `"text"`.
+    String,
 
-    /// An identifier that is invalid because it contains emoji.
-    InvalidIdent,
-
-    /// An unknown literal prefix, like `foo#`, `foo'`, `foo"`. Excludes
-    /// literal prefixes that contain emoji, which are considered "invalid".
-    UnknownPrefix,
-
-    /// Literals, e.g. `12u8`, `1.0e-40`, `"123"`. Note that `_` is an invalid
-    /// suffix, but may be present here on string and float literals. Users of
-    /// this type will need to check for and reject that case.
-    ///
-    /// See [LiteralKind] for more details.
-    Literal { kind: LiteralKind, suffix_start: u32 },
-
+    // === Punctuation ===
+    /// `(`
+    LParen,
+    /// `)`
+    RParen,
+    /// `[`
+    LBracket,
+    /// `]`
+    RBracket,
     /// `,`
     Comma,
     /// `.`
     Dot,
-    /// `(`
-    OpenParen,
-    /// `)`
-    CloseParen,
-    /// `[`
-    OpenBracket,
-    /// `]`
-    CloseBracket,
     /// `=`
     Eq,
-    /// `!`
-    Bang,
+    /// `==`
+    EqEq,
+    /// `!=`
+    NotEq,
     /// `<`
     Lt,
+    /// `<=`
+    LtEq,
     /// `>`
     Gt,
-    /// `-`
-    Minus,
-    /// `&`
-    And,
-    /// `|`
-    Or,
+    /// `>=`
+    GtEq,
     /// `+`
     Plus,
+    /// `+=`
+    PlusEq,
+    /// `-`
+    Minus,
+    /// `-=`
+    MinusEq,
     /// `*`
     Star,
+    /// `*=`
+    StarEq,
     /// `/`
     Slash,
+    /// `/=`
+    SlashEq,
     /// `%`
     Percent,
-    /// `\`
-    /// Statements in Papyrus are separated by line breaks, but you can use `\` to join them together.
-    BackSlash,
+    /// `%=`
+    PercentEq,
+    /// `!`
+    Bang,
+    /// `&&`
+    AmpAmp,
+    /// `||`
+    PipePipe,
 
-    /// Unknown token, not expected by the lexer, e.g. "№"
+    // === Keywords ===
+    /// `As`
+    AsKw,
+    /// `Auto`
+    AutoKw,
+    /// `AutoReadOnly`
+    AutoReadOnlyKw,
+    /// `Bool`
+    BoolKw,
+    /// `Else`
+    ElseKw,
+    /// `ElseIf`
+    ElseIfKw,
+    /// `EndEvent`
+    EndEventKw,
+    /// `EndFunction`
+    EndFunctionKw,
+    /// `EndIf`
+    EndIfKw,
+    /// `EndProperty`
+    EndPropertyKw,
+    /// `EndState`
+    EndStateKw,
+    /// `EndWhile`
+    EndWhileKw,
+    /// `Event`
+    EventKw,
+    /// `Extends`
+    ExtendsKw,
+    /// `False`
+    FalseKw,
+    /// `Float`
+    FloatKw,
+    /// `Function`
+    FunctionKw,
+    /// `Global`
+    GlobalKw,
+    /// `If`
+    IfKw,
+    /// `Import`
+    ImportKw,
+    /// `Int`
+    IntKw,
+    /// `Native`
+    NativeKw,
+    /// `New`
+    NewKw,
+    /// `None`
+    NoneKw,
+    /// `Parent`
+    ParentKw,
+    /// `Property`
+    PropertyKw,
+    /// `Return`
+    ReturnKw,
+    /// `ScriptName`
+    ScriptNameKw,
+    /// `Self`
+    SelfKw,
+    /// `State`
+    StateKw,
+    /// `String`
+    StringKw,
+    /// `True`
+    TrueKw,
+    /// `While`
+    WhileKw,
+
+    /// A character sequence that is not part of the language, e.g. `#`, `&`
+    /// or a backslash that does not end a line.
     Unknown,
-
-    /// End of input.
-    Eof,
 }
 
+impl TokenKind {
+    /// Returns `true` for tokens the parser skips: whitespace, comments and line
+    /// continuations. Note that [`TokenKind::Newline`] is **not** trivia.
+    pub fn is_trivia(self) -> bool {
+        matches!(
+            self,
+            TokenKind::Whitespace
+                | TokenKind::LineComment
+                | TokenKind::BlockComment
+                | TokenKind::DocComment
+                | TokenKind::LineContinuation
+        )
+    }
+
+    /// Returns `true` for comment tokens.
+    pub fn is_comment(self) -> bool {
+        matches!(self, TokenKind::LineComment | TokenKind::BlockComment | TokenKind::DocComment)
+    }
+
+    /// Returns `true` for reserved words.
+    pub fn is_keyword(self) -> bool {
+        (self as u8) >= (TokenKind::AsKw as u8) && (self as u8) <= (TokenKind::WhileKw as u8)
+    }
+}
+
+/// A recoverable lexical error attached to a token.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DocStyle {
-    /// `;\ \;`
-    Outer,
-    /// `{ doc }`
-    Inner,
+pub enum LexError {
+    /// A string literal reached the end of the line or file without a closing `"`.
+    UnterminatedString,
+    /// A `;/` block comment reached the end of file without a closing `/;`.
+    UnterminatedBlockComment,
+    /// A `{` documentation comment reached the end of file without a closing `}`.
+    UnterminatedDocComment,
+    /// A hexadecimal literal `0x` without any digit.
+    EmptyHexLiteral,
+    /// A float exponent without any digit, e.g. `1.0e`.
+    EmptyExponent,
+    /// A character that cannot start any token.
+    UnknownChar,
+    /// A backslash that is not followed by a line break.
+    StrayBackslash,
 }
 
-/// Enum representing the literal types supported by the lexer.
+impl LexError {
+    /// Human readable message describing the error.
+    pub fn message(self) -> &'static str {
+        match self {
+            LexError::UnterminatedString => "unterminated string literal",
+            LexError::UnterminatedBlockComment => "unterminated block comment, expected `/;`",
+            LexError::UnterminatedDocComment => "unterminated documentation comment, expected `}`",
+            LexError::EmptyHexLiteral => "expected hexadecimal digits after `0x`",
+            LexError::EmptyExponent => "expected digits in float exponent",
+            LexError::UnknownChar => "unknown character",
+            LexError::StrayBackslash => {
+                "a line continuation `\\` must be the last character on the line"
+            }
+        }
+    }
+}
+
+impl fmt::Display for LexError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.message())
+    }
+}
+
+/// A token borrowing its text from the source.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Token<'a> {
+    /// The kind of this token.
+    pub kind: TokenKind,
+    /// The exact source text of this token.
+    pub text: &'a str,
+    /// Byte offset of the token in the source.
+    pub offset: u32,
+    /// The lexical error of this token, if it is malformed.
+    pub error: Option<LexError>,
+}
+
+impl Token<'_> {
+    /// Byte length of the token.
+    pub fn len(&self) -> u32 {
+        self.text.len() as u32
+    }
+}
+
+/// An iterator over the [`Token`]s of a source string.
 ///
-/// Note that the suffix is *not* considered when deciding the `LiteralKind` in
-/// this type. This means that float literals like `1f32` are classified by this
-/// type as `Int`. (Compare against `rustc_ast::token::LitKind` and
-/// `rustc_ast::ast::LitKind`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum LiteralKind {
-    /// `12`, `0x100`, `0b120i99`.
-    Int { base: Base, empty_int: bool },
-    /// `12.34`, `1e3`, but not `1f32`.
-    Float { base: Base, empty_exponent: bool },
-    /// `"abc"`, `"abc`
-    Str { terminated: bool },
+/// The source must be smaller than 4 GiB, since offsets are stored as `u32`.
+#[derive(Clone)]
+pub struct Lexer<'a> {
+    src: &'a str,
+    pos: usize,
 }
 
-/// Base of numeric literal encoding according to its prefix.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Base {
-    /// Literal starts with "0b".
-    Binary = 2,
-    /// Literal starts with "0o".
-    Octal = 8,
-    /// Literal doesn't contain a prefix.
-    Decimal = 10,
-    /// Literal starts with "0x".
-    Hexadecimal = 16,
-}
-
-/// Creates an iterator that produces tokens from the input string.
-///
-/// When parsing a full Papyrus document,
-pub fn tokenize(input: &str) -> impl Iterator<Item = Token> {
-    let mut cursor = Cursor::new(input);
-    std::iter::from_fn(move || {
-        let token = cursor.advance_token();
-        if token.kind != TokenKind::Eof { Some(token) } else { None }
-    })
-}
-
-/// True if `c` is considered a whitespace according to Rust language definition.
-/// See [Rust language reference](https://doc.rust-lang.org/reference/whitespace.html)
-/// for definitions of these classes.
-pub fn is_whitespace(c: char) -> bool {
-    // This is Pattern_White_Space.
-    //
-    // Note that this set is stable (ie, it doesn't change with different
-    // Unicode versions), so it's ok to just hard-code the values.
-
-    matches!(
-        c,
-        // End-of-line characters
-        // | '\u{000A}' // line feed (\n)
-        | '\u{000B}' // vertical tab
-        | '\u{000C}' // form feed
-        | '\u{000D}' // carriage return (\r)
-        | '\u{0085}' // next line (from latin1)
-        | '\u{2028}' // LINE SEPARATOR
-        | '\u{2029}' // PARAGRAPH SEPARATOR
-
-        // `Default_Ignorable_Code_Point` characters
-        | '\u{200E}' // LEFT-TO-RIGHT MARK
-        | '\u{200F}' // RIGHT-TO-LEFT MARK
-
-        // Horizontal space characters
-        | '\u{0009}'   // tab (\t)
-        | '\u{0020}' // space
-    )
-}
-
-/// True if `c` is considered horizontal whitespace according to Rust language definition.
-pub fn is_horizontal_whitespace(c: char) -> bool {
-    // This is the horizontal space subset of `Pattern_White_Space` as
-    // categorized by UAX #31, Section 4.1.
-    //
-    // Note that this set is stable (ie, it doesn't change with different
-    // Unicode versions), so it's ok to just hard-code the values.
-
-    matches!(
-        c,
-        // Horizontal space characters
-        '\u{0009}'   // tab (\t)
-        | '\u{0020}' // space
-    )
-}
-
-/// True if `c` is valid as a first character of an identifier.
-/// See [Papyrus language reference](https://ck.uesp.net/wiki/Identifier_Reference) for
-/// a formal definition of valid identifier name.
-pub fn is_id_start(c: char) -> bool {
-    // This is XID_Start OR '_' (which formally is not a XID_Start).
-    c == '_' || c.is_ascii_alphabetic()
-}
-
-/// True if `c` is valid as a non-first character of an identifier.
-/// See [Papyrus language reference](https://ck.uesp.net/wiki/Identifier_Reference) for
-/// a formal definition of valid identifier name.
-pub fn is_id_continue(c: char) -> bool {
-    c.is_ascii_alphanumeric()
-}
-
-/// The passed string is lexically an identifier.
-pub fn is_ident(string: &str) -> bool {
-    let mut chars = string.chars();
-    if let Some(start) = chars.next() {
-        is_id_start(start) && chars.all(is_id_continue)
-    } else {
-        false
+impl<'a> Lexer<'a> {
+    /// Creates a lexer at the start of `src`.
+    pub fn new(src: &'a str) -> Lexer<'a> {
+        assert!(u32::try_from(src.len()).is_ok(), "source files must be smaller than 4 GiB");
+        Lexer { src, pos: 0 }
     }
-}
 
-/// Peekable iterator over a char sequence.
-///
-/// Next characters can be peeked via `first` method,
-/// and position can be shifted forward via `bump` method.
-pub struct Cursor<'a> {
-    len_remaining: usize,
-    /// Iterator over chars. Slightly faster than a &str.
-    chars: Chars<'a>,
-    #[cfg(debug_assertions)]
-    prev: char,
-}
+    fn bytes(&self) -> &'a [u8] {
+        self.src.as_bytes()
+    }
 
-const EOF_CHAR: char = '\0';
+    fn peek(&self, n: usize) -> u8 {
+        self.bytes().get(self.pos + n).copied().unwrap_or(0)
+    }
 
-impl<'a> Cursor<'a> {
-    pub fn new(input: &'a str) -> Cursor<'a> {
-        Cursor {
-            len_remaining: input.len(),
-            chars: input.chars(),
-            #[cfg(debug_assertions)]
-            prev: EOF_CHAR,
+    fn eat_while(&mut self, mut pred: impl FnMut(u8) -> bool) {
+        while self.pos < self.src.len() && pred(self.bytes()[self.pos]) {
+            self.pos += 1;
         }
     }
 
-    pub fn as_str(&self) -> &'a str {
-        self.chars.as_str()
-    }
+    /// Lexes one token starting at `self.pos`, which must not be at the end.
+    fn lex(&mut self) -> (TokenKind, Option<LexError>) {
+        use TokenKind as T;
 
-    /// Returns the last eaten symbol (or `'\0'` in release builds).
-    /// (For debug assertions only.)
-    pub(crate) fn prev(&self) -> char {
-        #[cfg(debug_assertions)]
-        {
-            self.prev
-        }
+        let b = self.peek(0);
+        let next = self.peek(1);
+        self.pos += 1;
 
-        #[cfg(not(debug_assertions))]
-        {
-            EOF_CHAR
-        }
-    }
+        let kind = match b {
+            b'\n' => T::Newline,
+            b'\r' if next == b'\n' => {
+                self.pos += 1;
+                T::Newline
+            }
+            b' ' | b'\t' | b'\r' | 0x0B | 0x0C => return (self.whitespace(), None),
 
-    /// Peeks the next symbol from the input stream without consuming it.
-    /// If requested position doesn't exist, `EOF_CHAR` is returned.
-    /// However, getting `EOF_CHAR` doesn't always mean actual end of file,
-    /// it should be checked with `is_eof` method.
-    pub fn first(&self) -> char {
-        // `.next()` optimizes better than `.nth(0)`
-        self.chars.clone().next().unwrap_or(EOF_CHAR)
-    }
+            b';' if next == b'/' => return self.block_comment(),
+            b';' => {
+                self.eat_while(|b| b != b'\n' && b != b'\r');
+                T::LineComment
+            }
+            b'{' => return self.doc_comment(),
+            b'\\' => return self.backslash(),
 
-    /// Peeks the second symbol from the input stream without consuming it.
-    pub(crate) fn second(&self) -> char {
-        // `.next()` optimizes better than `.nth(1)`
-        let mut iter = self.chars.clone();
-        iter.next();
-        iter.next().unwrap_or(EOF_CHAR)
-    }
+            b'"' => return self.string(),
+            b'0'..=b'9' => return self.number(b),
+            b'a'..=b'z' | b'A'..=b'Z' | b'_' => return (self.ident_or_keyword(), None),
 
-    /// Peeks the third symbol from the input stream without consuming it.
-    pub fn third(&self) -> char {
-        // `.next()` optimizes better than `.nth(2)`
-        let mut iter = self.chars.clone();
-        iter.next();
-        iter.next();
-        iter.next().unwrap_or(EOF_CHAR)
-    }
+            b'(' => T::LParen,
+            b')' => T::RParen,
+            b'[' => T::LBracket,
+            b']' => T::RBracket,
+            b',' => T::Comma,
+            b'.' => T::Dot,
+            b'=' => self.with_eq(T::Eq, T::EqEq),
+            b'!' => self.with_eq(T::Bang, T::NotEq),
+            b'<' => self.with_eq(T::Lt, T::LtEq),
+            b'>' => self.with_eq(T::Gt, T::GtEq),
+            b'+' => self.with_eq(T::Plus, T::PlusEq),
+            b'-' => self.with_eq(T::Minus, T::MinusEq),
+            b'*' => self.with_eq(T::Star, T::StarEq),
+            b'/' => self.with_eq(T::Slash, T::SlashEq),
+            b'%' => self.with_eq(T::Percent, T::PercentEq),
+            b'&' if next == b'&' => {
+                self.pos += 1;
+                T::AmpAmp
+            }
+            b'|' if next == b'|' => {
+                self.pos += 1;
+                T::PipePipe
+            }
 
-    /// Checks if there is nothing more to consume.
-    pub(crate) fn is_eof(&self) -> bool {
-        self.chars.as_str().is_empty()
-    }
-
-    /// Returns amount of already consumed symbols.
-    pub(crate) fn pos_within_token(&self) -> u32 {
-        (self.len_remaining - self.chars.as_str().len()) as u32
-    }
-
-    /// Resets the number of bytes consumed to 0.
-    pub(crate) fn reset_pos_within_token(&mut self) {
-        self.len_remaining = self.chars.as_str().len();
-    }
-
-    /// Moves to the next character.
-    pub(crate) fn bump(&mut self) -> Option<char> {
-        let c = self.chars.next()?;
-
-        #[cfg(debug_assertions)]
-        {
-            self.prev = c;
-        }
-
-        Some(c)
-    }
-
-    /// Eats symbols while predicate returns true or until the end of file is reached.
-    pub(crate) fn eat_while(&mut self, mut predicate: impl FnMut(char) -> bool) {
-        // It was tried making optimized version of this for eg. line comments, but
-        // LLVM can inline all of this and compile it down to fast iteration over bytes.
-        while predicate(self.first()) && !self.is_eof() {
-            self.bump();
-        }
-    }
-
-    pub(crate) fn eat_until(&mut self, byte: u8) {
-        self.chars = match memchr::memchr(byte, self.as_str().as_bytes()) {
-            Some(index) => self.as_str()[index..].chars(),
-            None => "".chars(),
-        }
-    }
-
-    /// Parses a token from the input string.
-    pub fn advance_token(&mut self) -> Token {
-        let Some(first_char) = self.bump() else {
-            return Token::new(TokenKind::Eof, 0);
+            _ => {
+                // Consume the whole UTF-8 character so that offsets stay on char
+                // boundaries.
+                self.pos -= 1;
+                let c = self.src[self.pos..].chars().next().unwrap_or('\0');
+                self.pos += c.len_utf8();
+                if c != '\u{FEFF}' && c.is_whitespace() {
+                    return (self.whitespace(), None);
+                }
+                if c == '\u{FEFF}' {
+                    return (T::Whitespace, None);
+                }
+                return (T::Unknown, Some(LexError::UnknownChar));
+            }
         };
-
-        let token_kind = match first_char {
-            // Slash, comment(`;`) or block comment(`;/ \;` or `{ }`).
-            ';' => match self.first() {
-                '/' => self.block_comment(),
-                _ => self.line_comment(),
-            },
-            '{' => self.doc_comment(),
-
-            // Whitespace sequence.
-            c if is_whitespace(c) => self.whitespace(),
-
-            // Identifier (this should be checked after other variant that can
-            // start as identifier).
-            c if is_id_start(c) => self.ident_or_unknown_prefix(),
-
-            // Numeric literal.
-            c @ '0'..='9' => {
-                let literal_kind = self.number(c);
-                let suffix_start = self.pos_within_token();
-                self.eat_literal_suffix();
-                TokenKind::Literal { kind: literal_kind, suffix_start }
-            }
-
-            // One-symbol tokens.
-            '\u{000A}' => LineFeed, // line feed (\n)
-            '\\' => BackSlash,
-
-            ',' => Comma,
-            '.' => Dot,
-            '(' => OpenParen,
-            ')' => CloseParen,
-            '[' => OpenBracket,
-            ']' => CloseBracket,
-            '=' => Eq,
-            '!' => Bang,
-            '<' => Lt,
-            '>' => Gt,
-            '-' => Minus,
-            '&' => And,
-            '|' => Or,
-            '+' => Plus,
-            '*' => Star,
-            '%' => Percent,
-
-            // String literal.
-            '"' => {
-                let terminated = self.double_quoted_string();
-                let suffix_start = self.pos_within_token();
-                if terminated {
-                    self.eat_literal_suffix();
-                }
-                let kind = Str { terminated };
-                Literal { kind, suffix_start }
-            }
-            // Identifier starting with an emoji. Only lexed for graceful error recovery.
-            c if !c.is_ascii() && c.is_emoji_char() => self.invalid_ident(),
-            _ => Unknown,
-        };
-
-        let res = Token::new(token_kind, self.pos_within_token());
-        self.reset_pos_within_token();
-        res
+        (kind, None)
     }
 
-    fn line_comment(&mut self) -> TokenKind {
-        debug_assert!(self.prev() == ';' && self.first() != '/'); // non block comment
-        self.bump();
-
-        self.eat_until(b'\n');
-        LineComment
-    }
-
-    fn block_comment(&mut self) -> TokenKind {
-        debug_assert!(self.prev() == ';' && self.first() == '/');
-        self.bump();
-
-        let mut depth = 1usize;
-        while let Some(c) = self.bump() {
-            match c {
-                ';' if self.first() == '/' => {
-                    self.bump();
-                    depth += 1;
-                }
-                '/' if self.first() == ';' => {
-                    self.bump();
-                    depth -= 1;
-                    if depth == 0 {
-                        // This block comment is closed, so for a construction like "/* */ */"
-                        // there will be a successfully parsed block comment "/* */"
-                        // and " */" will be processed separately.
-                        break;
-                    }
-                }
-                _ => (),
-            }
+    fn with_eq(&mut self, single: TokenKind, with_eq: TokenKind) -> TokenKind {
+        if self.peek(0) == b'=' {
+            self.pos += 1;
+            with_eq
+        } else {
+            single
         }
-
-        BlockComment { terminated: depth == 0 }
-    }
-
-    fn doc_comment(&mut self) -> TokenKind {
-        debug_assert!(self.prev() == '{');
-        self.bump();
-
-        let mut depth = 1usize;
-        while let Some(c) = self.bump() {
-            match c {
-                '{' => {
-                    self.bump();
-                    depth += 1;
-                }
-                '}' => {
-                    self.bump();
-                    depth -= 1;
-                    if depth == 0 {
-                        // This block comment is closed, so for a construction like "/* */ */"
-                        // there will be a successfully parsed block comment "/* */"
-                        // and " */" will be processed separately.
-                        break;
-                    }
-                }
-                _ => (),
-            }
-        }
-
-        DocComment { terminated: depth == 0 }
     }
 
     fn whitespace(&mut self) -> TokenKind {
-        debug_assert!(is_whitespace(self.prev()));
-        self.eat_while(is_whitespace);
-        Whitespace
-    }
-
-    fn ident_or_unknown_prefix(&mut self) -> TokenKind {
-        debug_assert!(is_id_start(self.prev()));
-        // Start is already eaten, eat the rest of identifier.
-        self.eat_while(is_id_continue);
-        // Known prefixes must have been handled earlier. So if
-        // we see a prefix here, it is definitely an unknown prefix.
-        match self.first() {
-            '#' | '"' | '\'' => UnknownPrefix,
-            c if !c.is_ascii() && c.is_emoji_char() => self.invalid_ident(),
-            _ => Ident,
-        }
-    }
-
-    fn invalid_ident(&mut self) -> TokenKind {
-        // Start is already eaten, eat the rest of identifier.
-        self.eat_while(|c| {
-            const ZERO_WIDTH_JOINER: char = '\u{200d}';
-            is_id_continue(c) || (!c.is_ascii() && c.is_emoji_char()) || c == ZERO_WIDTH_JOINER
-        });
-        // An invalid identifier followed by '#' or '"' or '\'' could be
-        // interpreted as an invalid literal prefix. We don't bother doing that
-        // because the treatment of invalid identifiers and invalid prefixes
-        // would be the same.
-        InvalidIdent
-    }
-
-    fn number(&mut self, first_digit: char) -> LiteralKind {
-        debug_assert!('0' <= self.prev() && self.prev() <= '9');
-        let mut base = Base::Decimal;
-        if first_digit == '0' {
-            // Attempt to parse encoding base.
-            match self.first() {
-                'b' => {
-                    base = Base::Binary;
-                    self.bump();
-                    if !self.eat_decimal_digits() {
-                        return Int { base, empty_int: true };
-                    }
-                }
-                'o' => {
-                    base = Base::Octal;
-                    self.bump();
-                    if !self.eat_decimal_digits() {
-                        return Int { base, empty_int: true };
-                    }
-                }
-                'x' => {
-                    base = Base::Hexadecimal;
-                    self.bump();
-                    if !self.eat_hexadecimal_digits() {
-                        return Int { base, empty_int: true };
-                    }
-                }
-                // Not a base prefix; consume additional digits.
-                '0'..='9' | '_' => {
-                    self.eat_decimal_digits();
-                }
-
-                // Also not a base prefix; nothing more to do here.
-                '.' | 'e' | 'E' => {}
-
-                // Just a 0.
-                _ => return Int { base, empty_int: false },
-            }
-        } else {
-            // No base prefix, parse number in the usual way.
-            self.eat_decimal_digits();
-        }
-
-        match self.first() {
-            // Don't be greedy if this is actually an
-            // integer literal followed by field/method access or a range pattern
-            // (`0..2` and `12.foo()`)
-            '.' if self.second() != '.' && !is_id_start(self.second()) => {
-                // might have stuff after the ., and if it does, it needs to start
-                // with a number
-                self.bump();
-                let mut empty_exponent = false;
-                if self.first().is_ascii_digit() {
-                    self.eat_decimal_digits();
-                    match self.first() {
-                        'e' | 'E' => {
-                            self.bump();
-                            empty_exponent = !self.eat_float_exponent();
-                        }
-                        _ => (),
-                    }
-                }
-                Float { base, empty_exponent }
-            }
-            'e' | 'E' => {
-                self.bump();
-                let empty_exponent = !self.eat_float_exponent();
-                Float { base, empty_exponent }
-            }
-            _ => Int { base, empty_int: false },
-        }
-    }
-
-    /// Eats double-quoted string and returns true
-    /// if string is terminated.
-    fn double_quoted_string(&mut self) -> bool {
-        debug_assert!(self.prev() == '"');
-        while let Some(c) = self.bump() {
-            match c {
-                '"' => {
-                    return true;
-                }
-                '\\' if self.first() == '\\' || self.first() == '"' => {
-                    // Bump again to skip escaped character.
-                    self.bump();
-                }
-                _ => (),
-            }
-        }
-        // End of file reached.
-        false
-    }
-
-    fn eat_decimal_digits(&mut self) -> bool {
-        let mut has_digits = false;
         loop {
-            match self.first() {
-                '_' => {
-                    self.bump();
-                }
-                '0'..='9' => {
-                    has_digits = true;
-                    self.bump();
+            match self.peek(0) {
+                b' ' | b'\t' | 0x0B | 0x0C => self.pos += 1,
+                b'\r' if self.peek(1) != b'\n' => self.pos += 1,
+                b if b >= 0x80 => {
+                    let c = self.src[self.pos..].chars().next().unwrap_or('\0');
+                    if c.is_whitespace() && c != '\u{FEFF}' {
+                        self.pos += c.len_utf8();
+                    } else {
+                        break;
+                    }
                 }
                 _ => break,
             }
         }
-        has_digits
+        TokenKind::Whitespace
     }
 
-    fn eat_hexadecimal_digits(&mut self) -> bool {
-        let mut has_digits = false;
-        loop {
-            match self.first() {
-                '_' => {
-                    self.bump();
-                }
-                '0'..='9' | 'a'..='f' | 'A'..='F' => {
-                    has_digits = true;
-                    self.bump();
-                }
-                _ => break,
+    fn block_comment(&mut self) -> (TokenKind, Option<LexError>) {
+        // `;` already eaten, eat `/`.
+        self.pos += 1;
+        match find_block_comment_end(&self.bytes()[self.pos..]) {
+            Some(end) => {
+                self.pos += end + 2;
+                (TokenKind::BlockComment, None)
+            }
+            None => {
+                self.pos = self.src.len();
+                (TokenKind::BlockComment, Some(LexError::UnterminatedBlockComment))
             }
         }
-        has_digits
     }
 
-    /// Eats the float exponent. Returns true if at least one digit was met,
-    /// and returns false otherwise.
-    fn eat_float_exponent(&mut self) -> bool {
-        debug_assert!(self.prev() == 'e' || self.prev() == 'E');
-        if self.first() == '-' || self.first() == '+' {
-            self.bump();
+    fn doc_comment(&mut self) -> (TokenKind, Option<LexError>) {
+        match memchr::memchr(b'}', &self.bytes()[self.pos..]) {
+            Some(end) => {
+                self.pos += end + 1;
+                (TokenKind::DocComment, None)
+            }
+            None => {
+                self.pos = self.src.len();
+                (TokenKind::DocComment, Some(LexError::UnterminatedDocComment))
+            }
         }
-        self.eat_decimal_digits()
     }
 
-    // Eats the suffix of the literal, e.g. "u8".
-    fn eat_literal_suffix(&mut self) {
-        self.eat_identifier();
-    }
-
-    // Eats the identifier. Note: succeeds on `_`, which isn't a valid
-    // identifier.
-    fn eat_identifier(&mut self) {
-        if !is_id_start(self.first()) {
-            return;
+    fn backslash(&mut self) -> (TokenKind, Option<LexError>) {
+        let start = self.pos;
+        self.eat_while(|b| b == b' ' || b == b'\t');
+        match (self.peek(0), self.peek(1)) {
+            (b'\n', _) => self.pos += 1,
+            (b'\r', b'\n') => self.pos += 2,
+            // A continuation on the very last line joins nothing, but is harmless.
+            _ if self.pos == self.src.len() => {}
+            _ => {
+                self.pos = start;
+                return (TokenKind::Unknown, Some(LexError::StrayBackslash));
+            }
         }
-        self.bump();
-
-        self.eat_while(is_id_continue);
+        (TokenKind::LineContinuation, None)
     }
+
+    fn string(&mut self) -> (TokenKind, Option<LexError>) {
+        loop {
+            match self.peek(0) {
+                b'"' => {
+                    self.pos += 1;
+                    return (TokenKind::String, None);
+                }
+                b'\\' if matches!(self.peek(1), b'"' | b'\\') => self.pos += 2,
+                b'\n' | b'\r' => return (TokenKind::String, Some(LexError::UnterminatedString)),
+                _ if self.pos >= self.src.len() => {
+                    return (TokenKind::String, Some(LexError::UnterminatedString));
+                }
+                _ => self.pos += 1,
+            }
+        }
+    }
+
+    fn number(&mut self, first: u8) -> (TokenKind, Option<LexError>) {
+        if first == b'0' && matches!(self.peek(0), b'x' | b'X') {
+            self.pos += 1;
+            let start = self.pos;
+            self.eat_while(|b| b.is_ascii_hexdigit());
+            let error = (self.pos == start).then_some(LexError::EmptyHexLiteral);
+            return (TokenKind::Int, error);
+        }
+
+        self.eat_while(|b| b.is_ascii_digit());
+        if self.peek(0) != b'.' || !self.peek(1).is_ascii_digit() {
+            return (TokenKind::Int, None);
+        }
+
+        self.pos += 1;
+        self.eat_while(|b| b.is_ascii_digit());
+        let mut error = None;
+        if matches!(self.peek(0), b'e' | b'E') {
+            self.pos += 1;
+            if matches!(self.peek(0), b'+' | b'-') {
+                self.pos += 1;
+            }
+            let start = self.pos;
+            self.eat_while(|b| b.is_ascii_digit());
+            if self.pos == start {
+                error = Some(LexError::EmptyExponent);
+            }
+        }
+        (TokenKind::Float, error)
+    }
+
+    fn ident_or_keyword(&mut self) -> TokenKind {
+        let start = self.pos - 1;
+        self.eat_while(|b| b.is_ascii_alphanumeric() || b == b'_');
+        keyword(&self.src[start..self.pos]).unwrap_or(TokenKind::Ident)
+    }
+}
+
+/// Finds the first `/;` in `haystack`, returning the index of the `/`.
+fn find_block_comment_end(haystack: &[u8]) -> Option<usize> {
+    memchr::memmem::find(haystack, b"/;")
+}
+
+impl<'a> Iterator for Lexer<'a> {
+    type Item = Token<'a>;
+
+    fn next(&mut self) -> Option<Token<'a>> {
+        if self.pos >= self.src.len() {
+            return None;
+        }
+        let start = self.pos;
+        let (kind, error) = self.lex();
+        Some(Token { kind, text: &self.src[start..self.pos], offset: start as u32, error })
+    }
+}
+
+/// Convenience function returning all tokens of `src`.
+pub fn tokenize(src: &str) -> Vec<Token<'_>> {
+    Lexer::new(src).collect()
+}
+
+/// Returns the keyword spelled by `ident` (ignoring case), if any.
+pub fn keyword(ident: &str) -> Option<TokenKind> {
+    use TokenKind as T;
+
+    const MAX_KEYWORD_LEN: usize = "autoreadonly".len();
+    if ident.len() < 2 || ident.len() > MAX_KEYWORD_LEN {
+        return None;
+    }
+    let mut buf = [0u8; MAX_KEYWORD_LEN];
+    let buf = &mut buf[..ident.len()];
+    buf.copy_from_slice(ident.as_bytes());
+    buf.make_ascii_lowercase();
+
+    let kw = match &*buf {
+        b"as" => T::AsKw,
+        b"auto" => T::AutoKw,
+        b"autoreadonly" => T::AutoReadOnlyKw,
+        b"bool" => T::BoolKw,
+        b"else" => T::ElseKw,
+        b"elseif" => T::ElseIfKw,
+        b"endevent" => T::EndEventKw,
+        b"endfunction" => T::EndFunctionKw,
+        b"endif" => T::EndIfKw,
+        b"endproperty" => T::EndPropertyKw,
+        b"endstate" => T::EndStateKw,
+        b"endwhile" => T::EndWhileKw,
+        b"event" => T::EventKw,
+        b"extends" => T::ExtendsKw,
+        b"false" => T::FalseKw,
+        b"float" => T::FloatKw,
+        b"function" => T::FunctionKw,
+        b"global" => T::GlobalKw,
+        b"if" => T::IfKw,
+        b"import" => T::ImportKw,
+        b"int" => T::IntKw,
+        b"native" => T::NativeKw,
+        b"new" => T::NewKw,
+        b"none" => T::NoneKw,
+        b"parent" => T::ParentKw,
+        b"property" => T::PropertyKw,
+        b"return" => T::ReturnKw,
+        b"scriptname" => T::ScriptNameKw,
+        b"self" => T::SelfKw,
+        b"state" => T::StateKw,
+        b"string" => T::StringKw,
+        b"true" => T::TrueKw,
+        b"while" => T::WhileKw,
+        _ => return None,
+    };
+    Some(kw)
+}
+
+/// Returns `true` if `s` is lexically a valid identifier (keywords included).
+pub fn is_ident(s: &str) -> bool {
+    let mut bytes = s.bytes();
+    matches!(bytes.next(), Some(b'a'..=b'z' | b'A'..=b'Z' | b'_'))
+        && bytes.all(|b| b.is_ascii_alphanumeric() || b == b'_')
+}
+
+/// Decodes the content of a string literal token (including its quotes),
+/// resolving the escape sequences `\n`, `\t`, `\\` and `\"`.
+///
+/// Returns a borrowed slice when the literal contains no escapes.
+pub fn unescape_string(token_text: &str) -> std::borrow::Cow<'_, str> {
+    let inner = token_text.strip_prefix('"').unwrap_or(token_text);
+    let inner = inner.strip_suffix('"').unwrap_or(inner);
+    if !inner.contains('\\') {
+        return std::borrow::Cow::Borrowed(inner);
+    }
+
+    let mut out = String::with_capacity(inner.len());
+    let mut chars = inner.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('t') => out.push('\t'),
+            Some(other) => out.push(other),
+            None => out.push('\\'),
+        }
+    }
+    std::borrow::Cow::Owned(out)
 }

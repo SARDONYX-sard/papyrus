@@ -1,0 +1,332 @@
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+
+use crate::{features::completion::Completions, *};
+
+/// Builds a workspace from `(file name, text)` pairs, all opened in the editor.
+/// The cursor of the first file containing `$0` is returned.
+fn workspace(files: &[(&str, &str)]) -> (Workspace, FileId, TextSize) {
+    let mut ws = Workspace::new();
+    let mut cursor = None;
+    for (name, text) in files {
+        let path = PathBuf::from(format!("/ws/{name}"));
+        let (text, offset) = match text.find("$0") {
+            Some(i) => (text.replacen("$0", "", 1), Some(i)),
+            None => ((*text).to_owned(), None),
+        };
+        let id = ws.set_open(path, Arc::from(text), 0);
+        if let Some(offset) = offset {
+            cursor = Some((id, TextSize::new(offset as u32)));
+        }
+    }
+    let (file, offset) = cursor.expect("no $0 cursor");
+    (ws, file, offset)
+}
+
+const FORM: &str = "ScriptName Form Hidden\nInt Function GetFormID() Native\n";
+const ACTOR: &str = "ScriptName Actor extends Form Hidden\n; Kills the actor.\nFunction Kill(Actor akKiller = None) Native\nFloat Function GetAV(String asName) Native\nEvent OnDeath(Actor akKiller)\nEndEvent\n";
+const DEBUG: &str =
+    "ScriptName Debug Hidden\nFunction Trace(String asText, Int aiSeverity = 0) Global Native\n";
+
+#[test]
+fn hover_member_with_docs() {
+    let (ws, file, offset) = workspace(&[
+        ("Form.psc", FORM),
+        ("Actor.psc", ACTOR),
+        ("Test.psc", "ScriptName Test\nFunction F(Actor a)\n  a.Ki$0ll()\nEndFunction\n"),
+    ]);
+    let hover = hover(&ws, file, offset).unwrap();
+    assert_eq!(
+        hover.markdown,
+        "```papyrus\nFunction Kill(Actor akKiller = None) Native\n```\n*Actor*\n\n---\n\nKills the actor."
+    );
+}
+
+#[test]
+fn hover_local_and_global() {
+    let (ws, file, offset) = workspace(&[
+        ("Debug.psc", DEBUG),
+        (
+            "Test.psc",
+            "ScriptName Test\nFunction F()\n  Int count = 1\n  Debug.Trace(\"x\" + cou$0nt)\nEndFunction\n",
+        ),
+    ]);
+    assert_eq!(
+        hover(&ws, file, offset).unwrap().markdown,
+        "```papyrus\nInt count\n```\n*local variable*"
+    );
+
+    let (ws, file, offset) = workspace(&[
+        ("Debug.psc", DEBUG),
+        ("Test.psc", "ScriptName Test\nFunction F()\n  Debug.Tr$0ace(\"x\")\nEndFunction\n"),
+    ]);
+    assert!(
+        hover(&ws, file, offset)
+            .unwrap()
+            .markdown
+            .contains("Function Trace(String asText, Int aiSeverity = 0) Global Native")
+    );
+}
+
+#[test]
+fn goto_inherited_and_imported() {
+    let (ws, file, offset) = workspace(&[
+        ("Form.psc", FORM),
+        ("Actor.psc", ACTOR),
+        ("Debug.psc", DEBUG),
+        (
+            "Test.psc",
+            "ScriptName Test extends Actor\nImport Debug\nEvent OnInit()\n  GetForm$0ID()\n  Trace(\"\")\nEndEvent\n",
+        ),
+    ]);
+    let targets = goto_definition(&ws, file, offset);
+    assert_eq!(targets.len(), 1);
+    assert_eq!(ws.file(targets[0].file).path, Path::new("/ws/Form.psc"));
+
+    let text = ws.text(file).unwrap();
+    let trace = TextSize::new(text.find("Trace").unwrap() as u32 + 1);
+    let targets = goto_definition(&ws, file, trace);
+    assert_eq!(ws.file(targets[0].file).path, Path::new("/ws/Debug.psc"));
+}
+
+#[test]
+fn goto_property_through_cast_and_index() {
+    let (ws, file, offset) = workspace(&[
+        ("Form.psc", FORM),
+        ("Actor.psc", ACTOR),
+        (
+            "Test.psc",
+            "ScriptName Test\nForm[] forms\nFunction F()\n  (forms[0] as Actor).Kil$0l()\nEndFunction\n",
+        ),
+    ]);
+    let targets = goto_definition(&ws, file, offset);
+    assert_eq!(ws.file(targets[0].file).path, Path::new("/ws/Actor.psc"));
+}
+
+#[test]
+fn locals_shadowing_and_scope() {
+    let src = "ScriptName Test\nInt x\nFunction F(Int x)\n  If True\n    Int y = 1\n  EndIf\n  x$0 = y\nEndFunction\n";
+    let (ws, file, offset) = workspace(&[("Test.psc", src)]);
+    let targets = goto_definition(&ws, file, offset);
+    // The parameter shadows the script variable.
+    assert_eq!(targets[0].focus_range, TextRange::at(TextSize::new(37), TextSize::new(1)));
+    // `y` is out of scope after `EndIf`.
+    let diags: Vec<_> = diagnostics(&ws, file).into_iter().map(|d| d.code).collect();
+    assert!(!diags.contains(&"syntax"));
+}
+
+#[test]
+fn references_across_files() {
+    let (ws, file, offset) = workspace(&[
+        ("Form.psc", FORM),
+        ("Actor.psc", ACTOR),
+        ("A.psc", "ScriptName A\nFunction F(Actor a)\n  a.Kill()\n  a.Kill(a)\nEndFunction\n"),
+        ("B.psc", "ScriptName B extends Actor\nEvent OnInit()\n  Ki$0ll()\nEndEvent\n"),
+    ]);
+    let refs = references(&ws, file, offset, true);
+    assert_eq!(refs.len(), 4, "{refs:?}");
+    let refs = references(&ws, file, offset, false);
+    assert_eq!(refs.len(), 3, "{refs:?}");
+}
+
+fn labels(c: &Completions) -> Vec<&str> {
+    c.items.iter().map(|i| i.label.as_str()).collect()
+}
+
+#[test]
+fn complete_members() {
+    let (ws, file, offset) = workspace(&[
+        ("Form.psc", FORM),
+        ("Actor.psc", ACTOR),
+        ("Test.psc", "ScriptName Test\nFunction F(Actor a)\n  a.$0\nEndFunction\n"),
+    ]);
+    let c = crate::features::completion::completions(&ws, file, offset);
+    let l = labels(&c);
+    assert!(l.contains(&"Kill") && l.contains(&"GetAV") && l.contains(&"GetFormID"), "{l:?}");
+    assert!(l.contains(&"GoToState"));
+}
+
+#[test]
+fn complete_static_and_arrays() {
+    let (ws, file, offset) = workspace(&[
+        ("Debug.psc", DEBUG),
+        ("Test.psc", "ScriptName Test\nFunction F(Int[] arr)\n  Debug.T$0\n  arr.\nEndFunction\n"),
+    ]);
+    let c = crate::features::completion::completions(&ws, file, offset);
+    assert_eq!(labels(&c), ["Trace"]);
+    assert_eq!(c.items[0].replace_range, TextRange::new(46.into(), 47.into()));
+
+    let text = ws.text(file).unwrap();
+    let after_dot = TextSize::new(text.find("arr.").unwrap() as u32 + 4);
+    let c = crate::features::completion::completions(&ws, file, after_dot);
+    assert_eq!(labels(&c), ["Length", "Find", "RFind"]);
+}
+
+#[test]
+fn complete_locals_in_body() {
+    let (ws, file, offset) = workspace(&[(
+        "Test.psc",
+        "ScriptName Test\nInt Property P Auto\nFunction F(Int param)\n  Int local = 1\n  $0\nEndFunction\n",
+    )]);
+    let c = crate::features::completion::completions(&ws, file, offset);
+    let l = labels(&c);
+    for expected in ["param", "local", "P", "F", "If", "While", "Int"] {
+        assert!(l.contains(&expected), "missing {expected}: {l:?}");
+    }
+    assert!(!l.contains(&"EndState"));
+}
+
+#[test]
+fn complete_event_overrides() {
+    let (ws, file, offset) = workspace(&[
+        ("Form.psc", FORM),
+        ("Actor.psc", ACTOR),
+        ("Test.psc", "ScriptName Test extends Actor\nEvent $0\n"),
+    ]);
+    let c = crate::features::completion::completions(&ws, file, offset);
+    let item = c.items.iter().find(|i| i.label == "OnDeath(Actor akKiller)").unwrap();
+    assert_eq!(item.snippet.as_deref(), Some("OnDeath(Actor akKiller)\n\t$0\nEndEvent"));
+}
+
+#[test]
+fn signature_help_active_param() {
+    let (ws, file, offset) = workspace(&[
+        ("Debug.psc", DEBUG),
+        ("Test.psc", "ScriptName Test\nFunction F()\n  Debug.Trace(\"x\", $0)\nEndFunction\n"),
+    ]);
+    let help = signature_help(&ws, file, offset).unwrap();
+    assert_eq!(help.label, "Trace(String asText, Int aiSeverity = 0)");
+    assert_eq!(help.active_param, Some(1));
+    assert_eq!(help.params, [(6, 19), (21, 39)]);
+}
+
+#[test]
+fn diagnostics_semantic() {
+    let (ws, file, _) = workspace(&[
+        ("Form.psc", FORM),
+        ("Actor.psc", ACTOR),
+        (
+            "Wrong.psc",
+            "ScriptName Test$0 extends Actor\nInt x\nInt x\nFunction F() Gloabl\n  Kill()\n  Fly()\n  Self.Swim()\n  Missing m\n  GoToState(\"Nowhere\")\nEndFunction\nState S\n  Function OnlyHere()\n  EndFunction\nEndState\n",
+        ),
+    ]);
+    let diags: Vec<String> =
+        diagnostics(&ws, file).into_iter().map(|d| format!("{}: {}", d.code, d.message)).collect();
+    assert_eq!(
+        diags,
+        [
+            "script-name-mismatch: script name `Test` does not match the file name `Wrong.psc`",
+            "duplicate-definition: `x` is already defined in this scope",
+            "unknown-flag: unknown flag `Gloabl`",
+            "unresolved-name: cannot find `Fly` in this scope",
+            "unknown-member: `Test` has no member `Swim`",
+            "unknown-type: unknown type `Missing`",
+            "state-function-not-declared: function `OnlyHere` in state `S` must also be declared outside of any state",
+        ]
+    );
+}
+
+#[test]
+fn document_symbols_nest_states_and_accessors() {
+    let (ws, file, _) = workspace(&[(
+        "Test.psc",
+        "ScriptName Test$0\nInt Property P\n  Int Function Get()\n    Return 1\n  EndFunction\nEndProperty\nState S\n  Event OnInit()\n  EndEvent\nEndState\n",
+    )]);
+    let symbols = document_symbols(&ws, file);
+    assert_eq!(symbols.len(), 1);
+    let children: Vec<_> =
+        symbols[0].children.iter().map(|s| (s.name.as_str(), s.children.len())).collect();
+    assert_eq!(children, [("P", 1), ("S", 1)]);
+}
+
+// === Corpus ===
+
+fn collect_psc(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_psc(&path, out);
+        } else if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("psc")) {
+            out.push(path);
+        }
+    }
+}
+
+/// The corpus compiles with the official compiler, so semantic checks must not
+/// report anything on it. Each mod is checked against itself plus the vanilla
+/// and SKSE sources of `psc_deps`.
+#[test]
+fn corpus_has_no_semantic_diagnostics() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .unwrap()
+        .join("tests/fixtures/papyrus-compiler-test-sources");
+    let deps = root.join("psc_deps");
+    let mut dep_files = Vec::new();
+    collect_psc(&deps, &mut dep_files);
+    if dep_files.len() < 100 {
+        #[allow(clippy::print_stderr)]
+        {
+            eprintln!("skipping corpus test: submodule not checked out");
+        }
+        return;
+    }
+
+    let mut ws = Workspace::new();
+    for path in &dep_files {
+        let text = read_file(path).unwrap();
+        ws.set_disk_index(path.clone(), index_text(&text), Origin::Import(0));
+    }
+    let mut files = Vec::new();
+    collect_psc(&root, &mut files);
+    files.retain(|p| !p.starts_with(&deps));
+    let ids: Vec<_> = files
+        .iter()
+        .map(|p| {
+            let text = read_file(p).unwrap();
+            ws.set_disk_index(p.clone(), index_text(&text), Origin::Workspace)
+        })
+        .collect();
+
+    let mut failures = Vec::new();
+    let checked = ids.len();
+    for id in ids {
+        for d in diagnostics(&ws, id) {
+            let text = ws.text(id).unwrap();
+            let line = text[..usize::from(d.range.start())].lines().count().max(1);
+            let path = ws
+                .file(id)
+                .path
+                .strip_prefix(&root)
+                .unwrap_or(&ws.file(id).path)
+                .display()
+                .to_string();
+            failures.push(format!("{path}:{line}: [{}] {}", d.code, d.message));
+        }
+    }
+    if !failures.is_empty() {
+        let mut by_code = std::collections::BTreeMap::<String, usize>::new();
+        for f in &failures {
+            let code = f.split('[').nth(1).and_then(|s| s.split(']').next()).unwrap_or("?");
+            *by_code.entry(code.to_owned()).or_default() += 1;
+        }
+        let mut shown_per_code = std::collections::BTreeMap::<String, usize>::new();
+        let shown = failures
+            .iter()
+            .filter(|f| {
+                let code =
+                    f.split('[').nth(1).and_then(|s| s.split(']').next()).unwrap_or("?").to_owned();
+                let n = shown_per_code.entry(code).or_default();
+                *n += 1;
+                *n <= 12
+            })
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n");
+        panic!("{} diagnostics in {checked} files: {by_code:?}\n{shown}", failures.len());
+    }
+}

@@ -1,9 +1,95 @@
+//! Language server for the Papyrus scripting language.
+//!
+//! Speaks the Language Server Protocol over stdio. Logs go to stderr and are
+//! controlled with the `RUST_LOG` environment variable (default: `info`).
+
+mod config;
+mod conv;
+mod ext;
+mod handlers;
+mod server;
+
+use lsp_types::{
+    CompletionOptions, FoldingRangeProviderCapability, HoverProviderCapability, InitializeParams,
+    InitializeResult, OneOf, SaveOptions, SemanticTokensFullOptions, SemanticTokensLegend,
+    SemanticTokensOptions, SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo,
+    SignatureHelpOptions, TextDocumentSyncCapability, TextDocumentSyncKind,
+    TextDocumentSyncOptions, TextDocumentSyncSaveOptions, WorkDoneProgressOptions,
+};
+use papyrus_ide::{TokenModifier, TokenType};
+
 fn main() -> anyhow::Result<()> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    if std::env::args().any(|a| a == "--version" || a == "-V") {
+        #[allow(clippy::print_stdout)]
+        {
+            println!("papyrus_lsp {}", env!("CARGO_PKG_VERSION"));
+        }
+        return Ok(());
+    }
 
-    let (_connection, io_threads) = lsp_server::Connection::stdio();
-    // server::run(connection)?;
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .target(env_logger::Target::Stderr)
+        .init();
+    log::info!("papyrus_lsp {} starting", env!("CARGO_PKG_VERSION"));
+
+    let (connection, io_threads) = lsp_server::Connection::stdio();
+    let (id, params) = connection.initialize_start()?;
+    let init: InitializeParams = serde_json::from_value(params)?;
+    let result = InitializeResult {
+        capabilities: capabilities(),
+        server_info: Some(ServerInfo {
+            name: "papyrus_lsp".to_owned(),
+            version: Some(env!("CARGO_PKG_VERSION").to_owned()),
+        }),
+    };
+    connection.initialize_finish(id, serde_json::to_value(result)?)?;
+
+    server::Server::new(connection.sender.clone(), &init).run(&connection)?;
+    drop(connection);
     io_threads.join()?;
-
+    log::info!("papyrus_lsp stopped");
     Ok(())
+}
+
+fn capabilities() -> ServerCapabilities {
+    ServerCapabilities {
+        text_document_sync: Some(TextDocumentSyncCapability::Options(TextDocumentSyncOptions {
+            open_close: Some(true),
+            change: Some(TextDocumentSyncKind::INCREMENTAL),
+            will_save: None,
+            will_save_wait_until: None,
+            save: Some(TextDocumentSyncSaveOptions::SaveOptions(SaveOptions {
+                include_text: Some(false),
+            })),
+        })),
+        hover_provider: Some(HoverProviderCapability::Simple(true)),
+        definition_provider: Some(OneOf::Left(true)),
+        references_provider: Some(OneOf::Left(true)),
+        document_highlight_provider: Some(OneOf::Left(true)),
+        document_symbol_provider: Some(OneOf::Left(true)),
+        workspace_symbol_provider: Some(OneOf::Left(true)),
+        folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
+        completion_provider: Some(CompletionOptions {
+            resolve_provider: Some(true),
+            trigger_characters: Some(vec![".".to_owned()]),
+            ..Default::default()
+        }),
+        signature_help_provider: Some(SignatureHelpOptions {
+            trigger_characters: Some(vec!["(".to_owned(), ",".to_owned()]),
+            retrigger_characters: None,
+            work_done_progress_options: WorkDoneProgressOptions::default(),
+        }),
+        semantic_tokens_provider: Some(SemanticTokensServerCapabilities::SemanticTokensOptions(
+            SemanticTokensOptions {
+                legend: SemanticTokensLegend {
+                    token_types: TokenType::ALL.iter().map(|(_, n)| (*n).into()).collect(),
+                    token_modifiers: TokenModifier::ALL.iter().map(|(_, n)| (*n).into()).collect(),
+                },
+                full: Some(SemanticTokensFullOptions::Bool(true)),
+                range: Some(true),
+                work_done_progress_options: WorkDoneProgressOptions::default(),
+            },
+        )),
+        ..Default::default()
+    }
 }

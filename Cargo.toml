@@ -1,5 +1,5 @@
 [workspace]
-members = ["xtask/", "crates/*"]
+members = ["crates/*"]
 default-members = ["crates/papyrus_lsp"]
 resolver = "3"
 
@@ -15,16 +15,11 @@ debug = 1
 
 [profile.dev.package]
 # These speed up local tests.
-rowan.opt-level = 3
 rustc-hash.opt-level = 3
-smol_str.opt-level = 3
 text-size.opt-level = 3
 serde.opt-level = 3
-salsa.opt-level = 3
+serde_json.opt-level = 3
 dissimilar.opt-level = 3
-
-# This speeds up `cargo xtask dist`.
-miniz_oxide.opt-level = 3
 
 [profile.release]
 # Set this to 1 or 2 to get more useful backtraces in debugger.
@@ -70,9 +65,10 @@ stdx = { path = "./crates/stdx", version = "0.0.0" }
 # vfs-notify = { path = "./crates/vfs-notify", version = "0.0.0" }
 # vfs = { path = "./crates/vfs", version = "0.0.0" }
 
+papyrus_ide = { path = "./crates/papyrus_ide", version = "0.0.0" }
+papyrus_intern = { path = "./crates/papyrus_intern", version = "0.0.0" }
 papyrus_lexer = { path = "./crates/papyrus_lexer", version = "0.0.0" }
 papyrus_parser = { path = "./crates/papyrus_parser", version = "0.0.0" }
-papyrus_syntax = { path = "./crates/papyrus_syntax", version = "0.0.0" }
 
 ra-ap-rustc_lexer = { version = "0.165", default-features = false }
 ra-ap-rustc_parse_format = { version = "0.165", default-features = false }

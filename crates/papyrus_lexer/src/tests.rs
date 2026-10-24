@@ -1,336 +1,262 @@
 use super::*;
 use expect_test::{Expect, expect};
 
+fn check(src: &str, expect: Expect) {
+    let actual: String = Lexer::new(src)
+        .map(|t| match t.error {
+            Some(e) => format!("{:?} {:?} error: {e}\n", t.kind, t.text),
+            None => format!("{:?} {:?}\n", t.kind, t.text),
+        })
+        .collect();
+    expect.assert_eq(&actual);
+}
+
 fn kinds(src: &str) -> Vec<TokenKind> {
-    tokenize(src).map(|t| t.kind).collect()
-}
-
-fn assert_tokens(src: &str, expected: &[TokenKind]) {
-    assert_eq!(kinds(src), expected);
-}
-
-fn check_lexing(src: &str, expect: Expect) {
-    let actual: String = tokenize(src).map(|token| format!("{:?}\n", token)).collect();
-    expect.assert_eq(&actual)
-}
-
-// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-#[test]
-fn identifier() {
-    assert_tokens("Foo", &[TokenKind::Ident]);
+    Lexer::new(src).map(|t| t.kind).collect()
 }
 
 #[test]
-fn function_keyword() {
-    assert_tokens("Function", &[TokenKind::Ident]);
-}
-
-// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-#[test]
-fn line_comment() {
-    assert_tokens("; hello\n", &[TokenKind::LineComment, TokenKind::LineFeed]);
+fn lossless() {
+    let src = "ScriptName Foo extends Bar ; c\r\n;/ a\n b /;{doc}\n  x = \"s\\\"\" \\\n + 1.5\n#";
+    let joined: String = Lexer::new(src).map(|t| t.text).collect();
+    assert_eq!(joined, src);
 }
 
 #[test]
-fn nested_block_comment() {
-    assert_tokens(";/ a ;/ b /; c /;", &[TokenKind::BlockComment { terminated: true }]);
-}
-
-#[test]
-fn unterminated_block_comment() {
-    assert_tokens(";/ abc", &[TokenKind::BlockComment { terminated: false }]);
-}
-
-// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-#[test]
-fn doc_comment() {
-    assert_tokens("{ docs }", &[TokenKind::DocComment { terminated: true }]);
-}
-
-// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-#[test]
-fn decimal_integer() {
-    assert_tokens(
-        "123",
-        &[TokenKind::Literal {
-            kind: LiteralKind::Int { base: Base::Decimal, empty_int: false },
-            suffix_start: 3,
-        }],
+fn keywords_are_case_insensitive() {
+    assert_eq!(
+        kinds("scriptname SCRIPTNAME ScriptName endFunction autoreadonly"),
+        [
+            TokenKind::ScriptNameKw,
+            TokenKind::Whitespace,
+            TokenKind::ScriptNameKw,
+            TokenKind::Whitespace,
+            TokenKind::ScriptNameKw,
+            TokenKind::Whitespace,
+            TokenKind::EndFunctionKw,
+            TokenKind::Whitespace,
+            TokenKind::AutoReadOnlyKw,
+        ]
     );
+    assert_eq!(kinds("Hidden Length Conditional"), {
+        use TokenKind::*;
+        [Ident, Whitespace, Ident, Whitespace, Ident]
+    });
 }
 
 #[test]
-fn float_literal() {
-    assert_tokens(
-        "1.5",
-        &[TokenKind::Literal {
-            kind: LiteralKind::Float { base: Base::Decimal, empty_exponent: false },
-            suffix_start: 3,
-        }],
-    );
-}
-
-#[test]
-fn string_literal() {
-    assert_tokens(
-        r#""abc""#,
-        &[TokenKind::Literal { kind: LiteralKind::Str { terminated: true }, suffix_start: 5 }],
-    );
-}
-
-#[test]
-fn unterminated_string() {
-    assert_tokens(
-        "\"abc",
-        &[TokenKind::Literal { kind: LiteralKind::Str { terminated: false }, suffix_start: 4 }],
-    );
-}
-
-#[test]
-fn whitespace() {
-    assert_tokens(" \t\n", &[TokenKind::Whitespace, TokenKind::LineFeed]);
-}
-
-#[test]
-fn punctuation() {
-    assert_tokens(
-        "(),[]",
-        &[
-            TokenKind::OpenParen,
-            TokenKind::CloseParen,
-            TokenKind::Comma,
-            TokenKind::OpenBracket,
-            TokenKind::CloseBracket,
-        ],
-    );
-}
-
-#[test]
-fn smoke_test() {
-    let src = r#"
-ScriptName TestScript Extends Quest Hidden Conditional
-
-Import Utility
-
-Int Property Counter Auto
-String Property Name
-    Function Get()
-        Return ""
-    EndFunction
-EndProperty
-
-State Waiting
-    Event OnBeginState()
-        Counter = 0
-    EndEvent
-EndState
-
-Function Foo(Int x, Float y = 1.5)
-    Int i = 0
-
-    While i < 10
-        If i == 5
-            Debug.Trace("middle")
-        ElseIf i == 8
-            Return
-        Else
-            i += 1
-        EndIf
-    EndWhile
-EndFunction
-
-Event OnInit()
-    Foo(1, 2.0)
-EndEvent
-"#;
-
-    check_lexing(
-        src,
+fn newlines_are_tokens() {
+    check(
+        "a\nb\r\n\r\nc",
         expect![[r#"
-Token { kind: LineFeed, len: 1 }
-Token { kind: Ident, len: 10 }
-Token { kind: Whitespace, len: 1 }
-Token { kind: Ident, len: 10 }
-Token { kind: Whitespace, len: 1 }
-Token { kind: Ident, len: 7 }
-Token { kind: Whitespace, len: 1 }
-Token { kind: Ident, len: 5 }
-Token { kind: Whitespace, len: 1 }
-Token { kind: Ident, len: 6 }
-Token { kind: Whitespace, len: 1 }
-Token { kind: Ident, len: 11 }
-Token { kind: LineFeed, len: 1 }
-Token { kind: LineFeed, len: 1 }
-Token { kind: Ident, len: 6 }
-Token { kind: Whitespace, len: 1 }
-Token { kind: Ident, len: 7 }
-Token { kind: LineFeed, len: 1 }
-Token { kind: LineFeed, len: 1 }
-Token { kind: Ident, len: 3 }
-Token { kind: Whitespace, len: 1 }
-Token { kind: Ident, len: 8 }
-Token { kind: Whitespace, len: 1 }
-Token { kind: Ident, len: 7 }
-Token { kind: Whitespace, len: 1 }
-Token { kind: Ident, len: 4 }
-Token { kind: LineFeed, len: 1 }
-Token { kind: Ident, len: 6 }
-Token { kind: Whitespace, len: 1 }
-Token { kind: Ident, len: 8 }
-Token { kind: Whitespace, len: 1 }
-Token { kind: Ident, len: 4 }
-Token { kind: LineFeed, len: 1 }
-Token { kind: Whitespace, len: 4 }
-Token { kind: Ident, len: 8 }
-Token { kind: Whitespace, len: 1 }
-Token { kind: Ident, len: 3 }
-Token { kind: OpenParen, len: 1 }
-Token { kind: CloseParen, len: 1 }
-Token { kind: LineFeed, len: 1 }
-Token { kind: Whitespace, len: 8 }
-Token { kind: Ident, len: 6 }
-Token { kind: Whitespace, len: 1 }
-Token { kind: Literal { kind: Str { terminated: true }, suffix_start: 2 }, len: 2 }
-Token { kind: LineFeed, len: 1 }
-Token { kind: Whitespace, len: 4 }
-Token { kind: Ident, len: 11 }
-Token { kind: LineFeed, len: 1 }
-Token { kind: Ident, len: 11 }
-Token { kind: LineFeed, len: 1 }
-Token { kind: LineFeed, len: 1 }
-Token { kind: Ident, len: 5 }
-Token { kind: Whitespace, len: 1 }
-Token { kind: Ident, len: 7 }
-Token { kind: LineFeed, len: 1 }
-Token { kind: Whitespace, len: 4 }
-Token { kind: Ident, len: 5 }
-Token { kind: Whitespace, len: 1 }
-Token { kind: Ident, len: 12 }
-Token { kind: OpenParen, len: 1 }
-Token { kind: CloseParen, len: 1 }
-Token { kind: LineFeed, len: 1 }
-Token { kind: Whitespace, len: 8 }
-Token { kind: Ident, len: 7 }
-Token { kind: Whitespace, len: 1 }
-Token { kind: Eq, len: 1 }
-Token { kind: Whitespace, len: 1 }
-Token { kind: Literal { kind: Int { base: Decimal, empty_int: false }, suffix_start: 1 }, len: 1 }
-Token { kind: LineFeed, len: 1 }
-Token { kind: Whitespace, len: 4 }
-Token { kind: Ident, len: 8 }
-Token { kind: LineFeed, len: 1 }
-Token { kind: Ident, len: 8 }
-Token { kind: LineFeed, len: 1 }
-Token { kind: LineFeed, len: 1 }
-Token { kind: Ident, len: 8 }
-Token { kind: Whitespace, len: 1 }
-Token { kind: Ident, len: 3 }
-Token { kind: OpenParen, len: 1 }
-Token { kind: Ident, len: 3 }
-Token { kind: Whitespace, len: 1 }
-Token { kind: Ident, len: 1 }
-Token { kind: Comma, len: 1 }
-Token { kind: Whitespace, len: 1 }
-Token { kind: Ident, len: 5 }
-Token { kind: Whitespace, len: 1 }
-Token { kind: Ident, len: 1 }
-Token { kind: Whitespace, len: 1 }
-Token { kind: Eq, len: 1 }
-Token { kind: Whitespace, len: 1 }
-Token { kind: Literal { kind: Float { base: Decimal, empty_exponent: false }, suffix_start: 3 }, len: 3 }
-Token { kind: CloseParen, len: 1 }
-Token { kind: LineFeed, len: 1 }
-Token { kind: Whitespace, len: 4 }
-Token { kind: Ident, len: 3 }
-Token { kind: Whitespace, len: 1 }
-Token { kind: Ident, len: 1 }
-Token { kind: Whitespace, len: 1 }
-Token { kind: Eq, len: 1 }
-Token { kind: Whitespace, len: 1 }
-Token { kind: Literal { kind: Int { base: Decimal, empty_int: false }, suffix_start: 1 }, len: 1 }
-Token { kind: LineFeed, len: 1 }
-Token { kind: LineFeed, len: 1 }
-Token { kind: Whitespace, len: 4 }
-Token { kind: Ident, len: 5 }
-Token { kind: Whitespace, len: 1 }
-Token { kind: Ident, len: 1 }
-Token { kind: Whitespace, len: 1 }
-Token { kind: Lt, len: 1 }
-Token { kind: Whitespace, len: 1 }
-Token { kind: Literal { kind: Int { base: Decimal, empty_int: false }, suffix_start: 2 }, len: 2 }
-Token { kind: LineFeed, len: 1 }
-Token { kind: Whitespace, len: 8 }
-Token { kind: Ident, len: 2 }
-Token { kind: Whitespace, len: 1 }
-Token { kind: Ident, len: 1 }
-Token { kind: Whitespace, len: 1 }
-Token { kind: Eq, len: 1 }
-Token { kind: Eq, len: 1 }
-Token { kind: Whitespace, len: 1 }
-Token { kind: Literal { kind: Int { base: Decimal, empty_int: false }, suffix_start: 1 }, len: 1 }
-Token { kind: LineFeed, len: 1 }
-Token { kind: Whitespace, len: 12 }
-Token { kind: Ident, len: 5 }
-Token { kind: Dot, len: 1 }
-Token { kind: Ident, len: 5 }
-Token { kind: OpenParen, len: 1 }
-Token { kind: Literal { kind: Str { terminated: true }, suffix_start: 8 }, len: 8 }
-Token { kind: CloseParen, len: 1 }
-Token { kind: LineFeed, len: 1 }
-Token { kind: Whitespace, len: 8 }
-Token { kind: Ident, len: 6 }
-Token { kind: Whitespace, len: 1 }
-Token { kind: Ident, len: 1 }
-Token { kind: Whitespace, len: 1 }
-Token { kind: Eq, len: 1 }
-Token { kind: Eq, len: 1 }
-Token { kind: Whitespace, len: 1 }
-Token { kind: Literal { kind: Int { base: Decimal, empty_int: false }, suffix_start: 1 }, len: 1 }
-Token { kind: LineFeed, len: 1 }
-Token { kind: Whitespace, len: 12 }
-Token { kind: Ident, len: 6 }
-Token { kind: LineFeed, len: 1 }
-Token { kind: Whitespace, len: 8 }
-Token { kind: Ident, len: 4 }
-Token { kind: LineFeed, len: 1 }
-Token { kind: Whitespace, len: 12 }
-Token { kind: Ident, len: 1 }
-Token { kind: Whitespace, len: 1 }
-Token { kind: Plus, len: 1 }
-Token { kind: Eq, len: 1 }
-Token { kind: Whitespace, len: 1 }
-Token { kind: Literal { kind: Int { base: Decimal, empty_int: false }, suffix_start: 1 }, len: 1 }
-Token { kind: LineFeed, len: 1 }
-Token { kind: Whitespace, len: 8 }
-Token { kind: Ident, len: 5 }
-Token { kind: LineFeed, len: 1 }
-Token { kind: Whitespace, len: 4 }
-Token { kind: Ident, len: 8 }
-Token { kind: LineFeed, len: 1 }
-Token { kind: Ident, len: 11 }
-Token { kind: LineFeed, len: 1 }
-Token { kind: LineFeed, len: 1 }
-Token { kind: Ident, len: 5 }
-Token { kind: Whitespace, len: 1 }
-Token { kind: Ident, len: 6 }
-Token { kind: OpenParen, len: 1 }
-Token { kind: CloseParen, len: 1 }
-Token { kind: LineFeed, len: 1 }
-Token { kind: Whitespace, len: 4 }
-Token { kind: Ident, len: 3 }
-Token { kind: OpenParen, len: 1 }
-Token { kind: Literal { kind: Int { base: Decimal, empty_int: false }, suffix_start: 1 }, len: 1 }
-Token { kind: Comma, len: 1 }
-Token { kind: Whitespace, len: 1 }
-Token { kind: Literal { kind: Float { base: Decimal, empty_exponent: false }, suffix_start: 3 }, len: 3 }
-Token { kind: CloseParen, len: 1 }
-Token { kind: LineFeed, len: 1 }
-Token { kind: Ident, len: 8 }
-Token { kind: LineFeed, len: 1 }
-"#]],
+            Ident "a"
+            Newline "\n"
+            Ident "b"
+            Newline "\r\n"
+            Newline "\r\n"
+            Ident "c"
+        "#]],
+    );
+}
+
+#[test]
+fn comments() {
+    check(
+        "; line\n;/ block\nstill block /;{ doc\n comment }",
+        expect![[r#"
+            LineComment "; line"
+            Newline "\n"
+            BlockComment ";/ block\nstill block /;"
+            DocComment "{ doc\n comment }"
+        "#]],
+    );
+}
+
+#[test]
+fn block_comment_is_not_nested() {
+    check(
+        ";/ a ;/ b /; c",
+        expect![[r#"
+            BlockComment ";/ a ;/ b /;"
+            Whitespace " "
+            Ident "c"
+        "#]],
+    );
+}
+
+#[test]
+fn line_comment_excludes_crlf() {
+    check(
+        "; c\r\n",
+        expect![[r#"
+            LineComment "; c"
+            Newline "\r\n"
+        "#]],
+    );
+}
+
+#[test]
+fn unterminated_comments() {
+    check(
+        ";/ open",
+        expect![[r#"
+            BlockComment ";/ open" error: unterminated block comment, expected `/;`
+        "#]],
+    );
+    check(
+        "{ open",
+        expect![[r#"
+            DocComment "{ open" error: unterminated documentation comment, expected `}`
+        "#]],
+    );
+}
+
+#[test]
+fn line_continuation() {
+    check(
+        "Foo(a, \\  \r\n  b)",
+        expect![[r#"
+            Ident "Foo"
+            LParen "("
+            Ident "a"
+            Comma ","
+            Whitespace " "
+            LineContinuation "\\  \r\n"
+            Whitespace "  "
+            Ident "b"
+            RParen ")"
+        "#]],
+    );
+    check(
+        "a \\ b",
+        expect![[r#"
+            Ident "a"
+            Whitespace " "
+            Unknown "\\" error: a line continuation `\` must be the last character on the line
+            Whitespace " "
+            Ident "b"
+        "#]],
+    );
+}
+
+#[test]
+fn numbers() {
+    check(
+        "0 42 0x1F 0xff 1.5 2.0e3 3.25E-2 1. 0x",
+        expect![[r#"
+            Int "0"
+            Whitespace " "
+            Int "42"
+            Whitespace " "
+            Int "0x1F"
+            Whitespace " "
+            Int "0xff"
+            Whitespace " "
+            Float "1.5"
+            Whitespace " "
+            Float "2.0e3"
+            Whitespace " "
+            Float "3.25E-2"
+            Whitespace " "
+            Int "1"
+            Dot "."
+            Whitespace " "
+            Int "0x" error: expected hexadecimal digits after `0x`
+        "#]],
+    );
+}
+
+#[test]
+fn strings() {
+    check(
+        r#""plain" "esc \" \\ \n" "open"#,
+        expect![[r#"
+            String "\"plain\""
+            Whitespace " "
+            String "\"esc \\\" \\\\ \\n\""
+            Whitespace " "
+            String "\"open" error: unterminated string literal
+        "#]],
+    );
+    check(
+        "\"open\nx",
+        expect![[r#"
+            String "\"open" error: unterminated string literal
+            Newline "\n"
+            Ident "x"
+        "#]],
+    );
+}
+
+#[test]
+fn unescape() {
+    assert_eq!(unescape_string(r#""abc""#), "abc");
+    assert_eq!(unescape_string(r#""a\"b\\c\nd\te""#), "a\"b\\c\nd\te");
+}
+
+#[test]
+fn operators() {
+    check(
+        "= == != < <= > >= + += - -= * *= / /= % %= ! && || & |",
+        expect![[r#"
+            Eq "="
+            Whitespace " "
+            EqEq "=="
+            Whitespace " "
+            NotEq "!="
+            Whitespace " "
+            Lt "<"
+            Whitespace " "
+            LtEq "<="
+            Whitespace " "
+            Gt ">"
+            Whitespace " "
+            GtEq ">="
+            Whitespace " "
+            Plus "+"
+            Whitespace " "
+            PlusEq "+="
+            Whitespace " "
+            Minus "-"
+            Whitespace " "
+            MinusEq "-="
+            Whitespace " "
+            Star "*"
+            Whitespace " "
+            StarEq "*="
+            Whitespace " "
+            Slash "/"
+            Whitespace " "
+            SlashEq "/="
+            Whitespace " "
+            Percent "%"
+            Whitespace " "
+            PercentEq "%="
+            Whitespace " "
+            Bang "!"
+            Whitespace " "
+            AmpAmp "&&"
+            Whitespace " "
+            PipePipe "||"
+            Whitespace " "
+            Unknown "&" error: unknown character
+            Whitespace " "
+            Unknown "|" error: unknown character
+        "#]],
+    );
+}
+
+#[test]
+fn unicode_and_bom() {
+    check(
+        "\u{FEFF}a\u{3000}b №",
+        expect![[r#"
+            Whitespace "\u{feff}"
+            Ident "a"
+            Whitespace "\u{3000}"
+            Ident "b"
+            Whitespace " "
+            Unknown "№" error: unknown character
+        "#]],
     );
 }

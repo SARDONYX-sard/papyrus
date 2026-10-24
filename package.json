@@ -1,20 +1,106 @@
 {
   "name": "papyrus-lsp",
+  "displayName": "Papyrus Language Server",
+  "description": "Language support for Skyrim's Papyrus scripting language: diagnostics, completion, hover, go to definition, references and more.",
   "version": "0.0.1",
+  "publisher": "SARDONYX",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SARDONYX-sard/papyrus"
+  },
   "engines": {
     "vscode": "^1.80.0"
   },
+  "categories": [
+    "Programming Languages"
+  ],
   "activationEvents": [
-    "onLanguage:papyrus"
+    "workspaceContains:**/*.psc"
   ],
   "main": "dist/extension.js",
   "contributes": {
     "languages": [
       {
         "id": "papyrus",
+        "aliases": [
+          "Papyrus",
+          "papyrus"
+        ],
         "extensions": [
           ".psc"
-        ]
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "papyrus",
+        "scopeName": "source.papyrus",
+        "path": "./syntaxes/papyrus.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "papyrus.restartServer",
+        "title": "Restart Language Server",
+        "category": "Papyrus"
+      },
+      {
+        "command": "papyrus.showStatus",
+        "title": "Show Language Server Status",
+        "category": "Papyrus"
+      },
+      {
+        "command": "papyrus.showSyntaxTree",
+        "title": "Show Syntax Tree",
+        "category": "Papyrus"
+      }
+    ],
+    "configuration": {
+      "title": "Papyrus",
+      "properties": {
+        "papyrus.server.path": {
+          "type": "string",
+          "default": "",
+          "description": "Path of the `papyrus_lsp` executable. Empty uses the bundled server."
+        },
+        "papyrus.importDirectories": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "Directories with script sources used for name resolution, e.g. the game's `Data/Source/Scripts` and the sources of required mods. Earlier entries win when several declare the same script. Supports `~` and `${workspaceFolder}`. Changing this setting re-indexes the workspace."
+        },
+        "papyrus.semanticDiagnostics": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Report unknown types, members and names. Only active once the base game scripts (`Form.psc`, ...) are found in the workspace or in `#papyrus.importDirectories#`."
+        },
+        "papyrus.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Traces the communication between VS Code and the language server."
+        }
+      }
+    },
+    "semanticTokenScopes": [
+      {
+        "language": "papyrus",
+        "scopes": {
+          "event": [
+            "entity.name.function.event.papyrus"
+          ],
+          "decorator": [
+            "storage.modifier.papyrus"
+          ]
+        }
       }
     ]
   },

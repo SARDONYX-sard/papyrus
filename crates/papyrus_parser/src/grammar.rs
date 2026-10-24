@@ -1,162 +1,156 @@
-//! This is the actual "grammar" of the Papyrus language.
+//! The Papyrus grammar.
 //!
-//! Each function in this module and its children corresponds
-//! to a production of the formal grammar. Submodules roughly
-//! correspond to different *areas* of the grammar. By convention,
-//! each submodule starts with `use super::*` import and exports
-//! "public" productions via `pub(super)`.
+//! Each function corresponds to a production. Papyrus is line oriented: every
+//! declaration header and every statement ends at a [`NEWLINE`] (or at the end of
+//! input). This is what removes the ambiguity between trailing flags and the first
+//! statement of a function body:
 //!
-//! See docs for [`Parser`] to learn about API,
-//! available to the grammar, and see docs for [`Event`](super::event::Event)
-//! to learn how this actually manages to produce parse trees.
-//!
-//! Code in this module also contains inline tests, which start with
-//! `// test name-of-the-test` comment and look like this:
-//!
-//! ```text
-//! // test function_with_zero_parameters
-//! // fn foo() {}
+//! ```papyrus
+//! Function Foo() Global  ; `Global` is a flag: same line as the signature
+//!     Hidden()           ; `Hidden` is a call: it starts a new line
+//! EndFunction
 //! ```
 //!
-//! After adding a new inline-test, run `cargo test -p xtask` to
-//! extract it as a standalone text-fixture into
-//! `crates/syntax/test_data/parser/`, and run `cargo test` once to
-//! create the "gold" value.
+//! Newline tokens between declarations and statements are children of the
+//! enclosing list node (`SOURCE_FILE`, `STATE`, `PROPERTY` or `BLOCK`), never of
+//! the declaration or statement itself, so that node ranges stay tight.
 //!
-//! Coding convention: rules like `where_clause` always produce either a
-//! node or an error, rules like `opt_where_clause` may produce nothing.
-//! Non-opt rules typically start with `assert!(p.at(FIRST_TOKEN))`, the
-//! caller is responsible for branching on the first token.
+//! Error recovery is line based: whenever a production cannot make sense of a
+//! line, the rest of the line is wrapped in an `ERROR` node and parsing resumes on
+//! the next line.
 
-pub(crate) mod expressions;
-mod flags;
-mod header;
-pub(crate) mod items;
-mod params;
-pub(crate) mod statements;
-pub(crate) mod types;
+mod expressions;
+mod items;
+mod statements;
 
-use crate::{
-    SyntaxKind::{self, *},
-    T, TokenSet,
-    parser::{CompletedMarker, Marker, Parser},
-};
+use crate::{SyntaxKind::*, parser::Parser};
 
-pub(crate) fn source_file(p: &mut Parser<'_>) {
-    let m = p.start();
+pub(crate) use items::source_file;
 
-    header::header(p);
-
-    while !p.at(EOF) {
-        items::item(p);
+/// Consumes the end of a line. Anything left before the newline is reported and
+/// wrapped in an `ERROR` node.
+fn eol(p: &mut Parser<'_>) {
+    if p.at_eol() {
+        return;
     }
-
-    m.complete(p, SOURCE_FILE);
+    p.error_expected("end of line");
+    skip_to_eol(p);
 }
 
-pub(crate) fn reparser(
-    node: SyntaxKind,
-    first_child: Option<SyntaxKind>,
-    parent: Option<SyntaxKind>,
-) -> Option<fn(&mut Parser<'_>)> {
-    let _ = first_child;
-    let _ = parent;
-
-    let res = match node {
-        BLOCK => statements::block,
-        ARG_LIST => self::params::arg_list,
-        _ => return None,
-    };
-
-    Some(res)
+/// Wraps everything up to the end of the line in an `ERROR` node, without
+/// reporting anything.
+fn skip_to_eol(p: &mut Parser<'_>) {
+    if p.at_eol() {
+        return;
+    }
+    let m = p.open();
+    while !p.at_eol() {
+        p.advance();
+    }
+    p.close(m, ERROR);
 }
 
-/// If a return type is defined, return true.
-fn opt_return_type(p: &mut Parser<'_>) -> bool {
-    if types::at_type(p) {
-        let m = p.start();
-        types::ty(p);
-        m.complete(p, RETURN_TYPE);
+/// `ident`, the name introduced by a declaration.
+fn name(p: &mut Parser<'_>) -> bool {
+    if p.at(IDENT) {
+        let m = p.open();
+        p.advance();
+        p.close(m, NAME);
         true
     } else {
+        p.error_expected("a name");
         false
     }
 }
 
-/// define ident + err recovery
-fn name_r(p: &mut Parser<'_>, recovery: TokenSet) {
-    if p.at(IDENT) {
-        let m = p.start();
-        p.bump(IDENT);
-        m.complete(p, NAME);
-    } else {
-        p.err_recover("expected a name", recovery);
+/// `ident | Self | Parent`, a reference to a declaration.
+fn name_ref(p: &mut Parser<'_>) {
+    debug_assert!(p.at_any(&[IDENT, SELF_KW, PARENT_KW]));
+    let m = p.open();
+    p.advance();
+    p.close(m, NAME_REF);
+}
+
+/// The number of tokens of the type starting `n` tokens ahead, if any:
+/// `Int` is 1 token long, `Int[]` is 3.
+fn type_len_at(p: &Parser<'_>, n: usize) -> Option<usize> {
+    let kind = p.nth(n);
+    if kind != IDENT && !kind.is_primitive_type() {
+        return None;
     }
+    if p.nth_at(n + 1, L_BRACK) && p.nth_at(n + 2, R_BRACK) { Some(3) } else { Some(1) }
 }
 
-/// Define identifier
-fn name(p: &mut Parser<'_>) {
-    name_r(p, TokenSet::EMPTY);
-}
-
-/// method access
-fn name_ref_or_self(p: &mut Parser<'_>) {
-    if matches!(p.current(), T![ident] | T![Self] | T![Parent]) {
-        let m = p.start();
-        p.bump_any();
-        m.complete(p, NAME_REF);
+/// `BaseType ('[' ']')?`
+fn ty(p: &mut Parser<'_>) {
+    let m = p.open();
+    if p.at(IDENT) || p.current().is_primitive_type() {
+        p.advance();
+        if p.at(L_BRACK) && p.nth_at(1, R_BRACK) {
+            p.advance();
+            p.advance();
+        }
     } else {
-        p.err_and_bump("expected identifier, `self` or `parent`");
+        p.error_expected("a type");
     }
+    p.close(m, TYPE);
 }
 
-/// `= <Expr>`
+/// A type without array suffix, used by `New Type[size]`.
+fn base_ty(p: &mut Parser<'_>) {
+    let m = p.open();
+    if p.at(IDENT) || p.current().is_primitive_type() {
+        p.advance();
+    } else {
+        p.error_expected("a type");
+    }
+    p.close(m, TYPE);
+}
+
+/// `'=' Expr`
 fn initializer(p: &mut Parser<'_>) {
-    let m = p.start();
-
-    p.expect(T![=]);
+    debug_assert!(p.at(EQ));
+    let m = p.open();
+    p.advance();
     expressions::expr(p);
-
-    m.complete(p, INITIALIZER);
+    p.close(m, INITIALIZER);
 }
 
-/// The `parser` passed this is required to at least consume one token if it returns `true`.
-/// If the `parser` returns false, parsing will stop.
-fn delimited(
-    p: &mut Parser<'_>,
-    bra: SyntaxKind,
-    ket: SyntaxKind,
-    delim: SyntaxKind,
-    unexpected_delim_message: impl Fn() -> String,
-    first_set: TokenSet,
-    mut parser: impl FnMut(&mut Parser<'_>) -> bool,
-) {
-    p.bump(bra);
-    while !p.at(ket) && !p.at(EOF) {
-        if p.at(delim) {
-            // Recover if an argument is missing and only got a delimiter,
-            // e.g. `(a, , b)`.
+/// Flags seen by [`flags`].
+#[derive(Default, Clone, Copy)]
+struct SeenFlags {
+    native: bool,
+    auto: bool,
+}
 
-            // Wrap the erroneous delimiter in an error node so that fixup logic gets rid of it.
-            // FIXME: Ideally this should be handled in fixup in a structured way, but our list
-            // nodes currently have no concept of a missing node between two delimiters.
-            // So doing it this way is easier.
-            let m = p.start();
-            p.error(unexpected_delim_message());
-            p.bump(delim);
-            m.complete(p, ERROR);
-            continue;
+/// `FLAG*`: trailing flags of a declaration header, up to the end of the line.
+fn flags(p: &mut Parser<'_>) -> SeenFlags {
+    let mut seen = SeenFlags::default();
+    loop {
+        match p.current() {
+            NATIVE_KW => seen.native = true,
+            AUTO_KW | AUTOREADONLY_KW => seen.auto = true,
+            IDENT | GLOBAL_KW => {}
+            _ => return seen,
         }
-        if !parser(p) {
-            break;
-        }
-        if !p.eat(delim) {
-            if p.at_ts(first_set) {
-                p.error(format!("expected {delim:?}"));
-            } else {
-                break;
-            }
-        }
+        let m = p.open();
+        p.advance();
+        p.close(m, FLAG);
     }
-    p.expect(ket);
+}
+
+/// Tokens that can only appear at the start of a declaration (or end a block),
+/// never in a statement. Blocks stop on them, which lets a missing `EndIf` or
+/// `EndFunction` be reported without swallowing the rest of the file.
+fn at_block_end(p: &Parser<'_>) -> bool {
+    match p.current() {
+        EOF | ELSE_KW | ELSEIF_KW | ENDIF_KW | ENDWHILE_KW | ENDFUNCTION_KW | ENDEVENT_KW
+        | ENDPROPERTY_KW | ENDSTATE_KW | FUNCTION_KW | EVENT_KW | STATE_KW | IMPORT_KW
+        | SCRIPTNAME_KW | PROPERTY_KW => true,
+        AUTO_KW => p.nth_at(1, STATE_KW),
+        _ => match type_len_at(p, 0) {
+            Some(n) => matches!(p.nth(n), FUNCTION_KW | PROPERTY_KW),
+            None => false,
+        },
+    }
 }

@@ -1,328 +1,211 @@
-//! See [`Parser`].
+//! The parser state machine, in the style of matklad's
+//! [resilient LL parsing tutorial](https://matklad.github.io/2023/05/21/resilient-ll-parsing-tutorial.html).
+//!
+//! The parser only sees significant tokens: trivia is filtered out beforehand
+//! and re-attached when the tree is built. Newlines are significant. Grammar
+//! functions emit a flat list of [`Event`]s, which [`crate::build_tree`] turns
+//! into a [`SyntaxTree`](crate::SyntaxTree).
 
-use std::{cell::Cell, num::NonZeroU32};
+use std::cell::Cell;
 
-use drop_bomb::DropBomb;
+use text_size::{TextRange, TextSize};
 
-use crate::{
-    SyntaxKind::{self, EOF, ERROR, TOMBSTONE},
-    T, TokenSet,
-    event::Event,
-    input::Input,
-};
+use crate::{SyntaxError, SyntaxKind};
 
-/// Build a forward-parent offset. The offset is always ≥ 1 because the
-/// forward-parent event is created *after* the event it forwards to, so
-/// `NonZeroU32` is always valid here. Panics only on a parser bug.
-#[inline]
-fn fwd_parent(offset: u32) -> NonZeroU32 {
-    NonZeroU32::new(offset).expect("forward-parent offset must be non-zero")
+/// A significant (non-trivia) token as seen by the parser.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Tok {
+    pub(crate) kind: SyntaxKind,
+    pub(crate) range: TextRange,
 }
 
-/// `Parser` struct provides the low-level API for
-/// navigating through the stream of tokens and
-/// constructing the parse tree. The actual parsing
-/// happens in the [`grammar`](super::grammar) module.
-///
-/// However, the result of this `Parser` is not a real
-/// tree, but rather a flat stream of events of the form
-/// "start expression, consume number literal,
-/// finish expression". See `Event` docs for more.
+#[derive(Debug)]
+pub(crate) enum Event {
+    Open { kind: SyntaxKind },
+    Close,
+    Advance,
+}
+
+/// A node that has been started but not closed yet.
+pub(crate) struct MarkOpened {
+    index: usize,
+}
+
+/// A node that has been closed, which can still be wrapped by a new parent with
+/// [`Parser::open_before`].
+#[derive(Clone, Copy)]
+pub(crate) struct MarkClosed {
+    index: usize,
+}
+
 pub(crate) struct Parser<'t> {
-    inp: &'t Input,
+    text: &'t str,
+    tokens: &'t [Tok],
     pos: usize,
-    events: Vec<Event>,
-    /// Side table of error messages. `Event::Error { err }` carries an index
-    /// into this vec, keeping `Event` itself a flat 8-byte enum.
-    errors: Vec<String>,
-    steps: Cell<u32>,
+    /// Guards against grammar bugs that would loop without consuming input.
+    fuel: Cell<u32>,
+    pub(crate) events: Vec<Event>,
+    pub(crate) errors: Vec<SyntaxError>,
+    eof_offset: TextSize,
 }
 
-const PARSER_STEP_LIMIT: usize = if cfg!(debug_assertions) { 150_000 } else { 15_000_000 };
+const FUEL: u32 = 256;
 
 impl<'t> Parser<'t> {
-    pub(super) fn new(inp: &'t Input) -> Parser<'t> {
+    pub(crate) fn new(text: &'t str, tokens: &'t [Tok]) -> Parser<'t> {
+        let text_len = TextSize::of(text);
         Parser {
-            inp,
+            text,
+            tokens,
             pos: 0,
-            events: Vec::with_capacity(2 * inp.len()),
+            fuel: Cell::new(FUEL),
+            events: Vec::with_capacity(tokens.len() * 2),
             errors: Vec::new(),
-            steps: Cell::new(0),
+            eof_offset: text_len,
         }
     }
 
-    pub(crate) fn finish(self) -> (Vec<Event>, Vec<String>) {
-        (self.events, self.errors)
+    // === Tree structure ===
+
+    pub(crate) fn open(&mut self) -> MarkOpened {
+        let mark = MarkOpened { index: self.events.len() };
+        self.events.push(Event::Open { kind: SyntaxKind::ERROR });
+        mark
     }
 
-    /// Returns the kind of the current token.
-    /// If parser has already reached the end of input,
-    /// the special `EOF` kind is returned.
+    /// Starts a node that will become the parent of the already closed `m`.
+    pub(crate) fn open_before(&mut self, m: MarkClosed) -> MarkOpened {
+        let mark = MarkOpened { index: m.index };
+        self.events.insert(m.index, Event::Open { kind: SyntaxKind::ERROR });
+        mark
+    }
+
+    pub(crate) fn close(&mut self, m: MarkOpened, kind: SyntaxKind) -> MarkClosed {
+        self.events[m.index] = Event::Open { kind };
+        self.events.push(Event::Close);
+        MarkClosed { index: m.index }
+    }
+
+    // === Lookahead ===
+
+    pub(crate) fn nth(&self, lookahead: usize) -> SyntaxKind {
+        let fuel = self.fuel.get();
+        assert!(fuel != 0, "parser is stuck at token {}", self.pos);
+        self.fuel.set(fuel - 1);
+        self.tokens.get(self.pos + lookahead).map_or(SyntaxKind::EOF, |t| t.kind)
+    }
+
     pub(crate) fn current(&self) -> SyntaxKind {
         self.nth(0)
     }
 
-    /// Lookahead operation: returns the kind of the next nth
-    /// token.
-    pub(crate) fn nth(&self, n: usize) -> SyntaxKind {
-        assert!(n <= 3);
-
-        let steps = self.steps.get();
-        assert!((steps as usize) < PARSER_STEP_LIMIT, "the parser seems stuck");
-        self.steps.set(steps + 1);
-
-        self.inp.kind(self.pos + n)
-    }
-
-    /// Checks if the current token is `kind`.
     pub(crate) fn at(&self, kind: SyntaxKind) -> bool {
-        self.nth_at(0, kind)
+        self.nth(0) == kind
     }
 
     pub(crate) fn nth_at(&self, n: usize, kind: SyntaxKind) -> bool {
-        match kind {
-            T![-=] => self.at_composite2(n, T![-], T![=]),
-            T![!=] => self.at_composite2(n, T![!], T![=]),
-            T![*=] => self.at_composite2(n, T![*], T![=]),
-            T![/=] => self.at_composite2(n, T![/], T![=]),
-            T![&&] => self.at_composite2(n, T![&], T![&]),
-            T![%=] => self.at_composite2(n, T![%], T![=]),
-            T![+=] => self.at_composite2(n, T![+], T![=]),
-            T![<<] => self.at_composite2(n, T![<], T![<]),
-            T![<=] => self.at_composite2(n, T![<], T![=]),
-            T![==] => self.at_composite2(n, T![=], T![=]),
-            T![>=] => self.at_composite2(n, T![>], T![=]),
-            T![>>] => self.at_composite2(n, T![>], T![>]),
-            T![||] => self.at_composite2(n, T![|], T![|]),
-
-            _ => self.inp.kind(self.pos + n) == kind,
-        }
+        self.nth(n) == kind
     }
 
-    /// Consume the next token if `kind` matches.
+    pub(crate) fn at_any(&self, kinds: &[SyntaxKind]) -> bool {
+        kinds.contains(&self.nth(0))
+    }
+
+    pub(crate) fn eof(&self) -> bool {
+        self.pos == self.tokens.len()
+    }
+
+    /// At a newline or at the end of the input.
+    pub(crate) fn at_eol(&self) -> bool {
+        matches!(self.nth(0), SyntaxKind::NEWLINE | SyntaxKind::EOF)
+    }
+
+    /// Token index, used to check that a grammar rule made progress.
+    pub(crate) fn position(&self) -> usize {
+        self.pos
+    }
+
+    // === Consuming ===
+
+    pub(crate) fn advance(&mut self) {
+        assert!(!self.eof(), "advance past the end of input");
+        self.fuel.set(FUEL);
+        self.events.push(Event::Advance);
+        self.pos += 1;
+    }
+
     pub(crate) fn eat(&mut self, kind: SyntaxKind) -> bool {
-        if !self.at(kind) {
-            return false;
+        if self.at(kind) {
+            self.advance();
+            true
+        } else {
+            false
         }
-        let n_raw_tokens = match kind {
-            T![-=]
-            | T![!=]
-            | T![*=]
-            | T![/=]
-            | T![&&]
-            | T![%=]
-            | T![+=]
-            | T![<<]
-            | T![<=]
-            | T![==]
-            | T![>=]
-            | T![>>]
-            | T![||] => 2,
-
-            _ => 1,
-        };
-        self.do_bump(kind, n_raw_tokens);
-        true
     }
 
-    fn at_composite2(&self, n: usize, k1: SyntaxKind, k2: SyntaxKind) -> bool {
-        self.inp.kind(self.pos + n) == k1
-            && self.inp.kind(self.pos + n + 1) == k2
-            && self.inp.is_joint(self.pos + n)
-    }
-
-    /// Checks if the current token is in `kinds`.
-    pub(crate) fn at_ts(&self, kinds: TokenSet) -> bool {
-        kinds.contains(self.current())
-    }
-
-    /// Starts a new node in the syntax tree. All nodes and tokens
-    /// consumed between the `start` and the corresponding `Marker::complete`
-    /// belong to the same node.
-    pub(crate) fn start(&mut self) -> Marker {
-        let pos = self.events.len() as u32;
-        self.push_event(Event::tombstone());
-        Marker::new(pos)
-    }
-
-    /// Consume the next token. Panics if the parser isn't currently at `kind`.
-    pub(crate) fn bump(&mut self, kind: SyntaxKind) {
-        assert!(self.eat(kind));
-    }
-
-    /// Advances the parser by one token
-    pub(crate) fn bump_any(&mut self) {
-        let kind = self.nth(0);
-        if kind == EOF {
-            return;
-        }
-        self.do_bump(kind, 1);
-    }
-
-    /// Emit error with the `message`
-    /// FIXME: this should be much more fancy and support
-    /// structured errors with spans and notes, like rustc
-    /// does.
-    pub(crate) fn error<T: Into<String>>(&mut self, message: T) {
-        let err = self.errors.len() as u32;
-        self.errors.push(message.into());
-        self.push_event(Event::Error { err });
-    }
-
-    /// Consume the next token if it is `kind` or emit an error
-    /// otherwise.
+    /// Consumes `kind` or reports that it is missing.
     pub(crate) fn expect(&mut self, kind: SyntaxKind) -> bool {
         if self.eat(kind) {
             return true;
         }
-        self.error(format!("expected {kind:?}"));
+        self.error_expected(kind.describe());
         false
     }
 
-    /// Create an error node and consume the next token.
-    pub(crate) fn err_and_bump(&mut self, message: &str) {
-        let m = self.start();
-        self.error(message);
-        self.bump_any();
-        m.complete(self, ERROR);
+    /// Wraps the current token in an `ERROR` node and reports `message` on it.
+    pub(crate) fn advance_with_error(&mut self, message: impl Into<String>) {
+        let m = self.open();
+        self.error_at_current(message);
+        self.advance();
+        self.close(m, SyntaxKind::ERROR);
     }
 
-    /// Create an error node and consume the next token unless it is in the recovery set.
-    ///
-    /// Returns true if recovery kicked in.
-    pub(crate) fn err_recover(&mut self, message: &str, recovery: TokenSet) -> bool {
-        if matches!(self.current(), SyntaxKind::NEWLINE) {
-            self.error(message);
-            return true;
+    // === Errors ===
+
+    /// Reports that `what` was expected, pointing just after the last consumed
+    /// token (or at the current token when nothing was consumed yet).
+    pub(crate) fn error_expected(&mut self, what: &str) {
+        let found = self.current();
+        let message = if found == SyntaxKind::EOF || found == SyntaxKind::NEWLINE {
+            format!("expected {what}")
+        } else {
+            format!("expected {what}, found {}", self.current_text_desc())
+        };
+        let range = match self.pos.checked_sub(1).and_then(|i| self.tokens.get(i)) {
+            Some(prev) if prev.kind != SyntaxKind::NEWLINE => TextRange::empty(prev.range.end()),
+            _ => self.current_range(),
+        };
+        self.push_error(range, message);
+    }
+
+    /// Reports `message` on the current token.
+    pub(crate) fn error_at_current(&mut self, message: impl Into<String>) {
+        let range = self.current_range();
+        self.push_error(range, message.into());
+    }
+
+    fn push_error(&mut self, range: TextRange, message: String) {
+        // Avoid cascades of errors at the same spot.
+        if self.errors.last().is_some_and(|e| e.range == range) {
+            return;
         }
+        self.errors.push(SyntaxError::new(message, range));
+    }
 
-        if self.at_ts(recovery) {
-            self.error(message);
-            return true;
+    fn current_range(&self) -> TextRange {
+        self.tokens.get(self.pos).map_or(TextRange::empty(self.eof_offset), |t| t.range)
+    }
+
+    fn current_text_desc(&self) -> String {
+        let Some(tok) = self.tokens.get(self.pos) else {
+            return "end of file".to_owned();
+        };
+        let text = &self.text[tok.range];
+        if text.len() > 32 {
+            let cut = (0..=32).rev().find(|&i| text.is_char_boundary(i)).unwrap_or(0);
+            format!("`{}...`", &text[..cut])
+        } else {
+            format!("`{text}`")
         }
-
-        let m = self.start();
-        self.error(message);
-        self.bump_any();
-        m.complete(self, ERROR);
-        false
-    }
-
-    fn do_bump(&mut self, kind: SyntaxKind, n_raw_tokens: u8) {
-        self.pos += n_raw_tokens as usize;
-        self.steps.set(0);
-        self.push_event(Event::Token { kind, n_raw_tokens });
-    }
-
-    fn push_event(&mut self, event: Event) {
-        self.events.push(event);
-    }
-}
-
-/// See [`Parser::start`].
-pub(crate) struct Marker {
-    pos: u32,
-    bomb: DropBomb,
-}
-
-impl Marker {
-    fn new(pos: u32) -> Marker {
-        Marker { pos, bomb: DropBomb::new("Marker must be either completed or abandoned") }
-    }
-
-    /// Finishes the syntax tree node and assigns `kind` to it,
-    /// and mark the create a `CompletedMarker` for possible future
-    /// operation like `.precede()` to deal with forward_parent.
-    pub(crate) fn complete(mut self, p: &mut Parser<'_>, kind: SyntaxKind) -> CompletedMarker {
-        self.bomb.defuse();
-        let idx = self.pos as usize;
-        match &mut p.events[idx] {
-            Event::Start { kind: slot, .. } => {
-                *slot = kind;
-            }
-            _ => unreachable!(),
-        }
-        p.push_event(Event::Finish);
-        let end_pos = p.events.len() as u32;
-        CompletedMarker::new(self.pos, end_pos, kind)
-    }
-
-    /// Abandons the syntax tree node. All its children
-    /// are attached to its parent instead.
-    pub(crate) fn abandon(mut self, p: &mut Parser<'_>) {
-        self.bomb.defuse();
-        let idx = self.pos as usize;
-        if idx == p.events.len() - 1 {
-            assert!(matches!(
-                p.events.pop(),
-                Some(Event::Start { kind: TOMBSTONE, forward_parent: None })
-            ));
-        }
-    }
-}
-
-pub(crate) struct CompletedMarker {
-    start_pos: u32,
-    end_pos: u32,
-    kind: SyntaxKind,
-}
-
-impl CompletedMarker {
-    fn new(start_pos: u32, end_pos: u32, kind: SyntaxKind) -> Self {
-        CompletedMarker { start_pos, end_pos, kind }
-    }
-
-    /// This method allows to create a new node which starts
-    /// *before* the current one. That is, parser could start
-    /// node `A`, then complete it, and then after parsing the
-    /// whole `A`, decide that it should have started some node
-    /// `B` before starting `A`. `precede` allows to do exactly
-    /// that. See also docs about
-    /// [`Event::Start::forward_parent`](crate::event::Event::Start::forward_parent).
-    ///
-    /// Given completed events `[START, FINISH]` and its corresponding
-    /// `CompletedMarker(pos: 0, _)`.
-    /// Append a new `START` events as `[START, FINISH, NEWSTART]`,
-    /// then mark `NEWSTART` as `START`'s parent with saving its relative
-    /// distance to `NEWSTART` into forward_parent(=2 in this case);
-    pub(crate) fn precede(self, p: &mut Parser<'_>) -> Marker {
-        let new_pos = p.start();
-        let idx = self.start_pos as usize;
-        match &mut p.events[idx] {
-            Event::Start { forward_parent, .. } => {
-                *forward_parent = Some(fwd_parent(new_pos.pos - self.start_pos));
-            }
-            _ => unreachable!(),
-        }
-        new_pos
-    }
-
-    /// Extends this completed marker *to the left* up to `m`.
-    #[expect(unused)]
-    pub(crate) fn extend_to(self, p: &mut Parser<'_>, mut m: Marker) -> CompletedMarker {
-        m.bomb.defuse();
-        let idx = m.pos as usize;
-        match &mut p.events[idx] {
-            Event::Start { forward_parent, .. } => {
-                *forward_parent = Some(fwd_parent(self.start_pos - m.pos));
-            }
-            _ => unreachable!(),
-        }
-        self
-    }
-
-    #[expect(unused)]
-    pub(crate) fn kind(&self) -> SyntaxKind {
-        self.kind
-    }
-
-    #[expect(unused)]
-    pub(crate) fn last_token(&self, p: &Parser<'_>) -> Option<SyntaxKind> {
-        let end_pos = self.end_pos as usize;
-        debug_assert_eq!(p.events[end_pos - 1], Event::Finish);
-        p.events[..end_pos].iter().rev().find_map(|event| match event {
-            Event::Token { kind, .. } => Some(*kind),
-            _ => None,
-        })
     }
 }

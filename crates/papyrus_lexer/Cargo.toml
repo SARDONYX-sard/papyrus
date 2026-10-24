@@ -1,18 +1,20 @@
 [package]
 name = "papyrus_lexer"
 version = "0.0.0"
+description = "Zero-copy lexer for the Papyrus scripting language."
+authors.workspace = true
 edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
 
-[dependencies.memchr]
-version = "2.7.6"
+[lib]
+doctest = false
 
-[dependencies.unicode-ident]
-version = "1.0.22"
+[dependencies]
+memchr = "2.7.6"
 
-[dependencies.unicode-properties]
-version = "0.1.4"
-features = ["emoji"]
-default-features = false
+[dev-dependencies]
+expect-test.workspace = true
 
-[dev-dependencies.expect-test]
-version = "1.4.0"
+[lints]
+workspace = true

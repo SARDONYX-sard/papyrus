@@ -1,9 +1,8 @@
 [package]
 name = "papyrus_parser"
 version = "0.0.0"
+description = "Resilient parser and lossless syntax tree for the Papyrus scripting language."
 repository.workspace = true
-description = "The Rust parser for rust-analyzer."
-
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -13,20 +12,11 @@ rust-version.workspace = true
 doctest = false
 
 [dependencies]
-drop_bomb = "0.1.5"
-rustc-literal-escaper.workspace = true
-tracing.workspace = true
-
 papyrus_lexer.workspace = true
+text-size.workspace = true
 
 [dev-dependencies]
-expect-test = "1.5.1"
-
-stdx.workspace = true
-
-[features]
-default = []
-in-rust-tree = []
+expect-test.workspace = true
 
 [lints]
 workspace = true

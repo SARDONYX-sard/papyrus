@@ -1,135 +1,149 @@
-//! Parsing of statements and blocks.
+//! Statements inside function and event bodies.
+//!
+//! ```text
+//! Block      = (Stmt | NEWLINE)*
+//! Stmt       = VarDecl | AssignStmt | ExprStmt | ReturnStmt | IfStmt | WhileStmt
+//! AssignStmt = Expr ('=' | '+=' | '-=' | '*=' | '/=' | '%=') Expr
+//! ReturnStmt = 'Return' Expr?
+//! IfStmt     = 'If' Expr Block ElseIfClause* ElseClause? 'EndIf'
+//! ElseIfClause = 'ElseIf' Expr Block
+//! ElseClause = 'Else' Block
+//! WhileStmt  = 'While' Expr Block 'EndWhile'
+//! ```
 
-use super::*;
+use super::{expressions, *};
 
-pub(crate) fn block(p: &mut Parser<'_>) {
-    let m = p.start();
-
-    while !at_block_end(p) && !p.at(EOF) {
+/// Parses statements until a block terminator (see [`at_block_end`]).
+pub(super) fn block(p: &mut Parser<'_>) {
+    let m = p.open();
+    loop {
+        if p.eat(NEWLINE) {
+            continue;
+        }
+        if at_block_end(p) {
+            break;
+        }
         stmt(p);
     }
-
-    m.complete(p, BLOCK);
+    p.close(m, BLOCK);
 }
 
-fn at_block_end(p: &Parser<'_>) -> bool {
-    matches!(
-        p.current(),
-        T![EndIf]
-            | T![Else]
-            | T![ElseIf]
-            | T![EndWhile]
-            | T![EndFunction]
-            | T![EndEvent]
-            | T![EndProperty]
-            | T![EndState]
-    )
-}
-
-pub(crate) fn stmt(p: &mut Parser<'_>) {
-    let m = p.start();
-
+fn stmt(p: &mut Parser<'_>) {
     match p.current() {
-        T![If] => if_stmt(p, m),
-        T![While] => while_stmt(p, m),
-        T![Return] => return_stmt(p, m),
-
-        _ if at_var_decl(p) => var_decl_stmt(p, m),
-
-        _ => expr_stmt(p, m),
+        IF_KW => if_stmt(p),
+        WHILE_KW => while_stmt(p),
+        RETURN_KW => return_stmt(p),
+        _ if at_local_var_decl(p) => local_var_decl(p),
+        _ => expr_or_assign_stmt(p),
     }
 }
 
-fn at_var_decl(p: &Parser<'_>) -> bool {
-    if !types::at_type(p) {
-        return false;
+/// `Type name`, `Type[] name`, or a primitive type keyword, which cannot start
+/// an expression.
+fn at_local_var_decl(p: &Parser<'_>) -> bool {
+    if p.current().is_primitive_type() {
+        return true;
     }
-
-    p.nth_at(1, IDENT)
+    type_len_at(p, 0).is_some_and(|n| p.nth_at(n, IDENT))
 }
 
-pub(super) fn var_decl_stmt(p: &mut Parser<'_>, m: Marker) {
-    types::ty(p);
-
+fn local_var_decl(p: &mut Parser<'_>) {
+    let m = p.open();
+    ty(p);
     name(p);
-
-    if p.at(T![=]) {
+    if p.at(EQ) {
         initializer(p);
     }
-
-    m.complete(p, VAR_DECL_STMT);
+    eol(p);
+    p.close(m, VAR_DECL);
 }
 
-fn expr_stmt(p: &mut Parser<'_>, m: Marker) {
-    expressions::expr(p);
-
-    m.complete(p, EXPR_STMT);
+fn expr_or_assign_stmt(p: &mut Parser<'_>) {
+    let m = p.open();
+    let start = p.position();
+    if expressions::expr(p).is_none() {
+        // The expression parser already reported the problem; make progress.
+        if p.position() == start && !p.at_eol() {
+            p.advance();
+        }
+        skip_to_eol(p);
+        p.close(m, ERROR);
+        return;
+    }
+    let kind = if p.current().is_assign_op() {
+        p.advance();
+        expressions::expr(p);
+        ASSIGN_STMT
+    } else {
+        EXPR_STMT
+    };
+    eol(p);
+    p.close(m, kind);
 }
 
-fn return_stmt(p: &mut Parser<'_>, m: Marker) {
-    p.bump(T![Return]);
-
-    if expressions::is_expr_start(p) {
+fn return_stmt(p: &mut Parser<'_>) {
+    let m = p.open();
+    p.advance();
+    if !p.at_eol() {
         expressions::expr(p);
     }
-
-    m.complete(p, RETURN_STMT);
+    eol(p);
+    p.close(m, RETURN_STMT);
 }
 
-fn if_stmt(p: &mut Parser<'_>, m: Marker) {
-    assert!(p.at(T![If]));
-    p.bump(T![If]);
-
-    expressions::expr(p);
-
+fn if_stmt(p: &mut Parser<'_>) {
+    let m = p.open();
+    p.advance();
+    condition(p);
     block(p);
-
-    while p.at(T![ElseIf]) {
-        elseif_branch(p);
+    while p.at(ELSEIF_KW) {
+        let clause = p.open();
+        p.advance();
+        condition(p);
+        block(p);
+        p.close(clause, ELSE_IF_CLAUSE);
     }
-
-    if p.at(T![Else]) {
-        else_branch(p);
+    if p.at(ELSE_KW) {
+        let clause = p.open();
+        p.advance();
+        eol(p);
+        block(p);
+        p.close(clause, ELSE_CLAUSE);
     }
-
-    p.expect(T![EndIf]);
-
-    m.complete(p, IF_STMT);
+    if p.eat(ENDIF_KW) {
+        eol(p);
+    } else {
+        p.error_expected("`EndIf`");
+    }
+    p.close(m, IF_STMT);
 }
 
-fn elseif_branch(p: &mut Parser<'_>) {
-    assert!(p.at(T![ElseIf]));
-    let m = p.start();
-
-    p.bump(T![ElseIf]);
-
-    expressions::expr(p);
-
+fn while_stmt(p: &mut Parser<'_>) {
+    let m = p.open();
+    p.advance();
+    condition(p);
     block(p);
-
-    m.complete(p, ELSE_IF_BRANCH);
+    if p.eat(ENDWHILE_KW) {
+        eol(p);
+    } else {
+        p.error_expected("`EndWhile`");
+    }
+    p.close(m, WHILE_STMT);
 }
 
-fn else_branch(p: &mut Parser<'_>) {
-    assert!(p.at(T![Else]));
-    let m = p.start();
-
-    p.bump(T![Else]);
-
-    block(p);
-
-    m.complete(p, ELSE_BRANCH);
-}
-
-fn while_stmt(p: &mut Parser<'_>, m: Marker) {
-    assert!(p.at(T![While]));
-    p.bump(T![While]);
-
-    expressions::expr(p);
-
-    block(p);
-
-    p.expect(T![EndWhile]);
-
-    m.complete(p, WHILE_STMT);
+fn condition(p: &mut Parser<'_>) {
+    if p.at_eol() {
+        p.error_expected("a condition");
+        return;
+    }
+    if expressions::expr(p).is_none() {
+        skip_to_eol(p);
+        return;
+    }
+    if p.at(EQ) {
+        p.error_at_current("`=` is an assignment, use `==` to compare");
+        skip_to_eol(p);
+        return;
+    }
+    eol(p);
 }

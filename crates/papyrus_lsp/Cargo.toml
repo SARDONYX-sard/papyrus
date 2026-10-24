@@ -1,22 +1,29 @@
 [package]
 name = "papyrus_lsp"
 version = "0.1.0"
+description = "Language server for the Papyrus scripting language."
+authors.workspace = true
 edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
 
 [[bin]]
 name = "papyrus_lsp"
 path = "src/main.rs"
 
 [dependencies]
-# papyrus_cst = { path = "../papyrus_cst" }
-# papyrus_fmt = { path = "../papyrus_fmt" }
+papyrus_ide.workspace = true
+papyrus_parser.workspace = true
 
-anyhow = "1.0.103"
+anyhow.workspace = true
+crossbeam-channel.workspace = true
 lsp-server = "0.8.0"
 lsp-types = "0.97"
-
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-
 log = "0.4"
+rustc-hash.workspace = true
 env_logger = "0.11"
+serde = { version = "1", features = ["derive"] }
+serde_json.workspace = true
+
+[lints]
+workspace = true

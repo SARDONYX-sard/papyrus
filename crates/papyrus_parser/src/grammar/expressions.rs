@@ -1,559 +1,179 @@
-//! Pratt parser for expressions.
+//! Expressions, parsed with precedence climbing.
 //!
-//! This module intentionally follows the structure of rust-analyzer's
-//! `grammar/expressions.rs`.
-
-mod atom;
-
-use crate::grammar::params::arg_list;
+//! From loosest to tightest binding:
+//!
+//! | Operators                      | Associativity |
+//! |--------------------------------|---------------|
+//! | `\|\|`                         | left          |
+//! | `&&`                           | left          |
+//! | `==` `!=` `<` `<=` `>` `>=`    | left          |
+//! | `+` `-`                        | left          |
+//! | `*` `/` `%`                    | left          |
+//! | unary `-` `!`                  | prefix        |
+//! | `As`                           | postfix       |
+//! | `.` `()` `[]`                  | postfix       |
 
 use super::*;
+use crate::{SyntaxKind, parser::MarkClosed};
 
-const PREFIX_BP: u8 = 255;
-
-pub(crate) fn expr(p: &mut Parser<'_>) {
-    expr_bp(p, 1);
+/// Parses an expression. Returns `None` (after reporting an error) when no
+/// expression starts at the current token.
+pub(super) fn expr(p: &mut Parser<'_>) -> Option<MarkClosed> {
+    expr_bp(p, 0)
 }
 
-pub(super) const EXPR_FIRST: TokenSet = atom::ATOM_FIRST.union(TokenSet::new(&[T![-], T![!]]));
-
-pub(super) fn is_expr_start(p: &Parser<'_>) -> bool {
-    atom::ATOM_FIRST.contains(p.current()) || matches!(p.current(), T![-] | T![!])
+fn infix_binding_power(kind: SyntaxKind) -> u8 {
+    match kind {
+        PIPE2 => 1,
+        AMP2 => 2,
+        EQ2 | NEQ | LT | LTEQ | GT | GTEQ => 3,
+        PLUS | MINUS => 4,
+        STAR | SLASH | PERCENT => 5,
+        _ => 0,
+    }
 }
 
-fn expr_bp(p: &mut Parser<'_>, min_bp: u8) -> Option<CompletedMarker> {
-    let mut lhs = lhs(p)?;
-
-    lhs = postfix_expr(p, lhs);
-
-    while let Some((l_bp, r_bp, op, kind)) = current_op(p) {
-        if l_bp < min_bp {
+fn expr_bp(p: &mut Parser<'_>, min_bp: u8) -> Option<MarkClosed> {
+    let mut lhs = prefix_expr(p)?;
+    loop {
+        let bp = infix_binding_power(p.current());
+        if bp == 0 || bp <= min_bp {
             break;
         }
-
-        let m = lhs.precede(p);
-        p.bump(op);
-
-        let _rhs = expr_bp(p, r_bp);
-
-        lhs = m.complete(p, kind);
+        let m = p.open_before(lhs);
+        p.advance();
+        if p.at_eol() {
+            p.error_expected("an expression after the operator");
+        } else {
+            expr_bp(p, bp);
+        }
+        lhs = p.close(m, BIN_EXPR);
     }
-
     Some(lhs)
 }
 
-fn lhs(p: &mut Parser<'_>) -> Option<CompletedMarker> {
-    if matches!(p.current(), T![-] | T![!]) {
-        let m = p.start();
-
-        p.bump_any();
-
-        expr_bp(p, PREFIX_BP);
-
-        return Some(m.complete(p, PREFIX_EXPR));
+fn prefix_expr(p: &mut Parser<'_>) -> Option<MarkClosed> {
+    if p.at(MINUS) || p.at(BANG) {
+        let m = p.open();
+        p.advance();
+        prefix_expr(p);
+        return Some(p.close(m, PREFIX_EXPR));
     }
-
-    atom::atom_expr(p)
+    cast_expr(p)
 }
 
-fn postfix_expr(p: &mut Parser<'_>, mut lhs: CompletedMarker) -> CompletedMarker {
+fn cast_expr(p: &mut Parser<'_>) -> Option<MarkClosed> {
+    let mut lhs = postfix_expr(p)?;
+    while p.at(AS_KW) {
+        let m = p.open_before(lhs);
+        p.advance();
+        ty(p);
+        lhs = p.close(m, CAST_EXPR);
+    }
+    Some(lhs)
+}
+
+fn postfix_expr(p: &mut Parser<'_>) -> Option<MarkClosed> {
+    let mut lhs = atom(p)?;
     loop {
-        lhs = match p.current() {
-            T!['('] => call_expr(p, lhs),
-            T!['['] => index_expr(p, lhs),
-            T![.] => field_expr(p, lhs),
-            T![As] => cast_expr(p, lhs),
-
-            _ => break,
-        };
+        match p.current() {
+            DOT => {
+                let m = p.open_before(lhs);
+                p.advance();
+                if p.at(IDENT) {
+                    name_ref(p);
+                } else {
+                    p.error_expected("a member name");
+                }
+                lhs = p.close(m, FIELD_EXPR);
+            }
+            L_PAREN => {
+                let m = p.open_before(lhs);
+                arg_list(p);
+                lhs = p.close(m, CALL_EXPR);
+            }
+            L_BRACK => {
+                let m = p.open_before(lhs);
+                p.advance();
+                expr(p);
+                p.expect(R_BRACK);
+                lhs = p.close(m, INDEX_EXPR);
+            }
+            _ => return Some(lhs),
+        }
     }
-
-    lhs
 }
 
-// test call_expr
-// function foo()
-//     _ = f()
-//     _ = f()(1)(1, 2,)
-// endFunction
-fn call_expr(p: &mut Parser<'_>, lhs: CompletedMarker) -> CompletedMarker {
-    assert!(p.at(T!['(']));
-    let m = lhs.precede(p);
-    arg_list(p);
-    m.complete(p, CALL_EXPR)
+fn atom(p: &mut Parser<'_>) -> Option<MarkClosed> {
+    let m = p.open();
+    let kind = match p.current() {
+        INT_NUMBER | FLOAT_NUMBER | STRING | TRUE_KW | FALSE_KW | NONE_KW => {
+            p.advance();
+            LITERAL
+        }
+        IDENT | SELF_KW | PARENT_KW => {
+            p.advance();
+            NAME_REF
+        }
+        L_PAREN => {
+            p.advance();
+            expr(p);
+            p.expect(R_PAREN);
+            PAREN_EXPR
+        }
+        NEW_KW => {
+            p.advance();
+            base_ty(p);
+            if p.expect(L_BRACK) {
+                expr(p);
+                p.expect(R_BRACK);
+            }
+            NEW_EXPR
+        }
+        _ => {
+            p.error_expected("an expression");
+            // Leave delimiters and line ends to the enclosing construct.
+            let at_delimiter =
+                p.at_eol() || p.at_any(&[R_PAREN, R_BRACK, COMMA]) || p.current().is_assign_op();
+            if !at_delimiter && !at_block_end(p) {
+                p.advance();
+            }
+            p.close(m, ERROR);
+            return None;
+        }
+    };
+    Some(p.close(m, kind))
 }
 
-// test index_expr
-// function foo()
-//     x[1][2]
-// endFunction
-fn index_expr(p: &mut Parser<'_>, lhs: CompletedMarker) -> CompletedMarker {
-    assert!(p.at(T!['[']));
-    let m = lhs.precede(p);
-    p.bump(T!['[']);
-
-    expr(p);
-    p.expect(T![']']);
-    m.complete(p, INDEX_EXPR)
-}
-
-fn cast_expr(p: &mut Parser<'_>, lhs: CompletedMarker) -> CompletedMarker {
-    assert!(p.at(T![As]));
-    let m = lhs.precede(p);
-    p.bump(T![As]);
-
-    types::ty(p);
-    m.complete(p, CAST_EXPR)
-}
-
-// test field_expr
-// Function foo()
-//     obj.field
-//     self.value
-//     parent.data
-// EndFunction
-fn field_expr(p: &mut Parser<'_>, lhs: CompletedMarker) -> CompletedMarker {
-    assert!(p.at(T![.]));
-
-    let m = lhs.precede(p);
-
-    p.bump(T![.]);
-
-    name_ref_or_self(p);
-
-    m.complete(p, FIELD_EXPR)
-}
-
-/// Returns the binary operator at the current parser position.
-///
-/// # Multi-token Operators
-///
-/// - `rustc_lexer` tokenizes operators such as `||` as separate `|` tokens.
-/// - `papyrus_lexer` follows the same behavior because it is forked from
-///   `rustc_lexer`.
-/// - Multi-token operators are detected by looking ahead one token.
-/// - The `at()` check performs the internal lookahead required to distinguish
-///   operators such as `|` from `||`.
-fn current_op(p: &Parser<'_>) -> Option<(u8, u8, SyntaxKind, SyntaxKind)> {
-    Some(match p.current() {
-        T![|] if p.at(T![||]) => (1, 2, T![||], BIN_EXPR),
-        T![&] if p.at(T![&&]) => (3, 4, T![&&], BIN_EXPR),
-
-        T![=] if p.at(T![==]) => (5, 6, T![==], BIN_EXPR),
-        T![!] if p.at(T![!=]) => (5, 6, T![!=], BIN_EXPR),
-
-        T![<] if p.at(T![<=]) => (7, 8, T![<=], BIN_EXPR),
-        T![<] if p.at(T![<<]) => (13, 14, T![<<], BIN_EXPR),
-        T![<] => (7, 8, T![<], BIN_EXPR),
-
-        T![>] if p.at(T![>=]) => (7, 8, T![>=], BIN_EXPR),
-        T![>] if p.at(T![>>]) => (13, 14, T![>>], BIN_EXPR),
-        T![>] => (7, 8, T![>], BIN_EXPR),
-
-        T![|] => (9, 10, T![|], BIN_EXPR),
-        T![&] => (11, 12, T![&], BIN_EXPR),
-
-        T![+] => (15, 16, T![+], BIN_EXPR),
-        T![-] => (15, 16, T![-], BIN_EXPR),
-
-        T![*] => (17, 18, T![*], BIN_EXPR),
-        T![/] => (17, 18, T![/], BIN_EXPR),
-        T![%] => (17, 18, T![%], BIN_EXPR),
-
-        T![=] => (0, 0, T![=], ASSIGN_STMT),
-        T![+=] => (0, 0, T![+=], ASSIGN_STMT),
-        T![-=] => (0, 0, T![-=], ASSIGN_STMT),
-        T![*=] => (0, 0, T![*=], ASSIGN_STMT),
-        T![/=] => (0, 0, T![/=], ASSIGN_STMT),
-        T![%=] => (0, 0, T![%=], ASSIGN_STMT),
-
-        _ => return None,
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::tests::*;
-
-    #[test]
-    fn literal() {
-        check_expr(
-            "1",
-            expect![[r#"
-                LITERAL
-                  INT_NUMBER "1"
-            "#]],
-        );
+/// `'(' (Arg (',' Arg)*)? ')'` where `Arg = (NameRef '=')? Expr`.
+fn arg_list(p: &mut Parser<'_>) {
+    let m = p.open();
+    p.advance(); // `(`
+    while !p.at(R_PAREN) && !p.at_eol() {
+        let arg = p.open();
+        if p.at(IDENT) && p.nth_at(1, EQ) {
+            name_ref(p);
+            p.advance();
+        }
+        let ok = expr(p).is_some();
+        p.close(arg, ARG);
+        if p.eat(COMMA) {
+            continue;
+        }
+        if p.at(R_PAREN) || p.at_eol() {
+            break;
+        }
+        if ok {
+            p.error_expected("`,` or `)`");
+        }
+        // Skip garbage up to the next argument or the closing parenthesis.
+        let err = p.open();
+        while !p.at_eol() && !p.at(R_PAREN) && !p.at(COMMA) {
+            p.advance();
+        }
+        p.close(err, ERROR);
+        p.eat(COMMA);
     }
-
-    #[test]
-    fn name_ref() {
-        check_expr(
-            "foo",
-            expect![[r#"
-                NAME_REF
-                  IDENT "foo"
-            "#]],
-        );
-    }
-
-    #[test]
-    fn prefix() {
-        check_expr(
-            "-foo",
-            expect![[r#"
-                PREFIX_EXPR
-                  MINUS "-"
-                  NAME_REF
-                    IDENT "foo"
-            "#]],
-        );
-    }
-
-    #[test]
-    fn binary() {
-        check_expr(
-            "1 + 2",
-            expect![[r#"
-BIN_EXPR
-  LITERAL
-    INT_NUMBER "1"
-  WHITESPACE " "
-  PLUS "+"
-  WHITESPACE " "
-  LITERAL
-    INT_NUMBER "2"
-"#]],
-        );
-    }
-
-    #[test]
-    fn precedence() {
-        check_expr(
-            "1 + 2 * 3",
-            expect![[r#"
-                BIN_EXPR
-                  LITERAL
-                    INT_NUMBER "1"
-                  WHITESPACE " "
-                  PLUS "+"
-                  WHITESPACE " "
-                  BIN_EXPR
-                    LITERAL
-                      INT_NUMBER "2"
-                    WHITESPACE " "
-                    STAR "*"
-                    WHITESPACE " "
-                    LITERAL
-                      INT_NUMBER "3"
-        "#]],
-        );
-    }
-
-    #[test]
-    fn paren() {
-        check_expr(
-            "(1 + 2) * 3",
-            expect![[r#"
-BIN_EXPR
-  PAREN_EXPR
-    L_PAREN "("
-    BIN_EXPR
-      LITERAL
-        INT_NUMBER "1"
-      WHITESPACE " "
-      PLUS "+"
-      WHITESPACE " "
-      LITERAL
-        INT_NUMBER "2"
-    R_PAREN ")"
-  WHITESPACE " "
-  STAR "*"
-  WHITESPACE " "
-  LITERAL
-    INT_NUMBER "3"
-"#]],
-        );
-    }
-
-    #[test]
-    fn field_expr() {
-        check_expr(
-            "foo.bar",
-            expect![[r#"
-FIELD_EXPR
-  NAME_REF
-    IDENT "foo"
-  DOT "."
-  NAME_REF
-    IDENT "bar"
-"#]],
-        );
-    }
-
-    #[test]
-    fn chained_field_expr() {
-        check_expr(
-            "foo.bar.baz",
-            expect![[r#"
-FIELD_EXPR
-  FIELD_EXPR
-    NAME_REF
-      IDENT "foo"
-    DOT "."
-    NAME_REF
-      IDENT "bar"
-  DOT "."
-  NAME_REF
-    IDENT "baz"
-"#]],
-        );
-    }
-
-    #[test]
-    fn call_expr() {
-        check_expr(
-            "foo(1, 2)",
-            expect![[r#"
-CALL_EXPR
-  NAME_REF
-    IDENT "foo"
-  ARG_LIST
-    L_PAREN "("
-    LITERAL
-      INT_NUMBER "1"
-    COMMA ","
-    WHITESPACE " "
-    LITERAL
-      INT_NUMBER "2"
-    R_PAREN ")"
-"#]],
-        );
-    }
-
-    #[test]
-    fn chained_call_expr() {
-        check_expr(
-            "foo()(1)",
-            expect![[r#"
-CALL_EXPR
-  CALL_EXPR
-    NAME_REF
-      IDENT "foo"
-    ARG_LIST
-      L_PAREN "("
-      R_PAREN ")"
-  ARG_LIST
-    L_PAREN "("
-    LITERAL
-      INT_NUMBER "1"
-    R_PAREN ")"
-"#]],
-        );
-    }
-
-    #[test]
-    fn index_expr() {
-        check_expr(
-            "arr[0]",
-            expect![[r#"
-INDEX_EXPR
-  NAME_REF
-    IDENT "arr"
-  L_BRACK "["
-  LITERAL
-    INT_NUMBER "0"
-  R_BRACK "]"
-"#]],
-        );
-    }
-
-    #[test]
-    fn chained_index_expr() {
-        check_expr(
-            "arr[1][0]",
-            expect![[r#"
-INDEX_EXPR
-  INDEX_EXPR
-    NAME_REF
-      IDENT "arr"
-    L_BRACK "["
-    LITERAL
-      INT_NUMBER "1"
-    R_BRACK "]"
-  L_BRACK "["
-  LITERAL
-    INT_NUMBER "0"
-  R_BRACK "]"
-"#]],
-        );
-    }
-
-    #[test]
-    fn cast_expr() {
-        check_expr(
-            "foo As Int",
-            expect![[r#"
-CAST_EXPR
-  NAME_REF
-    IDENT "foo"
-  WHITESPACE " "
-  As_KW "As"
-  WHITESPACE " "
-  TYPE
-    BASE_TYPE
-      PRIMITIVE_TYPE
-        Int_KW "Int"
-"#]],
-        );
-    }
-
-    #[test]
-    fn chained_postfix_expr() {
-        check_expr(
-            "foo()[1].bar As String",
-            expect![[r#"
-CAST_EXPR
-  FIELD_EXPR
-    INDEX_EXPR
-      CALL_EXPR
-        NAME_REF
-          IDENT "foo"
-        ARG_LIST
-          L_PAREN "("
-          R_PAREN ")"
-      L_BRACK "["
-      LITERAL
-        INT_NUMBER "1"
-      R_BRACK "]"
-    DOT "."
-    NAME_REF
-      IDENT "bar"
-  WHITESPACE " "
-  As_KW "As"
-  WHITESPACE " "
-  TYPE
-    BASE_TYPE
-      PRIMITIVE_TYPE
-        String_KW "String"
-"#]],
-        );
-    }
-
-    #[test]
-    fn logical_precedence() {
-        check_expr(
-            "a || b && c",
-            expect![[r#"
-BIN_EXPR
-  NAME_REF
-    IDENT "a"
-  WHITESPACE " "
-  PIPE2 "||"
-  WHITESPACE " "
-  BIN_EXPR
-    NAME_REF
-      IDENT "b"
-    WHITESPACE " "
-    AMP2 "&&"
-    WHITESPACE " "
-    NAME_REF
-      IDENT "c"
-"#]],
-        );
-    }
-
-    #[test]
-    fn comparison_precedence() {
-        check_expr(
-            "a + b < c * d",
-            expect![[r#"
-BIN_EXPR
-  BIN_EXPR
-    NAME_REF
-      IDENT "a"
-    WHITESPACE " "
-    PLUS "+"
-    WHITESPACE " "
-    NAME_REF
-      IDENT "b"
-  WHITESPACE " "
-  LT "<"
-  WHITESPACE " "
-  BIN_EXPR
-    NAME_REF
-      IDENT "c"
-    WHITESPACE " "
-    STAR "*"
-    WHITESPACE " "
-    NAME_REF
-      IDENT "d"
-"#]],
-        );
-    }
-
-    #[test]
-    fn recover_missing_rhs() {
-        check_expr_errors(
-            "foo +",
-            expect![[r#"
-BIN_EXPR
-  NAME_REF
-    IDENT "foo"
-  WHITESPACE " "
-  PLUS "+"
-  ERROR
-error 5: expected expression
-"#]],
-        );
-    }
-
-    #[test]
-    fn recover_missing_index() {
-        check_expr_errors(
-            "arr[",
-            expect![[r#"
-INDEX_EXPR
-  NAME_REF
-    IDENT "arr"
-  L_BRACK "["
-  ERROR
-error 4: expected expression
-error 4: expected R_BRACK
-"#]],
-        );
-    }
-
-    #[test]
-    fn recover_missing_field_name() {
-        check_expr_errors(
-            "foo.",
-            expect![[r#"
-FIELD_EXPR
-  NAME_REF
-    IDENT "foo"
-  DOT "."
-  ERROR
-error 4: expected identifier, `self` or `parent`
-"#]],
-        );
-    }
-
-    #[test]
-    fn recover_missing_call_arg() {
-        check_expr_errors(
-            "foo(,)",
-            expect![[r#"
-CALL_EXPR
-  NAME_REF
-    IDENT "foo"
-  ARG_LIST
-    L_PAREN "("
-    ERROR
-      COMMA ","
-    R_PAREN ")"
-error 4: expected call arguments
-"#]],
-        );
-    }
+    p.expect(R_PAREN);
+    p.close(m, ARG_LIST);
 }

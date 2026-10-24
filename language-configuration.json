@@ -1,0 +1,33 @@
+{
+  "comments": {
+    "lineComment": ";",
+    "blockComment": [";/", "/;"]
+  },
+  "brackets": [
+    ["(", ")"],
+    ["[", "]"]
+  ],
+  "autoClosingPairs": [
+    { "open": "(", "close": ")" },
+    { "open": "[", "close": "]" },
+    { "open": "{", "close": "}", "notIn": ["string"] },
+    { "open": "\"", "close": "\"", "notIn": ["string", "comment"] }
+  ],
+  "surroundingPairs": [
+    ["(", ")"],
+    ["[", "]"],
+    ["{", "}"],
+    ["\"", "\""]
+  ],
+  "wordPattern": "[A-Za-z_][A-Za-z0-9_]*|-?\\d+(\\.\\d+)?",
+  "indentationRules": {
+    "increaseIndentPattern": "^\\s*((\\w+(\\[\\])?\\s+)?(Function|Event)\\b(?!.*\\bNative\\b)|(Auto\\s+)?State\\b|If\\b|ElseIf\\b|Else\\b|While\\b|\\w+(\\[\\])?\\s+Property\\b(?!.*\\bAuto(ReadOnly)?\\b))",
+    "decreaseIndentPattern": "^\\s*(End(Function|Event|State|If|While|Property)|ElseIf|Else)\\b"
+  },
+  "folding": {
+    "markers": {
+      "start": "^\\s*;\\s*#?region\\b",
+      "end": "^\\s*;\\s*#?endregion\\b"
+    }
+  }
+}
