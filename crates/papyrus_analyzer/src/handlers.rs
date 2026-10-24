@@ -118,6 +118,25 @@ impl Server {
     ) -> Option<GotoDefinitionResponse> {
         let (file, lines, offset) = self.position(&params.text_document_position_params)?;
         let targets = papyrus_ide::goto_definition(&self.ws, file, offset);
+        self.nav_response(file, lines, targets)
+    }
+
+    /// The overridden function of the parent script (or the empty state).
+    pub(crate) fn goto_declaration(
+        &mut self,
+        params: GotoDefinitionParams,
+    ) -> Option<GotoDefinitionResponse> {
+        let (file, lines, offset) = self.position(&params.text_document_position_params)?;
+        let targets = papyrus_ide::goto_declaration(&self.ws, file, offset);
+        self.nav_response(file, lines, targets)
+    }
+
+    fn nav_response(
+        &mut self,
+        file: papyrus_ide::FileId,
+        lines: Lines,
+        targets: Vec<papyrus_ide::NavTarget>,
+    ) -> Option<GotoDefinitionResponse> {
         if targets.is_empty() {
             return None;
         }

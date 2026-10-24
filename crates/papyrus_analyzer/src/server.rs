@@ -188,6 +188,9 @@ impl Server {
         use lsp_types::request::*;
         match method {
             HoverRequest::METHOD => handle::<HoverRequest>(self, params, Server::hover),
+            request::GotoDeclaration::METHOD => {
+                handle::<request::GotoDeclaration>(self, params, Server::goto_declaration)
+            }
             GotoDefinition::METHOD => {
                 handle::<GotoDefinition>(self, params, Server::goto_definition)
             }

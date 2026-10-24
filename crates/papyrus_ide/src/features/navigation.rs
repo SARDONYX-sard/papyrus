@@ -61,6 +61,41 @@ pub fn goto_definition(ws: &Workspace, file: FileId, offset: TextSize) -> Vec<Na
     })
     .unwrap_or_default()
 }
+/// Where the function or event at `offset` is first declared: for a function
+/// of a state, the one outside of states; for an override, the function of
+/// the parent script it overrides (the nearest one up the `extends` chain).
+/// Anything else, or a function declared nowhere else, goes to its
+/// definition.
+pub fn goto_declaration(ws: &Workspace, file: FileId, offset: TextSize) -> Vec<NavTarget> {
+    let parent = with_sema(ws, file, |sema| {
+        let (_, Def::Member { file: f, index }) = def_at(sema, offset)? else { return None };
+        let member = sema.member(f, index);
+        if !member.is_callable() || member.property.is_some() {
+            return None;
+        }
+        let index_of = |f: FileId| &ws.file(f).index;
+        let same = |m: &crate::index::Member| {
+            m.is_callable() && m.property.is_none() && m.state.is_none() && m.name == member.name
+        };
+        // A state function: its declaration outside of states.
+        if member.state.is_some()
+            && let Some(i) = index_of(f).members.iter().position(same)
+        {
+            return def_location(sema, Def::Member { file: f, index: i as u32 });
+        }
+        let script = index_of(f).name?;
+        sema.chain(script).skip(1).find_map(|(pf, idx)| {
+            let i = idx.members.iter().position(same)?;
+            def_location(sema, Def::Member { file: pf, index: i as u32 })
+        })
+    })
+    .flatten();
+    match parent {
+        Some((file, focus_range, full_range)) => vec![NavTarget { file, focus_range, full_range }],
+        None => goto_definition(ws, file, offset),
+    }
+}
+
 /// An occurrence of a name in the current file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Highlight {

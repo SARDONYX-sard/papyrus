@@ -330,6 +330,38 @@ EndFunction
     );
 }
 
+#[test]
+fn goto_declaration_of_overrides() {
+    let base = "ScriptName Base\nFunction Run()\nEndFunction\n";
+    let mid = "ScriptName Mid extends Base\n";
+    let check = |child: &str, expected_file: &str, expected: &str| {
+        let (ws, file, offset) =
+            workspace(&[("Base.psc", base), ("Mid.psc", mid), ("Child.psc", child)]);
+        let targets = crate::goto_declaration(&ws, file, offset);
+        assert_eq!(targets.len(), 1, "{child}");
+        let target = script_of(targets[0].file);
+        let path = &ws.file(target).path;
+        assert!(path.ends_with(expected_file), "{path:?}");
+        let text = ws.text(target).unwrap();
+        let range = targets[0].focus_range;
+        assert_eq!(&text[usize::from(range.start())..usize::from(range.end())], expected);
+    };
+    // The override, through a script that does not redefine it.
+    check("ScriptName Child extends Mid\nFunction R$0un()\nEndFunction\n", "Base.psc", "Run");
+    // A call of the override.
+    check(
+        "ScriptName Child extends Mid\nFunction Run()\nEndFunction\nFunction G()\n  R$0un()\nEndFunction\n",
+        "Base.psc",
+        "Run",
+    );
+    // A state function: the one outside of states first.
+    check(
+        "ScriptName Child extends Mid\nFunction Run()\nEndFunction\nState S\n  Function R$0un()\n  EndFunction\nEndState\n",
+        "Child.psc",
+        "Run",
+    );
+}
+
 /// Rules found by comparing with the official compiler.
 #[test]
 fn compiler_rules() {

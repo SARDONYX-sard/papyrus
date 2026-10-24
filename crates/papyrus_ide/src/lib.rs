@@ -34,7 +34,8 @@ pub use crate::{
         hover::{HoverResult, flag_file_hover, hover},
         inlay_hints::{InlayHint, inlay_hints},
         navigation::{
-            Highlight, NavFile, NavTarget, flag_references, goto_definition, highlight, references,
+            Highlight, NavFile, NavTarget, flag_references, goto_declaration, goto_definition,
+            highlight, references,
         },
         semantic_tokens::{SemanticToken, TokenModifier, TokenType, semantic_tokens},
         signature_help::{SignatureHelp, signature_help},
