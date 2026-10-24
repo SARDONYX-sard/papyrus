@@ -9,25 +9,45 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "name": { "type": "string", "description": "Name of the mod." },
-        "version": { "type": "string", "description": "Version of the mod." },
-        "description": { "type": "string" },
-        "authors": { "type": "array", "items": { "type": "string" } }
+        "name": {
+          "type": "string",
+          "description": "Name of the mod."
+        },
+        "version": {
+          "type": "string",
+          "description": "Version of the mod."
+        },
+        "description": {
+          "type": "string"
+        },
+        "authors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
       }
     },
     "var": {
       "type": "object",
       "description": "Shared defaults of ${NAME} variables; values may use ${env:NAME} for environment variables. Overridden by the papyrus.var editor setting / papyrus_analyzer --var and [var] of papyrus.local.toml. Keep machine specific paths out of this committed file.",
-      "additionalProperties": { "type": "string" }
+      "additionalProperties": {
+        "type": "string"
+      }
     },
     "compiler": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "path": { "type": "string", "description": "Path of PapyrusCompiler.exe." },
+        "path": {
+          "type": "string",
+          "description": "Path of PapyrusCompiler.exe."
+        },
         "args": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "default": [],
           "description": "Extra arguments passed to the compiler as is."
         }
@@ -39,22 +59,113 @@
       "properties": {
         "sources": {
           "type": "array",
-          "items": { "type": "string" },
-          "default": ["."],
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "."
+          ],
           "description": "Directories of the scripts to compile, searched recursively."
         },
-        "output": { "type": "string", "default": "output", "description": "Directory of the compiled .pex files; the directory structure of sources is kept." },
+        "output": {
+          "type": "string",
+          "default": "output",
+          "description": "Directory of the compiled .pex files; the directory structure of sources is kept."
+        },
         "imports": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "default": [],
           "description": "Other script source directories, in lookup order (after sources)."
         },
-        "flags": { "type": "string", "description": "The flags file, e.g. TESV_Papyrus_Flags.flg." },
-        "optimize": { "type": "boolean", "default": true, "description": "-optimize" },
-        "release": { "type": "boolean", "default": false, "description": "-release: strip DebugOnly calls." },
-        "final": { "type": "boolean", "default": false, "description": "-final: strip BetaOnly calls." },
-        "quiet": { "type": "boolean", "default": true, "description": "-quiet: only report errors." }
+        "flags": {
+          "type": "string",
+          "description": "The flags file, e.g. TESV_Papyrus_Flags.flg."
+        },
+        "optimize": {
+          "type": "boolean",
+          "default": true,
+          "description": "-optimize"
+        },
+        "release": {
+          "type": "boolean",
+          "default": false,
+          "description": "-release: strip DebugOnly calls."
+        },
+        "final": {
+          "type": "boolean",
+          "default": false,
+          "description": "-final: strip BetaOnly calls."
+        },
+        "quiet": {
+          "type": "boolean",
+          "default": true,
+          "description": "-quiet: only report errors."
+        }
+      }
+    },
+    "format": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Formatter settings shared by the team. Unset values come from .editorconfig, then from the editor.",
+      "properties": {
+        "indent-style": {
+          "description": "Indent with spaces or tabs.",
+          "type": "string",
+          "enum": [
+            "space",
+            "tab"
+          ]
+        },
+        "indent-size": {
+          "minimum": 1,
+          "description": "Spaces per indentation level.",
+          "type": "integer",
+          "maximum": 16
+        },
+        "keyword-case": {
+          "default": "canonical",
+          "description": "Spelling of keywords. canonical is PascalCase with lowercase `as` and `extends`.",
+          "type": "string",
+          "enum": [
+            "canonical",
+            "preserve",
+            "PascalCase",
+            "camelCase",
+            "lowercase",
+            "UPPERCASE"
+          ]
+        },
+        "keywords": {
+          "description": "Spelling of single keywords, e.g. { as = \"As\" }. Only the case may change.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "max-blank-lines": {
+          "minimum": 0,
+          "description": "Consecutive blank lines kept at most.",
+          "type": "integer",
+          "default": 1
+        },
+        "newline": {
+          "default": "auto",
+          "description": "Line break of formatted files; auto keeps the one of the file.",
+          "type": "string",
+          "enum": [
+            "auto",
+            "lf",
+            "crlf"
+          ]
+        },
+        "final-newline": {
+          "default": true,
+          "description": "End files with a line break.",
+          "type": "boolean"
+        }
       }
     }
   }

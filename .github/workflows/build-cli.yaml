@@ -56,9 +56,20 @@ jobs:
           asset_name: ${{ env.APP_NAME }}-${{ matrix.job.asset }}
           features: ${{ matrix.job.features }}
 
-      # NOTE: For some reason, the artifact is not pre-compressed even though it is compressed. So we compress it.
-      - name: Upload a Build Artifact
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Same packaging as the release, see dist.js.
+      - name: Package VSIX
+        run: node dist.js --vsix --target ${{ matrix.job.target }} --binary ./build/${{ env.APP_NAME }}${{ runner.os == 'Windows' && '.exe' || '' }}
+
+      - name: Upload VSIX
         uses: actions/upload-artifact@v4.6.2
         with:
-          name: ${{ matrix.job.asset }}
-          path: ./build/
+          name: vsix-${{ matrix.job.target }}
+          path: "*.vsix"

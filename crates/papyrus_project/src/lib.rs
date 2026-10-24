@@ -91,13 +91,20 @@ struct RawManifest {
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 struct RawFormat {
-    /// A number of spaces, or `"tab"`.
-    indent: Option<Spanned<toml::Value>>,
+    /// `"space"` or `"tab"`, as in `.editorconfig`.
+    #[serde(alias = "indent_style")]
+    indent_style: Option<Spanned<String>>,
+    /// Spaces per level.
+    #[serde(alias = "indent_size")]
+    indent_size: Option<Spanned<i64>>,
+    #[serde(alias = "keyword_case")]
     keyword_case: Option<Spanned<String>>,
     #[serde(default)]
     keywords: BTreeMap<String, Spanned<String>>,
+    #[serde(alias = "max_blank_lines")]
     max_blank_lines: Option<usize>,
     newline: Option<Spanned<String>>,
+    #[serde(alias = "final_newline")]
     final_newline: Option<bool>,
 }
 
@@ -105,8 +112,10 @@ struct RawFormat {
 /// come from `.editorconfig`, then from the editor.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FormatSettings {
-    /// `indent`: a number of spaces, or `"tab"`.
-    pub indent: Option<papyrus_fmt::Indent>,
+    /// `indent-style`: `Some(true)` for `"tab"`, `Some(false)` for `"space"`.
+    pub use_tabs: Option<bool>,
+    /// `indent-size`: spaces per level.
+    pub indent_size: Option<u8>,
     /// `keyword-case`, see [`papyrus_fmt::KeywordCase::NAMES`].
     pub keyword_case: Option<papyrus_fmt::KeywordCase>,
     /// `[format.keywords]`: spelling of single keywords, e.g. `as = "As"`.
@@ -122,8 +131,22 @@ pub struct FormatSettings {
 impl FormatSettings {
     /// Applies the set values to formatter options.
     pub fn apply(&self, options: &mut papyrus_fmt::FormatOptions) {
-        if let Some(indent) = self.indent {
-            options.indent = indent;
+        let size = |options: &papyrus_fmt::FormatOptions| match options.indent {
+            papyrus_fmt::Indent::Spaces(n) => n,
+            papyrus_fmt::Indent::Tabs => 4,
+        };
+        match (self.use_tabs, self.indent_size) {
+            (Some(true), _) => options.indent = papyrus_fmt::Indent::Tabs,
+            (Some(false), n) => {
+                options.indent = papyrus_fmt::Indent::Spaces(n.unwrap_or(size(options)))
+            }
+            (None, Some(n)) => {
+                // A size alone keeps tabs: it is the width of a tab then.
+                if let papyrus_fmt::Indent::Spaces(_) = options.indent {
+                    options.indent = papyrus_fmt::Indent::Spaces(n);
+                }
+            }
+            (None, None) => {}
         }
         if let Some(case) = self.keyword_case {
             options.keyword_case = case;
@@ -148,24 +171,27 @@ fn format_settings(raw: &RawFormat, errors: &mut Vec<ManifestError>) -> FormatSe
         final_newline: raw.final_newline,
         ..Default::default()
     };
-    if let Some(indent) = &raw.indent {
-        out.indent = match indent.get_ref() {
-            toml::Value::Integer(n) if (1..=16).contains(n) => {
-                Some(papyrus_fmt::Indent::Spaces(*n as u8))
-            }
-            toml::Value::String(s)
-                if s.eq_ignore_ascii_case("tab") || s.eq_ignore_ascii_case("tabs") =>
-            {
-                Some(papyrus_fmt::Indent::Tabs)
-            }
+    if let Some(style) = &raw.indent_style {
+        out.use_tabs = match style.get_ref().to_ascii_lowercase().as_str() {
+            "tab" => Some(true),
+            "space" => Some(false),
             _ => {
                 errors.push(ManifestError::new(
-                    "`indent` must be a number of spaces (1 to 16) or \"tab\"",
-                    span(indent.span()),
+                    "`indent-style` must be \"space\" or \"tab\"",
+                    span(style.span()),
                 ));
                 None
             }
         };
+    }
+    if let Some(size) = &raw.indent_size {
+        match u8::try_from(*size.get_ref()) {
+            Ok(n @ 1..=16) => out.indent_size = Some(n),
+            _ => errors.push(ManifestError::new(
+                "`indent-size` must be between 1 and 16",
+                span(size.span()),
+            )),
+        }
     }
     if let Some(case) = &raw.keyword_case {
         match case.get_ref().parse() {
@@ -782,7 +808,8 @@ quiet = true
 
 # Formatter settings. Unset values come from .editorconfig, then from the editor.
 [format]
-# indent = 4                    # spaces, or "tab"
+# indent-style = "space"        # space or tab
+# indent-size = 4
 # keyword-case = "canonical"    # canonical, preserve, PascalCase, camelCase, lowercase, UPPERCASE
 # max-blank-lines = 1
 # newline = "auto"              # auto, lf, crlf
@@ -887,7 +914,7 @@ mod tests {
     #[test]
     fn format_table() {
         let p = parse_str(
-            "[format]\nindent = \"tab\"\nkeyword-case = \"camelCase\"\nnewline = \"crlf\"\n[format.keywords]\nas = \"As\"\n",
+            "[format]\nindent_style = \"tab\"\nkeyword-case = \"camelCase\"\nnewline = \"crlf\"\n[format.keywords]\nas = \"As\"\n",
         )
         .unwrap();
         let mut options = papyrus_fmt::FormatOptions::default();
@@ -897,7 +924,12 @@ mod tests {
         assert_eq!(options.newline, papyrus_fmt::Newline::CrLf);
         assert_eq!(options.keyword_overrides["as"], "As");
 
-        let errors = parse_str("[format]\nindent = 0\nkeyword-case = \"kebab\"\n[format.keywords]\nfoo = \"Foo\"\nif = \"Iff\"\n").unwrap_err();
+        let spaces = parse_str("[format]\nindent-style = \"space\"\nindent-size = 2\n").unwrap();
+        let mut options = papyrus_fmt::FormatOptions::default();
+        spaces.format.apply(&mut options);
+        assert_eq!(options.indent, papyrus_fmt::Indent::Spaces(2));
+
+        let errors = parse_str("[format]\nindent-size = 0\nkeyword-case = \"kebab\"\n[format.keywords]\nfoo = \"Foo\"\nif = \"Iff\"\n").unwrap_err();
         let messages: Vec<_> = errors.iter().map(|e| e.message.as_str()).collect();
         assert_eq!(messages.len(), 4, "{messages:?}");
         assert!(errors.iter().all(|e| e.span.is_some()));

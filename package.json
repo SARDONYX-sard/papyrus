@@ -10,7 +10,7 @@
     "url": "https://github.com/SARDONYX-sard/papyrus"
   },
   "engines": {
-    "vscode": "^1.80.0"
+    "vscode": "^1.125.0"
   },
   "categories": [
     "Programming Languages"
@@ -255,7 +255,8 @@
   "scripts": {
     "compile": "tsc -p ./extension",
     "build:server": "cargo build --release",
-    "release": "npm run compile && npm run build:server && node ./dist.js"
+    "release": "npm run compile && npm run build:server && node ./dist.js",
+    "package": "npm run build:server && node ./dist.js --vsix"
   },
   "dependencies": {
     "vscode-languageclient": "^10.1.0"

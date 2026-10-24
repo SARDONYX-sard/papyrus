@@ -236,6 +236,73 @@ fn diagnostics_semantic() {
 }
 
 #[test]
+fn type_errors() {
+    let (ws, file, _) = workspace(&[
+        ("Form.psc", FORM),
+        ("Actor.psc", ACTOR),
+        ("Debug.psc", DEBUG),
+        (
+            "Test.psc",
+            r#"ScriptName Test$0
+Int Property RO = 1 AutoReadOnly
+Int Property Full
+    Int Function Get()
+        Return 1
+    EndFunction
+EndProperty
+Int bad = 1.5
+Int Function F(Actor a, Form f, Int[] arr)
+    Int i = 1.5
+    Float ok = 1
+    String s = a
+    Actor down = f
+    Actor fine = f as Actor
+    i = "x" * 2
+    i = arr[1.0]
+    i = i[0]
+    a.Kill(1, 2)
+    a.GetAV()
+    Debug.Trace("x", aiSeverity = "high")
+    Actor.Kill()
+    RO = 2
+    Full = 3
+    Return
+EndFunction
+Function G()
+    Return 1
+EndFunction
+"#,
+        ),
+    ]);
+    let diags: Vec<String> = diagnostics(&ws, file)
+        .into_iter()
+        .filter(|d| d.needs_workspace())
+        .map(|d| format!("{}: {}", d.code, d.message))
+        .collect();
+    assert_eq!(
+        diags,
+        [
+            "type-mismatch: expected `Int`, found `Float`",
+            "type-mismatch: expected `Int`, found `Float`",
+            "type-mismatch: expected `Actor`, found `Form`",
+            "invalid-operator: cannot apply `*` to `String` and `Int`",
+            "type-mismatch: expected `Int`, found `Float`",
+            "not-an-array: `Int` is not an array",
+            "type-mismatch: expected `Actor`, found `Int`",
+            "wrong-arg-count: `Kill` takes 1 arguments, but more were given",
+            "wrong-arg-count: missing arguments for `GetAV`: asName",
+            "type-mismatch: expected `Int`, found `String`",
+            "not-global: `Kill` is not a Global function and needs an object, not the script `Actor`",
+            "read-only: property `RO` is read-only",
+            "read-only: property `Full` is read-only",
+            "missing-return-value: this function must return a `Int`",
+            "unexpected-return-value: this function does not return a value",
+        ],
+        "{diags:#?}"
+    );
+}
+
+#[test]
 fn document_symbols_nest_states_and_accessors() {
     let (ws, file, _) = workspace(&[(
         "Test.psc",

@@ -1,0 +1,18 @@
+# Ignore everything, then list what goes into the VSIX.
+**/**
+
+!package.json
+!readme.md
+!LICENSE-*
+!language-configuration.json
+!flags-language-configuration.json
+!syntaxes/**
+!schemas/**
+
+# The compiled extension and the server binary (see dist.js).
+!dist/extension.js
+!dist/papyrus_analyzer
+!dist/papyrus_analyzer.exe
+
+# vsce only collects production dependencies here.
+!node_modules/**

@@ -62,13 +62,13 @@ let client: LanguageClient | undefined;
 let statusItem: vscode.StatusBarItem;
 /** `$(run-all) Compile…`: compiles the scripts picked with a quick pick. */
 let compileItem: vscode.StatusBarItem;
-let output: vscode.OutputChannel;
+let output: vscode.LogOutputChannel;
 let extensionContext: vscode.ExtensionContext;
 /** Key of the scripts picked last, in the workspace state. */
 const SELECTION_KEY = "papyrus.compileSelection";
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  output = vscode.window.createOutputChannel("Papyrus Analyzer");
+  output = vscode.window.createOutputChannel("Papyrus Analyzer", { log: true });
   statusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 0);
   statusItem.command = "papyrus.showStatus";
   compileItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, -1);

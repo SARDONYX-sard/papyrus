@@ -46,7 +46,7 @@ runs:
       shell: pwsh
       if: runner.os == 'Windows'
       run: |
-        Move-Item -Path ./target/${{ matrix.job.target }}/${{ inputs.profile }}/${{ inputs.app_name }}.exe -Destination './build'
+        Move-Item -Path ./target/${{ inputs.target }}/${{ inputs.profile }}/${{ inputs.app_name }}.exe -Destination './build'
         Move-Item -Path ./LICENSES.toml -Destination './build'
         Compress-Archive -Path './build/*' -DestinationPath './${{ inputs.asset_name }}'
 

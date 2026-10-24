@@ -48,10 +48,22 @@ jobs:
           asset_name: ${{ env.APP_NAME }}-${{ matrix.job.asset }}
           features: ${{ matrix.job.features }}
 
-      - name: Release
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The server binary was moved to ./build by the build action. The
+      # extension needs its production dependencies, so they are packaged.
+      - name: Package VSIX
+        run: node dist.js --vsix --target ${{ matrix.job.target }} --binary ./build/${{ env.APP_NAME }}${{ runner.os == 'Windows' && '.exe' || '' }}
+
+      - name: Attach VSIX to GitHub Release
         uses: ncipollo/release-action@v1.21.0
         with:
           allowUpdates: true
-          artifacts: ${{ matrix.job.asset }}
-          omitBody: ${{ !(runner.os == 'Windows') }}
-          bodyFile: ${{ runner.os == 'Windows' && 'papyrus language server' || '' }}
+          artifacts: "*.vsix"
+          omitBody: true

@@ -36,7 +36,8 @@ quiet = true
 
 # Formatter settings. Unset values come from .editorconfig, then from the editor.
 [format]
-indent = 4                    # spaces, or "tab"
+# indent-style = "space"        # space or tab
+# indent-size = 4
 # keyword-case = "canonical"    # canonical, preserve, PascalCase, camelCase, lowercase, UPPERCASE
 # max-blank-lines = 1
 # newline = "auto"              # auto, lf, crlf

@@ -20,9 +20,10 @@ without semantic diagnostics (`cargo test`).
 
 ## Language server
 
-Features: diagnostics, hover, go to definition, references, document highlight, completion
-(members, locals, overridable events), signature help, document/workspace symbols, folding,
-semantic tokens.
+Features: diagnostics (syntax, names, types), hover (with keyword documentation and examples),
+go to definition, references, document highlight, completion (members, locals, overridable events,
+flags), signature help, document/workspace symbols, folding, semantic tokens, code lenses and
+formatting.
 
 Custom requests:
 
@@ -97,14 +98,42 @@ Without `papyrus.toml`, the game scripts below `SKYRIM_DIR` (or the installation
 are imported automatically; add more
 directories with `papyrus.importDirectories` (variables allowed, e.g. `${SKYRIM_DIR}/Data/Scripts/Source`).
 
+### Formatter
+
+`papyrus_analyzer fmt [--check] [PATH]...` formats scripts from the command line, and the editor
+formats through the language server. Options come from the editor, then `.editorconfig`
+(`indent_style`, `indent_size`, `end_of_line`, `insert_final_newline`), then `[format]` of
+`papyrus.toml`:
+
+```toml
+[format]
+indent-style = "space"        # space or tab
+indent-size = 4
+keyword-case = "canonical"    # canonical, preserve, PascalCase, camelCase, lowercase, UPPERCASE
+max-blank-lines = 1
+newline = "auto"              # auto, lf, crlf
+final-newline = true
+
+[format.keywords]               # single keywords, winning over keyword-case
+as = "As"
+```
+
+Scripts with syntax errors are not formatted, and the result is checked to contain the same tokens.
+
+### Packaging
+
+`node dist.js` copies the server next to the extension; `node dist.js --vsix --target <triple>`
+also packages `papyrus-analyzer-<platform>.vsix`. The CI build and release workflows use the same
+command (`npm run package` locally).
+
 ## Todo
 
 - [x] Tokenizer
 - [x] Concrete Syntax Tree
 - [x] Concrete Syntax Tree Parser
-- [ ] Formatter
+- [x] Formatter
 - [x] Semantic tree (index + name resolution)
-- [ ] Type checker
+- [x] Type checker
 - [ ] Linter
 - [x] Language server
 - [ ] Compiler

@@ -14,6 +14,10 @@
 //! - `AutoReadOnly` properties and full properties without `Set` cannot be
 //!   assigned.
 //!
+//! The compiler types a call of a function without return type as `None`:
+//! `x = voidCall()` and `Return voidCall()` in a function without return
+//! type compile, so they are accepted here too.
+//!
 //! A type that cannot be known (an unresolved name, a script of an incomplete
 //! `extends` chain, ...) is [`Ty::Unknown`] and is compatible with everything,
 //! so that one unknown name does not cause a cascade of errors.
@@ -32,9 +36,7 @@ use crate::{
 pub enum Ty {
     /// Not known; compatible with everything.
     Unknown,
-    /// No value: a call of a function without return type.
-    Void,
-    /// The `None` literal.
+    /// The `None` literal, and calls of functions without return type.
     None,
     /// A script used as a receiver, as in `Debug.Trace()`.
     Script(Name),
@@ -59,7 +61,6 @@ impl Ty {
     fn display(self) -> String {
         match self {
             Ty::Unknown => "?".to_owned(),
-            Ty::Void => "nothing".to_owned(),
             Ty::None => "None".to_owned(),
             Ty::Script(name) => format!("script {name}"),
             Ty::Value(t) => t.to_string(),
@@ -141,7 +142,11 @@ impl Checker<'_, '_> {
 
     fn mismatch(&mut self, expr: ExprId, expected: TypeRef, found: Ty) {
         let range = self.body.expr_range(expr);
-        self.error(range, "type-mismatch", format!("expected `{expected}`, found `{}`", found.display()));
+        self.error(
+            range,
+            "type-mismatch",
+            format!("expected `{expected}`, found `{}`", found.display()),
+        );
     }
 
     // === Statements ===
@@ -184,28 +189,41 @@ impl Checker<'_, '_> {
     }
 
     fn condition(&mut self, cond: ExprId) {
-        let ty = self.expr(cond);
-        if ty == Ty::Void {
-            let range = self.body.expr_range(cond);
-            self.error(range, "type-mismatch", "this call returns nothing and cannot be a condition".to_owned());
-        }
+        // Any value converts to `Bool`.
+        self.expr(cond);
     }
 
     fn ret(&mut self, stmt: StmtId, value: Option<ExprId>) {
         let range = self.body.stmt_range(stmt);
         let ty = value.map(|v| (v, self.expr(v)));
         match (self.body.kind, ty) {
-            (BodyKind::Function { ret: Some(declared), .. }, Some((v, ty))) => self.expect(v, ty, declared),
+            (BodyKind::Function { ret: Some(declared), .. }, Some((v, ty))) => {
+                self.expect(v, ty, declared)
+            }
             (BodyKind::Function { ret: Some(declared), .. }, None) => {
-                self.error(range, "missing-return-value", format!("this function must return a `{declared}`"));
+                self.error(
+                    range,
+                    "missing-return-value",
+                    format!("this function must return a `{declared}`"),
+                );
             }
-            (BodyKind::Function { ret: None, .. }, Some((v, _))) => {
+            (BodyKind::Function { ret: None, .. }, Some((v, ty)))
+                if !matches!(ty, Ty::None | Ty::Unknown) =>
+            {
                 let range = self.body.expr_range(v);
-                self.error(range, "unexpected-return-value", "this function does not return a value".to_owned());
+                self.error(
+                    range,
+                    "unexpected-return-value",
+                    "this function does not return a value".to_owned(),
+                );
             }
-            (BodyKind::Event, Some((v, _))) => {
+            (BodyKind::Event, Some((v, ty))) if !matches!(ty, Ty::None | Ty::Unknown) => {
                 let range = self.body.expr_range(v);
-                self.error(range, "unexpected-return-value", "events cannot return a value".to_owned());
+                self.error(
+                    range,
+                    "unexpected-return-value",
+                    "events cannot return a value".to_owned(),
+                );
             }
             _ => {}
         }
@@ -233,7 +251,11 @@ impl Checker<'_, '_> {
             Expr::Def(def) => Some(*def),
             Expr::Field { def, .. } => *def,
             _ => {
-                self.error(range, "invalid-assignment", "this expression cannot be assigned".to_owned());
+                self.error(
+                    range,
+                    "invalid-assignment",
+                    "this expression cannot be assigned".to_owned(),
+                );
                 return;
             }
         };
@@ -314,7 +336,11 @@ impl Checker<'_, '_> {
                     Ty::Unknown => Ty::Unknown,
                     other => {
                         let range = self.body.expr_range(base);
-                        self.error(range, "not-an-array", format!("`{}` is not an array", other.display()));
+                        self.error(
+                            range,
+                            "not-an-array",
+                            format!("`{}` is not an array", other.display()),
+                        );
                         Ty::Unknown
                     }
                 }
@@ -324,7 +350,11 @@ impl Checker<'_, '_> {
                 if let Some(to) = ty
                     && !self.castable(from, to)
                 {
-                    self.error(range, "invalid-cast", format!("cannot cast `{}` to `{to}`", from.display()));
+                    self.error(
+                        range,
+                        "invalid-cast",
+                        format!("cannot cast `{}` to `{to}`", from.display()),
+                    );
                 }
                 Ty::of(ty)
             }
@@ -342,7 +372,11 @@ impl Checker<'_, '_> {
                     UnaryOp::Not => Ty::BOOL,
                     UnaryOp::Neg if ty.is_numeric() || ty == Ty::Unknown => ty,
                     UnaryOp::Neg => {
-                        self.error(range, "invalid-operator", format!("cannot negate `{}`", ty.display()));
+                        self.error(
+                            range,
+                            "invalid-operator",
+                            format!("cannot negate `{}`", ty.display()),
+                        );
                         Ty::Unknown
                     }
                 }
@@ -358,12 +392,18 @@ impl Checker<'_, '_> {
     fn binary(&mut self, op: BinaryOp, lhs: ExprId, l: Ty, rhs: ExprId, r: Ty) -> Ty {
         let range = self.body.expr_range(lhs).cover(self.body.expr_range(rhs));
         let unknown = l == Ty::Unknown || r == Ty::Unknown;
-        let numeric = |l: Ty, r: Ty| if l == Ty::FLOAT || r == Ty::FLOAT { Ty::FLOAT } else { Ty::INT };
+        let numeric =
+            |l: Ty, r: Ty| if l == Ty::FLOAT || r == Ty::FLOAT { Ty::FLOAT } else { Ty::INT };
         let invalid = |cx: &mut Self| {
             cx.error(
                 range,
                 "invalid-operator",
-                format!("cannot apply `{}` to `{}` and `{}`", op.as_str(), l.display(), r.display()),
+                format!(
+                    "cannot apply `{}` to `{}` and `{}`",
+                    op.as_str(),
+                    l.display(),
+                    r.display()
+                ),
             );
             Ty::Unknown
         };
@@ -379,7 +419,11 @@ impl Checker<'_, '_> {
                 if l.is_numeric() && r.is_numeric() { numeric(l, r) } else { invalid(self) }
             }
             BinaryOp::Rem => {
-                if l == Ty::INT && r == Ty::INT { Ty::INT } else { invalid(self) }
+                if l == Ty::INT && r == Ty::INT {
+                    Ty::INT
+                } else {
+                    invalid(self)
+                }
             }
             BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
                 if (l.is_numeric() && r.is_numeric()) || (l == Ty::STRING && r == Ty::STRING) {
@@ -411,18 +455,27 @@ impl Checker<'_, '_> {
                 let params: Vec<(Name, Option<TypeRef>, bool)> =
                     member.params.iter().map(|p| (p.name, p.ty, p.default.is_some())).collect();
                 self.check_args(range, member.name, &params, args, &arg_types);
-                if member.kind == MemberKind::Event { Ty::Void } else { member.ty.map_or(Ty::Void, Ty::Value) }
+                if member.kind == MemberKind::Event {
+                    Ty::None
+                } else {
+                    member.ty.map_or(Ty::None, Ty::Value)
+                }
             }
             Some(Def::Builtin(b, elem)) => {
                 let params: Vec<(Name, Option<TypeRef>, bool)> = match b {
                     Builtin::Find | Builtin::RFind => {
-                        vec![(Name::new("akElement"), elem, false), (Name::new("aiStartIndex"), Some(TypeRef::INT), true)]
+                        vec![
+                            (Name::new("akElement"), elem, false),
+                            (Name::new("aiStartIndex"), Some(TypeRef::INT), true),
+                        ]
                     }
-                    Builtin::GoToState => vec![(Name::new("asNewState"), Some(TypeRef::STRING), false)],
+                    Builtin::GoToState => {
+                        vec![(Name::new("asNewState"), Some(TypeRef::STRING), false)]
+                    }
                     _ => Vec::new(),
                 };
                 self.check_args(range, Name::new(b.name()), &params, args, &arg_types);
-                b.ty().map_or(Ty::Void, Ty::Value)
+                b.ty().map_or(Ty::None, Ty::Value)
             }
             _ => Ty::Unknown,
         }
@@ -463,10 +516,18 @@ impl Checker<'_, '_> {
                 self.expect(arg.value, ty, expected);
             }
         }
-        let missing: Vec<&str> =
-            params.iter().zip(&given).filter(|(p, g)| !**g && !p.2).map(|(p, _)| p.0.as_str()).collect();
+        let missing: Vec<&str> = params
+            .iter()
+            .zip(&given)
+            .filter(|(p, g)| !**g && !p.2)
+            .map(|(p, _)| p.0.as_str())
+            .collect();
         if !missing.is_empty() {
-            self.error(range, "wrong-arg-count", format!("missing arguments for `{name}`: {}", missing.join(", ")));
+            self.error(
+                range,
+                "wrong-arg-count",
+                format!("missing arguments for `{name}`: {}", missing.join(", ")),
+            );
         }
     }
 
@@ -480,8 +541,12 @@ impl Checker<'_, '_> {
                     _ => Ty::Unknown,
                 }
             }
-            Def::Param { file, member, param } => Ty::of(self.sema.member(file, member).params[param as usize].ty),
-            Def::Script { file } => self.sema.ws.file(file).index.name.map_or(Ty::Unknown, Ty::Script),
+            Def::Param { file, member, param } => {
+                Ty::of(self.sema.member(file, member).params[param as usize].ty)
+            }
+            Def::Script { file } => {
+                self.sema.ws.file(file).index.name.map_or(Ty::Unknown, Ty::Script)
+            }
             Def::Builtin(b, _) if !b.is_callable() => b.ty().map_or(Ty::Unknown, Ty::Value),
             _ => Ty::Unknown,
         }
@@ -506,8 +571,12 @@ impl Checker<'_, '_> {
     fn assignable(&self, from: Ty, to: TypeRef) -> bool {
         let from = match from {
             Ty::Unknown => return true,
-            Ty::Void | Ty::Script(_) => return false,
-            Ty::None => return to.array || to.object().is_some() || matches!(to.base, BaseType::Bool | BaseType::String) && !to.array,
+            Ty::Script(_) => return false,
+            Ty::None => {
+                return to.array
+                    || to.object().is_some()
+                    || matches!(to.base, BaseType::Bool | BaseType::String);
+            }
             Ty::Value(t) => t,
         };
         if from == to {
@@ -532,8 +601,8 @@ impl Checker<'_, '_> {
     fn castable(&self, from: Ty, to: TypeRef) -> bool {
         let from = match from {
             Ty::Unknown => return true,
-            Ty::Void | Ty::Script(_) => return false,
-            Ty::None => return to.array || to.object().is_some() || !to.array,
+            Ty::Script(_) => return false,
+            Ty::None => return true,
             Ty::Value(t) => t,
         };
         if self.assignable(Ty::Value(from), to) {

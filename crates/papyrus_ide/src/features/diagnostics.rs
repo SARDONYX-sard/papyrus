@@ -265,7 +265,10 @@ fn check_types(sema: &Sema<'_>, out: &mut Vec<Diagnostic>) {
                 let Some(body) = crate::hir::Body::lower(sema, node) else { continue };
                 let result = crate::typeck::check_body(sema, &body);
                 out.extend(
-                    result.errors.into_iter().map(|e| Diagnostic::error(e.range, e.code, e.message)),
+                    result
+                        .errors
+                        .into_iter()
+                        .map(|e| Diagnostic::error(e.range, e.code, e.message)),
                 );
             }
             SyntaxKind::VAR_DECL | SyntaxKind::PROPERTY | SyntaxKind::PARAM => {
