@@ -175,7 +175,7 @@
     "menus": {
       "editor/title": [
         {
-          "when": "resourceLangId == papyrus && papyrus.hasManifest",
+          "when": "resourceLangId == papyrus",
           "command": "papyrus.compile",
           "group": "navigation"
         }
@@ -183,24 +183,16 @@
       "commandPalette": [
         {
           "command": "papyrus.compile",
-          "when": "papyrus.hasManifest && resourceLangId == papyrus"
-        },
-        {
-          "command": "papyrus.compileAll",
-          "when": "papyrus.hasManifest"
+          "when": "resourceLangId == papyrus"
         },
         {
           "command": "papyrus.createManifest",
           "when": "!papyrus.hasManifest"
-        },
-        {
-          "command": "papyrus.compileSelected",
-          "when": "papyrus.hasManifest"
         }
       ],
       "explorer/context": [
         {
-          "when": "resourceExtname == .psc && papyrus.hasManifest",
+          "when": "resourceExtname == .psc",
           "command": "papyrus.compile",
           "group": "navigation@9"
         }
@@ -208,7 +200,7 @@
     },
     "keybindings": [
       {
-        "when": "editorLangId == papyrus && papyrus.hasManifest",
+        "when": "editorLangId == papyrus",
         "command": "papyrus.compile",
         "key": "ctrl+shift+b"
       }

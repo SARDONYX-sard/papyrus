@@ -103,8 +103,8 @@ impl Server {
     }
 
     /// The overall state shown by the client, with the problems: `error`,
-    /// `warning`, `limited` (no `papyrus.toml`: navigation works, compiling
-    /// does not) or `ok`.
+    /// `warning`, `limited` (no `papyrus.toml`: scripts compile with the
+    /// built-in compiler and the editor settings only) or `ok`.
     pub(crate) fn health(&self) -> (&'static str, Vec<String>) {
         let mut errors = Vec::new();
         let mut warnings = Vec::new();
@@ -385,9 +385,20 @@ impl Server {
         if let Some(error) = &self.manifest_error {
             return Err(format!("{} is invalid: {error}", papyrus_project::MANIFEST_NAME));
         }
-        let project = self.project.as_ref().ok_or_else(|| {
-            format!("no {} found in the workspace", papyrus_project::MANIFEST_NAME)
-        })?;
+        // Without manifest (limited mode), the scripts still compile with the
+        // built-in compiler, the configured imports and the known flags file.
+        let mut project = match &self.project {
+            Some(p) => p.clone(),
+            None => {
+                let root = self.roots.first().cloned().ok_or("no workspace folder")?;
+                let flags = self.flags_setting().or_else(|| self.ws.flags().path.clone());
+                Project::without_manifest(root, self.import_dirs(), flags)
+            }
+        };
+        // `papyrus_analyzer compile` takes the arguments of PapyrusCompiler.exe.
+        let exe = std::env::current_exe().map_err(|e| format!("cannot find the server: {e}"))?;
+        project.builtin_compiler = Some((exe, vec!["compile".to_owned()]));
+        let project = &project;
         let mut docs = params.files;
         docs.extend(params.text_document);
         let commands = if params.all || docs.is_empty() {

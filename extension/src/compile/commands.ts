@@ -32,18 +32,23 @@ export async function compileAll(): Promise<void> {
   await runCompile({ type: "papyrus", all: true });
 }
 
-/** `papyrus.compileSelected`: picks scripts of `[build] sources` (remembering the last pick) and compiles them. */
+/**
+ * `papyrus.compileSelected`: picks scripts of `[build] sources` (the workspace
+ * folders without papyrus.toml), remembering the last pick, and compiles them.
+ */
 export async function compileSelected(): Promise<void> {
   const context = state.context;
   if (!context) {
     return;
   }
+  const dirs =
+    state.sources.length > 0 ? state.sources : (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
   const found = await Promise.all(
-    state.sources.map((dir) => vscode.workspace.findFiles(new vscode.RelativePattern(vscode.Uri.file(dir), "**/*.psc"))),
+    dirs.map((dir) => vscode.workspace.findFiles(new vscode.RelativePattern(vscode.Uri.file(dir), "**/*.psc"))),
   );
   const files = [...new Set(found.flat().map((u) => u.fsPath))].sort();
   if (files.length === 0) {
-    void vscode.window.showWarningMessage("No scripts found in `[build] sources` of papyrus.toml.");
+    void vscode.window.showWarningMessage("No Papyrus scripts found to compile.");
     return;
   }
   const previous = new Set(context.workspaceState.get<string[]>(SELECTION_KEY, []));

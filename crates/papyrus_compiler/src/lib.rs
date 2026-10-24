@@ -14,6 +14,7 @@ pub mod cli;
 mod codegen;
 pub mod ir;
 mod literal;
+pub mod loader;
 pub mod log;
 pub mod opt;
 mod script;

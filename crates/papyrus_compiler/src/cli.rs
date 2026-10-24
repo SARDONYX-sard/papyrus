@@ -14,6 +14,9 @@
 //!   -asmonly           only write the assembly
 //!   -release, -final   accepted for Fallout 4 compatibility; no effect
 //!   -nodebuginfo       leave out line numbers (not in the official compiler)
+//!   -diagnostics=<f>   `human` (snippets, the default on a terminal) or
+//!                      `official` (`file(line,col): message`, the default otherwise,
+//!                      as `PapyrusCompiler.exe` prints them for problem matchers)
 //!   -log[=<file>]      log what the compiler does, to stderr or a file
 //!   -loglevel=<filter> log filter like `RUST_LOG` (default: `info`)
 //! ```
@@ -31,7 +34,7 @@ use std::{
 };
 
 use annotate_snippets::{AnnotationKind, Level, Renderer, Snippet};
-use papyrus_ide::{Diagnostic, Origin, Severity, Workspace};
+use papyrus_ide::{Diagnostic, Severity, Workspace};
 
 use crate::{
     CompileError, CompileOptions,
@@ -57,9 +60,34 @@ arguments:
   -keepasm           also write the assembly (.pas) next to the .pex
   -asmonly           only write the assembly
   -nodebuginfo       leave out line numbers
+  -diagnostics=<f>   human (default on a terminal) or official (file(line,col): message)
   -log[=<file>]      log what the compiler does, to stderr or a file
   -loglevel=<filter> log filter: error, warn, info (default), debug, trace
-  -?                 print this help";
+  -?                 print this help
+
+examples:
+  Compile one script found in the import directories:
+    papyrus_compiler MyQuestScript -i=\"Scripts\\Source;C:\\Skyrim\\Data\\Scripts\\Source\" -o=Scripts -f=TESV_Papyrus_Flags.flg
+
+  Compile every script of a folder, optimized, only reporting failures:
+    papyrus_compiler Scripts\\Source -all -op -q -i=\"Scripts\\Source;C:\\Skyrim\\Data\\Scripts\\Source\" -o=Scripts -f=TESV_Papyrus_Flags.flg
+
+  Look at the generated code without writing a .pex:
+    papyrus_compiler Scripts\\Source\\MyQuestScript.psc -asmonly -o=out -i=C:\\Skyrim\\Data\\Scripts\\Source
+
+  Log what happens to a file, functions included:
+    papyrus_compiler MyQuestScript -i=... -log=compile.log -loglevel=debug
+
+  In PowerShell, quote arguments containing dots: \"-f=TESV_Papyrus_Flags.flg\".";
+
+/// How errors are printed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DiagnosticFormat {
+    /// With the source lines, for people.
+    Human,
+    /// `file(line,col): message`, like `PapyrusCompiler.exe`.
+    Official,
+}
 
 /// What to write.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -95,6 +123,8 @@ pub struct Args {
     pub options: CompileOptions,
     /// `-?`
     pub help: bool,
+    /// `-diagnostics`: `None` picks by whether stderr is a terminal.
+    pub diagnostics: Option<DiagnosticFormat>,
     /// `-log`: where progress logs go.
     pub log: Option<LogTarget>,
     /// `-loglevel`
@@ -115,6 +145,7 @@ impl Args {
             asm: AsmMode::None,
             options: CompileOptions::default(),
             help: false,
+            diagnostics: None,
             log: None,
             log_level: "info".to_owned(),
         };
@@ -155,6 +186,13 @@ impl Args {
                 "asmonly" => out.asm = AsmMode::Only,
                 "release" | "final" => {}
                 "nodebuginfo" => out.options.debug_info = false,
+                "diagnostics" => {
+                    out.diagnostics = Some(match value()?.to_ascii_lowercase().as_str() {
+                        "human" => DiagnosticFormat::Human,
+                        "official" => DiagnosticFormat::Official,
+                        other => return Err(format!("unknown diagnostics format `{other}`")),
+                    });
+                }
                 // The file is optional: only take it after `=`.
                 "log" => {
                     out.log = Some(
@@ -224,29 +262,16 @@ pub fn run_args(args: &Args) -> i32 {
             }
         }
     }
-    for path in &scripts {
-        if let Some(text) = papyrus_ide::read_file(path) {
-            ws.set_disk_index(path.clone(), papyrus_ide::index_text(&text), Origin::Workspace);
-        }
-    }
     log::info!("{} scripts to compile", scripts.len());
-    for (i, dir) in args.imports.iter().enumerate() {
-        let start = std::time::Instant::now();
-        let mut files = Vec::new();
-        collect(dir, &mut files, true);
-        log::info!("indexing {} scripts of {}", files.len(), dir.display());
-        let count = files.len();
-        for path in files {
-            if let Some(text) = papyrus_ide::read_file(&path) {
-                let origin = Origin::Import(i.min(u16::MAX as usize) as u16);
-                ws.set_disk_index(path, papyrus_ide::index_text(&text), origin);
-            }
-        }
-        log::info!("indexed {count} scripts in {:?}", start.elapsed());
-    }
+    crate::loader::load(&mut ws, &scripts, &args.imports);
 
-    let renderer =
-        if std::io::stderr().is_terminal() { Renderer::styled() } else { Renderer::plain() };
+    let terminal = std::io::stderr().is_terminal();
+    let format = args.diagnostics.unwrap_or(if terminal {
+        DiagnosticFormat::Human
+    } else {
+        DiagnosticFormat::Official
+    });
+    let renderer = if terminal { Renderer::styled() } else { Renderer::plain() };
     let output = args.output.clone().unwrap_or_else(|| cwd.clone());
     let mut failed = 0;
     for path in &scripts {
@@ -273,7 +298,14 @@ pub fn run_args(args: &Args) -> i32 {
             Err(CompileError::Diagnostics(diags)) => {
                 let text = ws.text(file).unwrap_or_default();
                 for d in &diags {
-                    eprintln!("{}", render(&renderer, path, &text, d));
+                    match format {
+                        DiagnosticFormat::Human => {
+                            eprintln!("{}", render(&renderer, path, &text, d))
+                        }
+                        DiagnosticFormat::Official => {
+                            eprintln!("{}", render_official(path, &text, d))
+                        }
+                    }
                 }
                 eprintln!("No output generated for {}, compilation failed.", path.display());
                 failed += 1;
@@ -367,6 +399,15 @@ fn render(renderer: &Renderer, path: &Path, text: &str, d: &Diagnostic) -> Strin
             .annotation(AnnotationKind::Primary.span(start..end).label(d.code)),
     )];
     renderer.render(report)
+}
+
+/// `file(line,col): message`, one-based, as `PapyrusCompiler.exe` prints.
+fn render_official(path: &Path, text: &str, d: &Diagnostic) -> String {
+    let start = usize::from(d.range.start()).min(text.len());
+    let before = &text[..text.floor_char_boundary(start)];
+    let line = before.matches('\n').count() + 1;
+    let col = before.rsplit('\n').next().map_or(0, |l| l.chars().count()) + 1;
+    format!("{}({line},{col}): {}", path.display(), d.message)
 }
 
 /// The `.psc` files of `path`.

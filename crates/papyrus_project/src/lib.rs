@@ -10,7 +10,7 @@
 //! version = "0.1.0"
 //!
 
-//! [compiler]
+//! [compiler]                                    # optional: without, the built-in compiler
 //! path = "${SKYRIM_DIR}/Papyrus Compiler/PapyrusCompiler.exe"
 //! args = []                                     # extra arguments
 //!
@@ -305,8 +305,15 @@ pub struct Project {
     pub description: Option<String>,
     /// `package.authors`.
     pub authors: Vec<String>,
-    /// `compiler.path`.
+    /// `compiler.path`. Without it, [`Project::builtin_compiler`] is used.
     pub compiler: Option<PathBuf>,
+    /// The built-in compiler, set by the tool using the project: the program
+    /// and its leading arguments (e.g. `papyrus_analyzer compile`), followed
+    /// by the arguments of `PapyrusCompiler.exe`.
+    pub builtin_compiler: Option<(PathBuf, Vec<String>)>,
+    /// No manifest: the `.pex` of `Scripts/Source/X.psc` goes to `Scripts`,
+    /// others next to their source.
+    pub loose: bool,
     /// `compiler.args`: extra compiler arguments.
     pub extra_args: Vec<String>,
     /// `build.sources`: directories of the scripts of the project.
@@ -539,6 +546,8 @@ pub fn parse(
         description: raw.package.description,
         authors: raw.package.authors.unwrap_or_default(),
         compiler,
+        builtin_compiler: None,
+        loose: false,
         extra_args,
         sources,
         output,
@@ -636,6 +645,40 @@ pub fn resolve_path(root: &Path, value: &str) -> PathBuf {
     path.components().collect()
 }
 impl Project {
+    /// A project for a folder without manifest: its scripts compile with the
+    /// built-in compiler (set [`Project::builtin_compiler`]), with the given
+    /// imports and flags file. Each `.pex` goes to the `Scripts` folder above
+    /// `Scripts/Source`, or else next to its source.
+    pub fn without_manifest(
+        root: PathBuf,
+        imports: Vec<PathBuf>,
+        flags: Option<PathBuf>,
+    ) -> Project {
+        Project {
+            manifest_path: root.join(MANIFEST_NAME),
+            output: root.clone(),
+            sources: vec![root.clone()],
+            root,
+            name: None,
+            version: None,
+            description: None,
+            authors: Vec::new(),
+            compiler: None,
+            builtin_compiler: None,
+            loose: true,
+            extra_args: Vec::new(),
+            imports,
+            flags,
+            optimize: false,
+            release: false,
+            r#final: false,
+            quiet: true,
+            format: FormatSettings::default(),
+            variables: BTreeMap::new(),
+            warnings: Vec::new(),
+        }
+    }
+
     /// Every directory that provides scripts for name resolution, in compiler
     /// lookup order: the sources, then the imports.
     pub fn import_dirs(&self) -> Vec<PathBuf> {
@@ -694,6 +737,7 @@ impl Project {
             .filter_map(|src| parent.strip_prefix(src).ok())
             .min_by_key(|rel| rel.components().count());
         let output = match relative {
+            _ if self.loose => loose_output(parent),
             Some(rel) if rel.components().next().is_some() => self.output.join(rel),
             _ => self.output.clone(),
         };
@@ -725,16 +769,24 @@ impl Project {
         imports: &[PathBuf],
         output: PathBuf,
     ) -> Result<CompileCommand, String> {
-        let program = self
-            .compiler
-            .clone()
-            .ok_or_else(|| format!("set `[compiler] path` in {}", self.manifest_path.display()))?;
-        let flags = self
-            .flags
-            .as_ref()
-            .ok_or_else(|| format!("set `[build] flags` in {}", self.manifest_path.display()))?;
-        let mut args = vec![script.display().to_string()];
-        args.push(format!("-f={}", flags.display()));
+        let (program, mut args) = match (&self.compiler, &self.builtin_compiler) {
+            (Some(path), _) => {
+                // The official compiler needs a flags file.
+                if self.flags.is_none() {
+                    return Err(format!("set `[build] flags` in {}", self.manifest_path.display()));
+                }
+                (path.clone(), Vec::new())
+            }
+            (None, Some((program, prefix))) => (program.clone(), prefix.clone()),
+            (None, None) => {
+                return Err(format!("set `[compiler] path` in {}", self.manifest_path.display()));
+            }
+        };
+        args.push(script.display().to_string());
+        // The built-in compiler knows the Skyrim flags without a file.
+        if let Some(flags) = &self.flags {
+            args.push(format!("-f={}", flags.display()));
+        }
         let imports: Vec<String> = imports.iter().map(|d| d.display().to_string()).collect();
         args.push(format!("-import={}", imports.join(";")));
         args.push(format!("-output={}", output.display()));
@@ -750,6 +802,20 @@ impl Project {
         }
         args.extend(self.extra_args.iter().cloned());
         Ok(CompileCommand { program, args, cwd: self.root.clone(), output })
+    }
+}
+
+/// Where the `.pex` of a script in `dir` goes without manifest: the usual mod
+/// layout keeps sources in `Scripts/Source` and `.pex` files in `Scripts`.
+fn loose_output(dir: &Path) -> PathBuf {
+    let is = |p: Option<&Path>, name: &str| {
+        p.and_then(Path::file_name).is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(name))
+    };
+    match dir.parent() {
+        Some(scripts) if is(Some(dir), "Source") && is(Some(scripts), "Scripts") => {
+            scripts.to_path_buf()
+        }
+        _ => dir.to_path_buf(),
     }
 }
 
@@ -787,6 +853,7 @@ version = "0.1.0"
 [var]
 SKYRIM_DIR = "${game:SkyrimSE}"
 
+# Without `path`, the built-in compiler of papyrus_analyzer is used.
 [compiler]
 path = "${SKYRIM_DIR}/Papyrus Compiler/PapyrusCompiler.exe"
 # Extra arguments passed as is.
@@ -975,8 +1042,25 @@ mod tests {
                 .starts_with("-import=/m/papyrus/quests/main;/m/papyrus;")
         );
 
-        let bare = parse_str("").unwrap();
+        let mut bare = parse_str("").unwrap();
         assert!(bare.compile_file(Path::new("/m/X.psc")).unwrap_err().contains("[compiler] path"));
+        // Without `[compiler] path`, the built-in compiler, which needs no
+        // flags file.
+        bare.builtin_compiler = Some((PathBuf::from("pa"), vec!["compile".to_owned()]));
+        let c = bare.compile_file(Path::new("/m/X.psc")).unwrap();
+        assert_eq!(s(&c.program), "pa");
+        assert_eq!(c.args[..2], ["compile".to_owned(), "/m/X.psc".to_owned()]);
+        assert!(c.args[2].starts_with("-import="));
+    }
+
+    #[test]
+    fn without_manifest() {
+        let mut p =
+            Project::without_manifest(PathBuf::from("/mod"), vec![PathBuf::from("/game")], None);
+        p.builtin_compiler = Some((PathBuf::from("pa"), Vec::new()));
+        let output = |script: &str| s(&p.compile_file(Path::new(script)).unwrap().output);
+        assert_eq!(output("/mod/Scripts/Source/A.psc"), "/mod/Scripts");
+        assert_eq!(output("/mod/other/B.psc"), "/mod/other");
     }
 
     #[test]

@@ -12,7 +12,10 @@
 //! - calls need the right number of arguments, of assignable types;
 //! - `Return` needs a value exactly in functions with a return type;
 //! - `AutoReadOnly` properties and full properties without `Set` cannot be
-//!   assigned.
+//!   assigned;
+//! - `==` and `!=` compare objects only when one extends the other;
+//! - `New Type[size]` takes an integer literal from 1 to 128;
+//! - `Self` and `Parent` do not exist in `Global` functions.
 //!
 //! The compiler types a call of a function without return type as `None`:
 //! `x = voidCall()` and `Return voidCall()` in a function without return
@@ -98,35 +101,71 @@ pub fn check_body(sema: &Sema<'_>, body: &Body) -> TypeckResult {
     TypeckResult { types, errors: cx.errors }
 }
 
-/// Checks that the initial value of a declaration (a script variable, a
-/// property or a parameter default) fits its type. Only literals are checked,
-/// which is what the compiler accepts there.
+/// Checks the initial value of a declaration (a script variable, a property
+/// or a parameter default). The compiler only accepts a literal (numbers
+/// possibly negated) of exactly the declared type, without conversion: a
+/// `Float` cannot be initialized with `1`, nor a `String` with `None`; only
+/// objects and arrays take `None`. `AutoReadOnly` properties are the
+/// exception (`convert`): their value is returned by a getter, with the
+/// implicit conversions of `Return`.
 pub fn check_initializer(
-    sema: &Sema<'_>,
     declared: Option<TypeRef>,
     value: papyrus_parser::ast::Expr<'_>,
+    convert: bool,
 ) -> Option<TypeError> {
-    let declared = declared?;
-    let ty = match sema.infer(value)? {
-        crate::sema::Ty::Value(t) => Ty::Value(t),
-        crate::sema::Ty::None => Ty::None,
-        crate::sema::Ty::Static(_) => return None,
+    use papyrus_parser::ast::{AstNode, Expr, LiteralKind};
+
+    let range = value.syntax().trimmed_range();
+    let literal = match value {
+        Expr::Literal(lit) => lit.kind(),
+        Expr::Prefix(p)
+            if p.op().is_some_and(|t| t.kind() == papyrus_parser::SyntaxKind::MINUS) =>
+        {
+            match p.expr() {
+                Some(Expr::Literal(lit))
+                    if matches!(lit.kind(), Some(LiteralKind::Int | LiteralKind::Float)) =>
+                {
+                    lit.kind()
+                }
+                _ => None,
+            }
+        }
+        _ => None,
     };
-    let checker = Checker { sema, body: &EMPTY_BODY, types: Vec::new(), errors: Vec::new() };
-    (!checker.assignable(ty, declared)).then(|| TypeError {
-        range: papyrus_parser::ast::AstNode::syntax(&value).trimmed_range(),
-        code: "type-mismatch",
-        message: format!("expected `{declared}`, found `{}`", ty.display()),
+    let Some(kind) = literal else {
+        return Some(TypeError {
+            range,
+            code: "non-literal-initializer",
+            message: "initial values must be literals".to_owned(),
+        });
+    };
+    let declared = declared?;
+    let from = match kind {
+        LiteralKind::None => None,
+        LiteralKind::Int => Some(TypeRef::INT),
+        LiteralKind::Float => Some(TypeRef::FLOAT),
+        LiteralKind::String => Some(TypeRef::STRING),
+        LiteralKind::Bool => Some(TypeRef::BOOL),
+    };
+    let exact = match from {
+        None => declared.array || declared.object().is_some(),
+        Some(t) => t == declared,
+    };
+    // The implicit conversions to `Bool`, `String` and `Int` to `Float`.
+    let converted = convert
+        && !declared.array
+        && (matches!(declared.base, BaseType::Bool | BaseType::String)
+            || (declared == TypeRef::FLOAT && from == Some(TypeRef::INT)));
+    let ok = exact || converted;
+    (!ok).then(|| TypeError {
+        range,
+        code: "initializer-mismatch",
+        message: format!(
+            "cannot initialize a `{declared}` with `{}`: initial values are not converted",
+            &value.syntax().source()[range]
+        ),
     })
 }
-
-static EMPTY_BODY: Body = Body {
-    kind: BodyKind::Event,
-    exprs: Vec::new(),
-    stmts: Vec::new(),
-    locals: Vec::new(),
-    root: Vec::new(),
-};
 
 struct Checker<'s, 'a> {
     sema: &'s Sema<'a>,
@@ -304,6 +343,17 @@ impl Checker<'_, '_> {
             },
             Expr::Local(local) => Ty::of(self.body.local(local).ty),
             Expr::Def(def) => self.def_value_ty(def),
+            Expr::SelfRef | Expr::ParentRef
+                if matches!(self.body.kind, BodyKind::Function { global: true, .. }) =>
+            {
+                let name = if self.body.expr(id) == &Expr::SelfRef { "Self" } else { "Parent" };
+                self.error(
+                    range,
+                    "global-self",
+                    format!("`{name}` does not exist in a Global function"),
+                );
+                Ty::Unknown
+            }
             Expr::SelfRef => match self.sema.script_name() {
                 Some(name) => Ty::Value(TypeRef::scalar(BaseType::Object(name))),
                 None => Ty::Unknown,
@@ -359,8 +409,8 @@ impl Checker<'_, '_> {
                 Ty::of(ty)
             }
             Expr::New { elem, size } => {
-                let size_ty = self.expr(size);
-                self.expect(size, size_ty, TypeRef::INT);
+                self.expr(size);
+                self.array_size(size);
                 match elem {
                     Some(e) => Ty::Value(TypeRef { base: e.base, array: true }),
                     None => Ty::Unknown,
@@ -408,7 +458,18 @@ impl Checker<'_, '_> {
             Ty::Unknown
         };
         match op {
-            BinaryOp::And | BinaryOp::Or | BinaryOp::Eq | BinaryOp::Ne => Ty::BOOL,
+            BinaryOp::Eq | BinaryOp::Ne => {
+                // Objects compare only along the `extends` chain.
+                if let (Ty::Value(a), Ty::Value(b)) = (l, r)
+                    && let (Some(a), Some(b)) = (a.object(), b.object())
+                    && self.extends(a, b) == Some(false)
+                    && self.extends(b, a) == Some(false)
+                {
+                    invalid(self);
+                }
+                Ty::BOOL
+            }
+            BinaryOp::And | BinaryOp::Or => Ty::BOOL,
             BinaryOp::Add if l == Ty::STRING || r == Ty::STRING => Ty::STRING,
             _ if unknown => match op {
                 BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => Ty::BOOL,
@@ -549,6 +610,35 @@ impl Checker<'_, '_> {
             }
             Def::Builtin(b, _) if !b.is_callable() => b.ty().map_or(Ty::Unknown, Ty::Value),
             _ => Ty::Unknown,
+        }
+    }
+
+    /// The size of `New Type[size]` must be an integer literal from 1 to 128.
+    fn array_size(&mut self, size: ExprId) {
+        let range = self.body.expr_range(size);
+        let value = match self.body.expr(size) {
+            Expr::Literal(Literal::Int) => {
+                let text = self.sema.text.get(usize::from(range.start())..usize::from(range.end()));
+                text.and_then(|t| match t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
+                    Some(hex) => i64::from_str_radix(hex, 16).ok(),
+                    None => t.parse::<i64>().ok(),
+                })
+            }
+            Expr::Missing => return,
+            _ => None,
+        };
+        match value {
+            Some(1..=128) => {}
+            Some(_) => self.error(
+                range,
+                "array-size",
+                "arrays must have between 1 and 128 elements".to_owned(),
+            ),
+            None => self.error(
+                range,
+                "array-size",
+                "the size of a new array must be an integer literal (1 to 128)".to_owned(),
+            ),
         }
     }
 

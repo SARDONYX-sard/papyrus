@@ -24,7 +24,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand("papyrus.compileSelected", compileSelected),
     vscode.commands.registerCommand("papyrus.createManifest", createManifest),
     vscode.tasks.registerTaskProvider("papyrus", {
-      provideTasks: () => (state.hasManifest ? [compileTask({ type: "papyrus", all: true })] : []),
+      provideTasks: () => [compileTask({ type: "papyrus", all: true })],
       resolveTask: (task) => compileTask(task.definition as PapyrusTaskDefinition),
     }),
   );

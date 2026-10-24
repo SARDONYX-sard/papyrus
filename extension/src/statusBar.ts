@@ -45,14 +45,12 @@ export function updateStatus(status: ServerStatus): void {
   state.hasManifest = !!status.manifest;
   state.sources = status.sources ?? [];
   void vscode.commands.executeCommand("setContext", "papyrus.hasManifest", state.hasManifest);
-  if (state.hasManifest) {
-    compileItem.show();
-  } else {
-    compileItem.hide();
-  }
+  // Without papyrus.toml, the built-in compiler still compiles.
+  compileItem.show();
 
   // Red for errors, yellow for warnings, blue without papyrus.toml (limited
-  // mode: no compiling), green when everything resolves.
+  // mode: the built-in compiler with the editor settings), green when
+  // everything resolves.
   const health = status.health ?? "ok";
   const icon = { ok: "$(check)", limited: "$(info)", warning: "$(warning)", error: "$(error)" }[health];
   const mode = health === "limited" ? " (limited)" : "";
@@ -76,7 +74,7 @@ export function updateStatus(status: ServerStatus): void {
   statusItem.tooltip = status.indexing
     ? "Indexing Papyrus scripts..."
     : `${status.files} scripts indexed, ${status.openFiles} open` +
-      (state.hasManifest ? "" : "\nLimited mode: no papyrus.toml, compiling is disabled. Click to create one.") +
+      (state.hasManifest ? "" : "\nLimited mode: no papyrus.toml, scripts compile with the built-in compiler and the editor settings. Click to create one.") +
       problems;
   statusItem.show();
 
