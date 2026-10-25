@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <!-- .pex: the compiled scroll, a sealed cube of bytecode, purple. -->
+  <path d="M8 1.5l5.5 3v7L8 14.5l-5.5-3v-7z" fill="#a074c4"/>
+  <path d="M8 1.5l5.5 3L8 7.5 2.5 4.5z" fill="#c6a2e6"/>
+  <path d="M8 7.5v7" stroke="#6d4591" stroke-width="1"/>
+</svg>

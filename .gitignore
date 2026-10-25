@@ -1,5 +1,5 @@
-/target
-/build/
-/node_modules/
+**/target
+**/build/
+**/node_modules/
 *.visx
 *.vsix

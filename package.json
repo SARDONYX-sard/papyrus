@@ -36,7 +36,11 @@
         "extensions": [
           ".psc"
         ],
-        "configuration": "./language-configuration.json"
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./resources/psc.svg",
+          "dark": "./resources/psc.svg"
+        }
       },
       {
         "extensions": [
@@ -46,7 +50,24 @@
           "Papyrus Flags"
         ],
         "configuration": "./flags-language-configuration.json",
-        "id": "papyrus-flags"
+        "id": "papyrus-flags",
+        "icon": {
+          "light": "./resources/flg.svg",
+          "dark": "./resources/flg.svg"
+        }
+      },
+      {
+        "id": "papyrus-compiled",
+        "aliases": [
+          "Papyrus Compiled Script"
+        ],
+        "extensions": [
+          ".pex"
+        ],
+        "icon": {
+          "light": "./resources/pex.svg",
+          "dark": "./resources/pex.svg"
+        }
       }
     ],
     "grammars": [

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <!-- .flg: a flag, teal. -->
+  <path d="M3.5 1.5v13" stroke="#5f8a8a" stroke-width="1.5" stroke-linecap="round"/>
+  <path d="M4.5 2h8.5l-2 3 2 3H4.5z" fill="#41b3a3"/>
+</svg>
