@@ -13,6 +13,7 @@ mod fmt;
 mod handlers;
 mod lint;
 mod project;
+mod run;
 mod server;
 
 use lsp_types::{
@@ -46,6 +47,12 @@ fn main() -> anyhow::Result<()> {
     }
     if args.first().is_some_and(|a| a == "lint") {
         std::process::exit(lint::run(&args[1..]));
+    }
+    if args.first().is_some_and(|a| a == "test") {
+        std::process::exit(run::test(&args[1..]));
+    }
+    if args.first().is_some_and(|a| a == "run") {
+        std::process::exit(run::run(&args[1..]));
     }
     if args.first().is_some_and(|a| a == "fmt") {
         let code = fmt::run(&args[1..]);

@@ -435,6 +435,38 @@ impl Server {
                 data: None,
             });
         }
+        // `▶ Run test` above `; #[test]` functions: the client runs
+        // `papyrus_analyzer run Script.Function`.
+        if let (Some(text), Some(script)) = (self.ws.text(file), self.ws.file(file).index.name) {
+            use papyrus_parser::ast::{self, AstNode};
+            let parse = papyrus_parser::parse(&text);
+            for attr in papyrus_parser::attrs::attributes(parse.syntax_node()) {
+                if attr.inner || !attr.path.eq_ignore_ascii_case("test") {
+                    continue;
+                }
+                let node = parse.syntax_node().covering_node(attr.target);
+                let Some(name) = std::iter::once(node)
+                    .chain(node.ancestors())
+                    .find_map(ast::Function::cast)
+                    .and_then(|f| f.name())
+                else {
+                    continue;
+                };
+                let line = lines.position(attr.target.start()).line;
+                lenses.push(CodeLens {
+                    range: lsp_types::Range::new(Position::new(line, 0), Position::new(line, 0)),
+                    command: Some(Command {
+                        title: "▶\u{fe0e} Run test".to_owned(),
+                        command: "papyrus.runTest".to_owned(),
+                        arguments: Some(vec![
+                            uri.clone(),
+                            serde_json::Value::String(format!("{}.{}", script, name.text())),
+                        ]),
+                    }),
+                    data: None,
+                });
+            }
+        }
         Some(lenses)
     }
 

@@ -29,6 +29,7 @@ use crate::{Group, LINTS, is_known_name};
 const ATTRIBUTES: &[(&str, &str)] = &[
     ("allow", "allow lints: `allow(unused_local, style)`"),
     ("fmt::skip", "keep the code as written by the formatter"),
+    ("test", "a test: `papyrus_analyzer test` runs it, it fails on errors or `False`"),
 ];
 
 /// Whether `names` (`None`: every lint) cover the lint `code`.
@@ -362,7 +363,7 @@ mod tests {
             super::attribute_completions(src, offset)
                 .map(|(_, items)| items.into_iter().map(|i| i.0).collect::<Vec<_>>())
         };
-        assert_eq!(names("; #[").unwrap(), ["allow", "fmt::skip"]);
+        assert_eq!(names("; #[").unwrap(), ["allow", "fmt::skip", "test"]);
         let lints = names("Int x ; #[allow(unused_local, un").unwrap();
         assert!(
             lints.contains(&"unchecked_cast".to_owned()) && lints.contains(&"style".to_owned())

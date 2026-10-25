@@ -148,6 +148,11 @@ pub(crate) fn names(ws: &Workspace, file: FileId) -> papyrus_fmt::Names {
 /// flags file, for name resolution (`fmt`, `lint`): the imports of the
 /// `papyrus.toml` of the current directory, else the game scripts.
 pub(crate) fn workspace(scripts: &[PathBuf]) -> Workspace {
+    workspace_with_imports(scripts).0
+}
+
+/// Like [`workspace`], with the import directories, to load more scripts later.
+pub(crate) fn workspace_with_imports(scripts: &[PathBuf]) -> (Workspace, Vec<PathBuf>) {
     let cwd = std::env::current_dir().unwrap_or_default();
     let vars = papyrus_project::Variables::for_command_line(&cwd);
     let manifest =
@@ -179,7 +184,7 @@ pub(crate) fn workspace(scripts: &[PathBuf]) -> Workspace {
     {
         ws.set_flags_file(path, Arc::from(text));
     }
-    ws
+    (ws, imports)
 }
 
 fn collect(path: &Path, out: &mut Vec<PathBuf>) {

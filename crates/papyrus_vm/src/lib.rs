@@ -1,0 +1,666 @@
+//! A small Papyrus virtual machine, to run scripts outside of the game, in
+//! tests for example.
+//!
+//! It runs the code of `.pex` files ([`Script::from_pex`]), loaded on demand
+//! through a [`ScriptLoader`]. Calls dispatch like in the game: through the
+//! `extends` chain, the functions of the current state first; `Parent.`
+//! starts at the parent of the calling script.
+//!
+//! Natives have no code. A native call runs, in order:
+//!
+//! 1. the implementation registered for `Script.Function`
+//!    ([`Vm::register_native`]); `Debug.Trace`, `Math.*` and a few `Utility`
+//!    functions are built in, see [`natives`];
+//! 2. else nothing: the default value of the return type (`None`, `0`,
+//!    `False`, `""`).
+//!
+//! Every native call is recorded in [`Vm::native_calls`], so that tests can
+//! check what the script asked the game to do.
+//!
+//! Unlike the game, one thread runs everything: a call runs to completion,
+//! `Utility.Wait` only advances [`Vm::clock`]. Errors the game logs (a call on
+//! `None`, an index out of bounds) go to [`Vm::errors`], and the code goes on
+//! with a default value, like in the game.
+
+pub mod natives;
+mod script;
+mod value;
+
+use std::rc::Rc;
+
+use papyrus_pex::pex::OpCode;
+use rustc_hash::FxHashMap;
+
+use crate::script::{Func, Operand, key};
+pub use crate::{
+    script::Script,
+    value::{ObjId, Value},
+};
+
+/// Gives the scripts the machine needs, by name.
+pub trait ScriptLoader {
+    /// The script `name` (any case), `None` when unknown.
+    fn load(&mut self, name: &str) -> Option<Script>;
+}
+
+/// A native implementation: the machine, `Self` (for non-global functions)
+/// and the arguments.
+pub type NativeFn = Rc<dyn Fn(&mut Vm, Option<ObjId>, &[Value]) -> Value>;
+
+/// A recorded native call.
+#[derive(Clone, Debug)]
+pub struct NativeCall {
+    /// The script declaring the native, as declared.
+    pub script: String,
+    /// The function, as declared.
+    pub function: String,
+    /// The arguments.
+    pub args: Vec<Value>,
+    /// Whether an implementation ran (else: the default value).
+    pub implemented: bool,
+}
+
+/// An error of the machine itself, which stops the run.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum VmError {
+    /// No script of that name.
+    UnknownScript(String),
+    /// No function of that name.
+    UnknownFunction(String),
+    /// Too many instructions: probably an endless loop.
+    StepLimit,
+    /// Calls nested too deep: probably an endless recursion.
+    StackOverflow,
+}
+
+impl std::fmt::Display for VmError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            VmError::UnknownScript(s) => write!(f, "unknown script `{s}`"),
+            VmError::UnknownFunction(s) => write!(f, "unknown function `{s}`"),
+            VmError::StepLimit => f.write_str("too many instructions (endless loop?)"),
+            VmError::StackOverflow => f.write_str("calls nested too deep (endless recursion?)"),
+        }
+    }
+}
+
+struct Instance {
+    /// The script, lowercase.
+    script: String,
+    /// The variables of the script and its parents.
+    vars: FxHashMap<String, Value>,
+    types: FxHashMap<String, String>,
+    /// The current state, as written.
+    state: String,
+}
+
+struct Frame {
+    locals: FxHashMap<String, Value>,
+    types: FxHashMap<String, String>,
+    this: Option<ObjId>,
+    /// The script defining the running function, lowercase.
+    script: String,
+}
+
+/// The machine.
+pub struct Vm {
+    loader: Box<dyn ScriptLoader>,
+    scripts: FxHashMap<String, Option<Rc<Script>>>,
+    objects: Vec<Instance>,
+    natives: FxHashMap<String, NativeFn>,
+    /// What `Debug.Trace`, `Debug.Notification`... printed.
+    pub output: Vec<String>,
+    /// Errors the game would log; the code went on.
+    pub errors: Vec<String>,
+    /// Every native call, in order.
+    pub native_calls: Vec<NativeCall>,
+    /// Seconds of game time, advanced by `Utility.Wait`.
+    pub clock: f32,
+    /// The state of `Utility.Random*`, fixed for reproducible runs.
+    pub seed: u64,
+    /// Instructions left before [`VmError::StepLimit`].
+    pub step_limit: u64,
+    depth: usize,
+}
+
+impl Vm {
+    /// A machine loading scripts with `loader`, with the built-in natives.
+    pub fn new(loader: impl ScriptLoader + 'static) -> Vm {
+        let mut vm = Vm {
+            loader: Box::new(loader),
+            scripts: FxHashMap::default(),
+            objects: Vec::new(),
+            natives: FxHashMap::default(),
+            output: Vec::new(),
+            errors: Vec::new(),
+            native_calls: Vec::new(),
+            clock: 0.0,
+            seed: 0x2545_f491_4f6c_dd1d,
+            step_limit: 10_000_000,
+            depth: 0,
+        };
+        natives::register_builtins(&mut vm);
+        vm
+    }
+
+    /// Implements the native `script.function` (any case).
+    pub fn register_native(
+        &mut self,
+        script: &str,
+        function: &str,
+        f: impl Fn(&mut Vm, Option<ObjId>, &[Value]) -> Value + 'static,
+    ) {
+        self.natives.insert(format!("{}.{}", key(script), key(function)), Rc::new(f));
+    }
+
+    fn script(&mut self, name: &str) -> Option<Rc<Script>> {
+        let k = key(name);
+        if let Some(s) = self.scripts.get(&k) {
+            return s.clone();
+        }
+        let s = self.loader.load(name).map(Rc::new);
+        self.scripts.insert(k, s.clone());
+        s
+    }
+
+    /// `name` and its parents.
+    fn chain(&mut self, name: &str) -> Vec<Rc<Script>> {
+        let mut out = Vec::new();
+        let mut next = Some(key(name));
+        while let Some(name) = next.take() {
+            if out.len() > 64 {
+                break;
+            }
+            let Some(s) = self.script(&name) else { break };
+            next = s.parent.clone();
+            out.push(s);
+        }
+        out
+    }
+
+    /// Creates an object of `script`, its variables set to their initial
+    /// values, in its `Auto` state. `OnInit` is not called.
+    pub fn new_object(&mut self, script: &str) -> Result<ObjId, VmError> {
+        let chain = self.chain(script);
+        if chain.is_empty() {
+            return Err(VmError::UnknownScript(script.to_owned()));
+        }
+        let mut vars = FxHashMap::default();
+        let mut types = FxHashMap::default();
+        for s in &chain {
+            for (name, ty, init) in &s.variables {
+                types.entry(name.clone()).or_insert_with(|| ty.clone());
+                let value = match init {
+                    Operand::None => Value::default_of(ty),
+                    other => constant(other),
+                };
+                vars.entry(name.clone()).or_insert(value);
+            }
+        }
+        let state = chain.iter().map(|s| s.auto_state.clone()).find(|s| !s.is_empty());
+        self.objects.push(Instance {
+            script: key(script),
+            vars,
+            types,
+            state: state.unwrap_or_default(),
+        });
+        Ok(ObjId(self.objects.len() - 1))
+    }
+
+    /// The script of an object, as declared.
+    pub fn script_of(&mut self, obj: ObjId) -> String {
+        let k = self.objects[obj.0].script.clone();
+        self.script(&k).map_or(k, |s| s.name.clone())
+    }
+
+    /// The current state of an object.
+    pub fn state_of(&self, obj: ObjId) -> &str {
+        &self.objects[obj.0].state
+    }
+
+    /// Calls the function or event `name` of `obj`.
+    pub fn call(&mut self, obj: ObjId, name: &str, args: &[Value]) -> Result<Value, VmError> {
+        let script = self.objects[obj.0].script.clone();
+        let state = self.objects[obj.0].state.clone();
+        let (func, defined) = self
+            .resolve(&script, &state, &key(name))
+            .ok_or_else(|| VmError::UnknownFunction(name.to_owned()))?;
+        self.invoke(func, Some(obj), &defined, args)
+    }
+
+    /// Calls the `Global` function `script.name`.
+    pub fn call_static(
+        &mut self,
+        script: &str,
+        name: &str,
+        args: &[Value],
+    ) -> Result<Value, VmError> {
+        let (func, defined) = self
+            .resolve(script, "", &key(name))
+            .ok_or_else(|| VmError::UnknownFunction(format!("{script}.{name}")))?;
+        self.invoke(func, None, &defined, args)
+    }
+
+    /// Finds `name` up the chain of `script`, the functions of `state`
+    /// first; returns it with the script defining it.
+    fn resolve(&mut self, script: &str, state: &str, name: &str) -> Option<(Rc<Func>, String)> {
+        self.chain(script).into_iter().find_map(|s| Some((s.function(state, name)?, key(&s.name))))
+    }
+
+    fn invoke(
+        &mut self,
+        func: Rc<Func>,
+        this: Option<ObjId>,
+        script: &str,
+        args: &[Value],
+    ) -> Result<Value, VmError> {
+        if func.native {
+            return Ok(self.call_native(&func, this, script, args));
+        }
+        if self.depth >= 512 {
+            return Err(VmError::StackOverflow);
+        }
+        let mut frame = Frame {
+            locals: FxHashMap::default(),
+            types: FxHashMap::default(),
+            this,
+            script: script.to_owned(),
+        };
+        for (i, (name, ty)) in func.params.iter().enumerate() {
+            let value = args.get(i).cloned().unwrap_or_else(|| Value::default_of(ty));
+            frame.locals.insert(name.clone(), cast(self, value, ty));
+            frame.types.insert(name.clone(), ty.clone());
+        }
+        for (name, ty) in &func.locals {
+            frame.locals.insert(name.clone(), Value::default_of(ty));
+            frame.types.insert(name.clone(), ty.clone());
+        }
+        self.depth += 1;
+        let result = self.run(&func, &mut frame);
+        self.depth -= 1;
+        result
+    }
+
+    fn call_native(
+        &mut self,
+        func: &Func,
+        this: Option<ObjId>,
+        script: &str,
+        args: &[Value],
+    ) -> Value {
+        let script_name = self.script(script).map_or_else(|| script.to_owned(), |s| s.name.clone());
+        let native = self.natives.get(&format!("{script}.{}", key(&func.name))).cloned();
+        self.native_calls.push(NativeCall {
+            script: script_name,
+            function: func.name.clone(),
+            args: args.to_vec(),
+            implemented: native.is_some(),
+        });
+        match native {
+            Some(f) => f(self, this, args),
+            None => Value::default_of(&func.return_type),
+        }
+    }
+
+    fn run(&mut self, func: &Func, frame: &mut Frame) -> Result<Value, VmError> {
+        let mut pc = 0usize;
+        while let Some(inst) = func.code.get(pc) {
+            if self.step_limit == 0 {
+                return Err(VmError::StepLimit);
+            }
+            self.step_limit -= 1;
+            let a = &inst.args;
+            let arg = |vm: &Vm, frame: &Frame, i: usize| vm.read(frame, &a[i]);
+            let mut next = pc + 1;
+            match inst.op {
+                OpCode::Nop => {}
+                OpCode::IAdd | OpCode::ISub | OpCode::IMul | OpCode::IDiv | OpCode::IMod => {
+                    let (x, y) = (arg(self, frame, 1).as_int(), arg(self, frame, 2).as_int());
+                    let v = match inst.op {
+                        OpCode::IAdd => x.wrapping_add(y),
+                        OpCode::ISub => x.wrapping_sub(y),
+                        OpCode::IMul => x.wrapping_mul(y),
+                        _ if y == 0 => {
+                            self.errors.push("Divide by zero".to_owned());
+                            0
+                        }
+                        OpCode::IDiv => x.wrapping_div(y),
+                        _ => x.wrapping_rem(y),
+                    };
+                    self.write(frame, &a[0], Value::Int(v));
+                }
+                OpCode::FAdd | OpCode::FSub | OpCode::FMul | OpCode::FDiv => {
+                    let (x, y) = (arg(self, frame, 1).as_float(), arg(self, frame, 2).as_float());
+                    let v = match inst.op {
+                        OpCode::FAdd => x + y,
+                        OpCode::FSub => x - y,
+                        OpCode::FMul => x * y,
+                        _ => x / y,
+                    };
+                    self.write(frame, &a[0], Value::Float(v));
+                }
+                OpCode::Not => {
+                    let v = !arg(self, frame, 1).truthy();
+                    self.write(frame, &a[0], Value::Bool(v));
+                }
+                OpCode::INeg => {
+                    let v = arg(self, frame, 1).as_int().wrapping_neg();
+                    self.write(frame, &a[0], Value::Int(v));
+                }
+                OpCode::FNeg => {
+                    let v = -arg(self, frame, 1).as_float();
+                    self.write(frame, &a[0], Value::Float(v));
+                }
+                OpCode::Assign => {
+                    let v = arg(self, frame, 1);
+                    self.write(frame, &a[0], v);
+                }
+                OpCode::Cast => {
+                    let v = arg(self, frame, 1);
+                    let ty = self.type_of(frame, &a[0]);
+                    let v = cast(self, v, &ty);
+                    self.write(frame, &a[0], v);
+                }
+                OpCode::CmpEq | OpCode::CmpLt | OpCode::CmpLe | OpCode::CmpGt | OpCode::CmpGe => {
+                    let (x, y) = (arg(self, frame, 1), arg(self, frame, 2));
+                    use std::cmp::Ordering::*;
+                    let v = match inst.op {
+                        OpCode::CmpEq => x.loose_eq(&y),
+                        OpCode::CmpLt => x.compare(&y) == Less,
+                        OpCode::CmpLe => x.compare(&y) != Greater,
+                        OpCode::CmpGt => x.compare(&y) == Greater,
+                        _ => x.compare(&y) != Less,
+                    };
+                    self.write(frame, &a[0], Value::Bool(v));
+                }
+                OpCode::Jmp => next = jump(pc, &a[0]),
+                OpCode::JmpT | OpCode::JmpF => {
+                    if arg(self, frame, 0).truthy() == (inst.op == OpCode::JmpT) {
+                        next = jump(pc, &a[1]);
+                    }
+                }
+                OpCode::CallMethod => {
+                    let name = operand_name(&a[0]);
+                    let receiver = arg(self, frame, 1);
+                    let args: Vec<Value> = a[4..].iter().map(|o| self.read(frame, o)).collect();
+                    let v = match receiver {
+                        Value::Object(obj) => {
+                            let script = self.objects[obj.0].script.clone();
+                            let state = self.objects[obj.0].state.clone();
+                            match self.resolve(&script, &state, &name) {
+                                Some((f, defined)) => self.invoke(f, Some(obj), &defined, &args)?,
+                                // `GotoState` sends these whether the script
+                                // handles them or not.
+                                None if matches!(name.as_str(), "onbeginstate" | "onendstate") => {
+                                    Value::None
+                                }
+                                None => {
+                                    self.errors
+                                        .push(format!("Unbound native function \"{name}\" called"));
+                                    Value::None
+                                }
+                            }
+                        }
+                        _ => {
+                            self.errors.push(format!("Cannot call {name}() on a None object"));
+                            Value::None
+                        }
+                    };
+                    self.write(frame, &a[2], v);
+                }
+                OpCode::CallParent => {
+                    let name = operand_name(&a[0]);
+                    let args: Vec<Value> = a[3..].iter().map(|o| self.read(frame, o)).collect();
+                    let parent = self.script(&frame.script).and_then(|s| s.parent.clone());
+                    let state =
+                        frame.this.map(|o| self.objects[o.0].state.clone()).unwrap_or_default();
+                    let v = match parent.and_then(|p| self.resolve(&p, &state, &name)) {
+                        Some((f, defined)) => self.invoke(f, frame.this, &defined, &args)?,
+                        None => Value::None,
+                    };
+                    self.write(frame, &a[1], v);
+                }
+                OpCode::CallStatic => {
+                    let script = operand_name(&a[0]);
+                    let name = operand_name(&a[1]);
+                    let args: Vec<Value> = a[4..].iter().map(|o| self.read(frame, o)).collect();
+                    let v = match self.resolve(&script, "", &name) {
+                        Some((f, defined)) => self.invoke(f, None, &defined, &args)?,
+                        None => {
+                            self.errors.push(format!("Unknown function {script}.{name}"));
+                            Value::None
+                        }
+                    };
+                    self.write(frame, &a[2], v);
+                }
+                OpCode::Ret => {
+                    let v = a.first().map(|o| self.read(frame, o)).unwrap_or_default();
+                    return Ok(match v {
+                        Value::None => Value::default_of(&func.return_type),
+                        v => v,
+                    });
+                }
+                OpCode::StrCat => {
+                    let v = format!("{}{}", arg(self, frame, 1), arg(self, frame, 2));
+                    self.write(frame, &a[0], Value::Str(Rc::from(v)));
+                }
+                OpCode::PropGet => {
+                    let name = operand_name(&a[0]);
+                    let v = match arg(self, frame, 1) {
+                        Value::Object(obj) => self.get_property(obj, &name)?,
+                        _ => {
+                            self.errors.push(format!("Cannot get {name} of a None object"));
+                            Value::None
+                        }
+                    };
+                    self.write(frame, &a[2], v);
+                }
+                OpCode::PropSet => {
+                    let name = operand_name(&a[0]);
+                    let value = arg(self, frame, 2);
+                    match arg(self, frame, 1) {
+                        Value::Object(obj) => self.set_property(obj, &name, value)?,
+                        _ => self.errors.push(format!("Cannot set {name} of a None object")),
+                    }
+                }
+                OpCode::ArrayCreate => {
+                    let ty = self.type_of(frame, &a[0]);
+                    let elem = ty.strip_suffix("[]").unwrap_or(&ty).to_owned();
+                    let size = arg(self, frame, 1).as_int().clamp(0, 128) as usize;
+                    let array = vec![Value::default_of(&elem); size];
+                    self.write(frame, &a[0], Value::Array(Rc::new(std::cell::RefCell::new(array))));
+                }
+                OpCode::ArrayLength => {
+                    let len = match arg(self, frame, 1) {
+                        Value::Array(a) => a.borrow().len() as i32,
+                        _ => 0,
+                    };
+                    self.write(frame, &a[0], Value::Int(len));
+                }
+                OpCode::ArrayGetElement => {
+                    let index = arg(self, frame, 2).as_int();
+                    let v = match arg(self, frame, 1) {
+                        Value::Array(arr) => {
+                            let arr = arr.borrow();
+                            match usize::try_from(index).ok().and_then(|i| arr.get(i)) {
+                                Some(v) => v.clone(),
+                                None => {
+                                    self.errors.push(format!(
+                                        "Array index {index} is out of range (0-{})",
+                                        arr.len() as i32 - 1
+                                    ));
+                                    Value::None
+                                }
+                            }
+                        }
+                        _ => Value::None,
+                    };
+                    self.write(frame, &a[0], v);
+                }
+                OpCode::ArraySetElement => {
+                    let index = arg(self, frame, 1).as_int();
+                    let value = arg(self, frame, 2);
+                    if let Value::Array(arr) = arg(self, frame, 0) {
+                        let mut arr = arr.borrow_mut();
+                        let len = arr.len();
+                        match usize::try_from(index).ok().filter(|&i| i < len) {
+                            Some(i) => arr[i] = value,
+                            None => self.errors.push(format!(
+                                "Array index {index} is out of range (0-{})",
+                                len as i32 - 1
+                            )),
+                        }
+                    }
+                }
+                OpCode::ArrayFindElement | OpCode::ArrayRFindElement => {
+                    let value = arg(self, frame, 2);
+                    let start = arg(self, frame, 3).as_int();
+                    let found = match arg(self, frame, 0) {
+                        Value::Array(arr) => {
+                            let arr = arr.borrow();
+                            let len = arr.len() as i32;
+                            let at = |i: i32| arr[i as usize].loose_eq(&value);
+                            if inst.op == OpCode::ArrayFindElement {
+                                (start.max(0)..len).find(|&i| at(i))
+                            } else {
+                                let from = if start < 0 { len - 1 } else { start.min(len - 1) };
+                                (0..=from).rev().find(|&i| at(i))
+                            }
+                        }
+                        _ => None,
+                    };
+                    self.write(frame, &a[1], Value::Int(found.unwrap_or(-1)));
+                }
+            }
+            pc = next;
+        }
+        Ok(Value::default_of(&func.return_type))
+    }
+
+    fn get_property(&mut self, obj: ObjId, name: &str) -> Result<Value, VmError> {
+        let script = self.objects[obj.0].script.clone();
+        for s in self.chain(&script) {
+            let Some(p) = s.properties.get(name) else { continue };
+            if let Some(var) = &p.auto_var {
+                return Ok(self.objects[obj.0].vars.get(var).cloned().unwrap_or_default());
+            }
+            if let Some(get) = p.getter.clone() {
+                return self.invoke(get, Some(obj), &key(&s.name), &[]);
+            }
+        }
+        self.errors.push(format!("Property {name} not found"));
+        Ok(Value::None)
+    }
+
+    fn set_property(&mut self, obj: ObjId, name: &str, value: Value) -> Result<(), VmError> {
+        let script = self.objects[obj.0].script.clone();
+        for s in self.chain(&script) {
+            let Some(p) = s.properties.get(name) else { continue };
+            if let Some(var) = &p.auto_var {
+                self.objects[obj.0].vars.insert(var.clone(), value);
+                return Ok(());
+            }
+            if let Some(set) = p.setter.clone() {
+                self.invoke(set, Some(obj), &key(&s.name), &[value])?;
+                return Ok(());
+            }
+        }
+        self.errors.push(format!("Property {name} not found"));
+        Ok(())
+    }
+
+    fn read(&self, frame: &Frame, operand: &Operand) -> Value {
+        let Operand::Name(name) = operand else { return constant(operand) };
+        if let Some(v) = frame.locals.get(name) {
+            return v.clone();
+        }
+        let this = frame.this.map(|o| &self.objects[o.0]);
+        match name.as_str() {
+            "self" => frame.this.map_or(Value::None, Value::Object),
+            "::state" => this.map_or(Value::None, |o| Value::Str(Rc::from(o.state.as_str()))),
+            _ => this.and_then(|o| o.vars.get(name)).cloned().unwrap_or_default(),
+        }
+    }
+
+    fn write(&mut self, frame: &mut Frame, operand: &Operand, value: Value) {
+        let Operand::Name(name) = operand else { return };
+        if let Some(slot) = frame.locals.get_mut(name) {
+            *slot = value;
+            return;
+        }
+        let Some(this) = frame.this else { return };
+        let object = &mut self.objects[this.0];
+        if name == "::state" {
+            object.state = value.to_string();
+        } else {
+            object.vars.insert(name.clone(), value);
+        }
+    }
+
+    fn type_of(&self, frame: &Frame, operand: &Operand) -> String {
+        let Operand::Name(name) = operand else { return String::new() };
+        frame
+            .types
+            .get(name)
+            .or_else(|| frame.this.and_then(|o| self.objects[o.0].types.get(name)))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Whether `obj` is a `script` (or extends it).
+    fn is_a(&mut self, obj: ObjId, script: &str) -> bool {
+        let own = self.objects[obj.0].script.clone();
+        let target = key(script);
+        self.chain(&own).iter().any(|s| key(&s.name) == target)
+    }
+}
+
+fn constant(operand: &Operand) -> Value {
+    match operand {
+        Operand::Name(_) | Operand::None => Value::None,
+        Operand::Int(i) => Value::Int(*i),
+        Operand::Float(f) => Value::Float(*f),
+        Operand::Bool(b) => Value::Bool(*b),
+        Operand::Str(s) => Value::Str(s.clone()),
+    }
+}
+
+fn operand_name(operand: &Operand) -> String {
+    match operand {
+        Operand::Name(n) => n.clone(),
+        _ => String::new(),
+    }
+}
+
+fn jump(pc: usize, offset: &Operand) -> usize {
+    let offset = match offset {
+        Operand::Int(i) => *i as isize,
+        _ => 1,
+    };
+    (pc as isize + offset).max(0) as usize
+}
+
+/// Converts `value` to the type `ty`, like `as` and implicit conversions.
+fn cast(vm: &mut Vm, value: Value, ty: &str) -> Value {
+    if ty.is_empty() || ty.ends_with("[]") {
+        return value;
+    }
+    match ty.to_ascii_lowercase().as_str() {
+        "int" => Value::Int(value.as_int()),
+        "float" => Value::Float(value.as_float()),
+        "bool" => Value::Bool(value.truthy()),
+        "string" => match value {
+            Value::Str(s) => Value::Str(s),
+            other => Value::Str(Rc::from(other.to_string())),
+        },
+        "var" | "none" => value,
+        _ => match value {
+            // A failed cast between objects gives `None`.
+            Value::Object(obj) if vm.is_a(obj, ty) => value,
+            _ => Value::None,
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests;

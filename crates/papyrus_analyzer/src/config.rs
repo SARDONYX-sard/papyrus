@@ -58,6 +58,9 @@ USAGE:
     papyrus_analyzer fmt [--check] [PATH]...
                                           format scripts (directories recursively);
                                           --check only lists unformatted files
+    papyrus_analyzer run Script.Function [ARG]...
+                                          run a function in a Papyrus VM, natives
+                                          mocked (see run --help)
 
 OPTIONS:
     --var NAME=VALUE      Value of a `${NAME}` variable of papyrus.toml, e.g.
