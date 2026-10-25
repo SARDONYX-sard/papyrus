@@ -11,7 +11,7 @@
 !resources/**
 
 # The bundled extension (see extension/vite.config.ts) and the server binary (see build.cjs).
-!build/extension.js
+!build/extension.cjs
 !build/papyrus_analyzer
 !build/papyrus_analyzer.exe
 

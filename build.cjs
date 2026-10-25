@@ -59,7 +59,7 @@ if (vsix) {
   const platform = target ? PLATFORMS[target] : undefined;
   if (target && !platform) throw new Error(`no VS Code platform for target ${target}`);
   const out = `build/papyrus-analyzer${platform ? `-${platform}` : ""}.vsix`;
-  // Vite bundles the dependencies into build/extension.js. vsce only looks for
+  // Vite bundles the dependencies into build/extension.cjs. vsce only looks for
   // one `LICENSE[.md|.txt]` file; LICENSE-MIT and LICENSE-APACHE are packaged
   // through .vscodeignore, so its check (and its y/N prompt) is skipped.
   run(

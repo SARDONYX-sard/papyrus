@@ -24,7 +24,7 @@
   "activationEvents": [
     "workspaceContains:**/*.psc"
   ],
-  "main": "build/extension.js",
+  "main": "build/extension.cjs",
   "contributes": {
     "languages": [
       {

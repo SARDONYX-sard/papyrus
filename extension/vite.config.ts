@@ -1,4 +1,4 @@
-// Bundles the extension into one CommonJS file, `build/extension.js`.
+// Bundles the extension into one CommonJS file, `build/extension.cjs`.
 //
 // The SSR build targets Node; every dependency (vscode-languageclient, ...) is
 // bundled, so the VSIX needs no `node_modules`. Only `vscode`, provided by the
@@ -24,7 +24,7 @@ export default defineConfig(({ mode }) => {
         // emptied; drop the source map of a previous debug build instead.
         name: "remove-stale-sourcemap",
         buildStart() {
-          if (!debug) fs.rmSync(path.join(outDir, "extension.js.map"), { force: true });
+          if (!debug) fs.rmSync(path.join(outDir, "extension.cjs.map"), { force: true });
         },
       },
     ],
@@ -43,7 +43,7 @@ export default defineConfig(({ mode }) => {
         external: ["vscode", ...builtinModules, ...builtinModules.map((m) => `node:${m}`)],
         output: {
           format: "cjs",
-          entryFileNames: "extension.js",
+          entryFileNames: "extension.cjs",
         },
       },
     },

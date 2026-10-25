@@ -9,7 +9,7 @@
       "args": ["--extensionDevelopmentPath=${workspaceFolder}"],
       "preLaunchTask": "npm: debug",
       "sourceMaps": true,
-      "outFiles": ["${workspaceFolder}/build/**/*.js"]
+      "outFiles": ["${workspaceFolder}/build/**/*.cjs"]
     }
   ]
 }
