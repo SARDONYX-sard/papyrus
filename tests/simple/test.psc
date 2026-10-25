@@ -12,6 +12,8 @@ Int Function AddNumbers(Int a, Int b) Global
 EndFunction
 
 Function LoopTest()
+  AddNumbers(1, 1)
+
   ; var docs
   Int i = 0
   While i < 10

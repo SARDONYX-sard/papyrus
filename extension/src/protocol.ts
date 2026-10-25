@@ -5,6 +5,8 @@ export interface ServerStatus {
   files: number;
   openFiles: number;
   indexing: boolean;
+  /** The check of the scripts not open, while it runs. */
+  checking?: { done: number; total: number; current: string; remainingMs?: number | null } | null;
   generation: number;
   roots: string[];
   importDirectories: string[];

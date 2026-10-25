@@ -20,7 +20,9 @@ pub(crate) struct KeywordDoc {
 impl KeywordDoc {
     /// Renders the documentation as hover Markdown.
     pub(crate) fn markdown(&self) -> String {
-        format!("```papyrus\n{}\n```\n*keyword*\n\n---\n\n{}", self.name, self.body.trim_end())
+        // Checkouts with CRLF line breaks give CRLF bodies.
+        let body = self.body.trim_end().replace("\r\n", "\n");
+        format!("```papyrus\n{}\n```\n*keyword*\n\n---\n\n{body}", self.name)
     }
 }
 
@@ -135,8 +137,9 @@ mod tests {
         let section = doc.body.split("# Examples").nth(1).unwrap_or_else(|| {
             panic!("{}: missing `# Examples` section", doc.name);
         });
-        let start =
-            section.find("```papyrus\n").expect("papyrus code block") + "```papyrus\n".len();
+        // After the opening fence line, `\n` or `\r\n`.
+        let fence = section.find("```papyrus").expect("papyrus code block");
+        let start = fence + section[fence..].find('\n').expect("fence line") + 1;
         let end = section[start..].find("```").expect("closing fence");
         &section[start..start + end]
     }

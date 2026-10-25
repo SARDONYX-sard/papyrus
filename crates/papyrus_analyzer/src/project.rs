@@ -251,7 +251,7 @@ impl Server {
             self.reset_workspace();
             self.start_indexing();
         }
-        self.publish_open_diagnostics();
+        self.refresh_diagnostics();
     }
 
     fn publish_manifest_diagnostics(
@@ -316,7 +316,7 @@ impl Server {
                 let text = Arc::from(doc.text.as_str());
                 self.ws.set_flags_open(path.to_path_buf(), text);
                 self.publish_flags_diagnostics();
-                self.publish_open_diagnostics();
+                self.refresh_diagnostics();
             }
         }
     }

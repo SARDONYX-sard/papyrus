@@ -30,7 +30,9 @@ pub use crate::{
             CompletionItem, CompletionKind, Completions, completions, flag_file_completions,
             member_docs,
         },
-        diagnostics::{Diagnostic, Severity, diagnostics, flag_file_diagnostics},
+        diagnostics::{
+            Diagnostic, Related, Severity, diagnostics, diagnostics_of, flag_file_diagnostics,
+        },
         folding::{Fold, FoldKind, folding_ranges},
         hover::{HoverResult, flag_file_hover, hover},
         inlay_hints::{InlayHint, inlay_hints},

@@ -181,6 +181,18 @@ pub fn lint(ws: &Workspace, file: FileId, config: &LintConfig) -> Vec<Diagnostic
         Some(doc) => !doc.errors.is_empty(),
         None => !papyrus_parser::parse(src.text()).errors().is_empty(),
     };
+    lint_source(ws, file, &src, has_errors, config)
+}
+
+/// Like [`lint`], with the text already parsed (`has_errors`: it has syntax
+/// errors), to check many files without parsing them twice.
+pub fn lint_source(
+    ws: &Workspace,
+    file: FileId,
+    src: &FileSource,
+    has_errors: bool,
+    config: &LintConfig,
+) -> Vec<Diagnostic> {
     if has_errors {
         return Vec::new();
     }

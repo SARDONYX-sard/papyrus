@@ -300,7 +300,7 @@ pub fn run_args(args: &Args) -> i32 {
                 for d in &diags {
                     match format {
                         DiagnosticFormat::Human => {
-                            eprintln!("{}", render(&renderer, path, &text, d))
+                            eprintln!("{}", render(&renderer, &ws, path, &text, d))
                         }
                         DiagnosticFormat::Official => {
                             eprintln!("{}", render_official(path, &text, d))
@@ -384,23 +384,44 @@ fn find_in(path: &Path, imports: &[PathBuf], cwd: &Path) -> PathBuf {
         .unwrap_or_else(|| path.to_path_buf())
 }
 
-fn render(renderer: &Renderer, path: &Path, text: &str, d: &Diagnostic) -> String {
+/// A diagnostic with its source lines, and the related places (another
+/// definition, the declaration of a script...) as context annotations.
+fn render(renderer: &Renderer, ws: &Workspace, path: &Path, text: &str, d: &Diagnostic) -> String {
     let level = match d.severity {
         Severity::Error => Level::ERROR,
         Severity::Warning => Level::WARNING,
     };
-    let start = usize::from(d.range.start()).min(text.len());
-    let end = usize::from(d.range.end()).clamp(start, text.len());
-    let path = path.display().to_string();
-    let report = &[level.primary_title(&d.message).element(
-        Snippet::source(text)
-            .line_start(1)
-            .path(&path)
-            .annotation(AnnotationKind::Primary.span(start..end).label(d.code)),
-    )];
-    renderer.render(report)
+    let clamp = |text: &str, r: papyrus_ide::TextRange| {
+        let start = usize::from(r.start()).min(text.len());
+        start..usize::from(r.end()).clamp(start, text.len())
+    };
+    let path_text = path.display().to_string();
+    let file = ws.file_id(path);
+    // Related places of other files, with their text.
+    let others: Vec<(String, std::sync::Arc<str>, &papyrus_ide::Related)> = d
+        .related
+        .iter()
+        .filter(|r| Some(r.file) != file)
+        .filter_map(|r| Some((ws.file(r.file).path.display().to_string(), ws.text(r.file)?, r)))
+        .collect();
+    let mut snippet = Snippet::source(text)
+        .line_start(1)
+        .path(&path_text)
+        .annotation(AnnotationKind::Primary.span(clamp(text, d.range)).label(d.code));
+    for r in d.related.iter().filter(|r| Some(r.file) == file) {
+        snippet = snippet
+            .annotation(AnnotationKind::Context.span(clamp(text, r.range)).label(&r.message));
+    }
+    let mut group = level.primary_title(&d.message).element(snippet);
+    for (other_path, other_text, r) in &others {
+        group = group.element(
+            Snippet::source(&**other_text).line_start(1).path(other_path).annotation(
+                AnnotationKind::Context.span(clamp(other_text, r.range)).label(&r.message),
+            ),
+        );
+    }
+    renderer.render(&[group])
 }
-
 /// `file(line,col): message`, one-based, as `PapyrusCompiler.exe` prints.
 fn render_official(path: &Path, text: &str, d: &Diagnostic) -> String {
     let start = usize::from(d.range.start()).min(text.len());

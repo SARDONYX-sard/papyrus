@@ -380,8 +380,8 @@ impl<'s, 'a> Ctx<'s, 'a> {
             let item = self.push(s.prefix, CompletionKind::Snippet, 5);
             item.detail = Some(s.description.to_owned());
             item.documentation =
-                Some(format!("```papyrus\n{}\n```", super::snippets::preview(s.body)));
-            item.snippet = Some(s.body.to_owned());
+                Some(format!("```papyrus\n{}\n```", super::snippets::preview(&s.body)));
+            item.snippet = Some(s.body);
         }
     }
 

@@ -15,12 +15,12 @@ use papyrus_parser::{
 };
 use rustc_hash::FxHashMap;
 
-use super::{in_body, with_sema};
+use super::in_body;
 use crate::{
     FileId, Workspace,
     flags::FlagTargets,
     index::MemberKind,
-    sema::{Builtin, Sema, Ty},
+    sema::{Builtin, FileSource, Sema, Ty},
 };
 
 /// The severity of a [`Diagnostic`].
@@ -43,9 +43,34 @@ pub struct Diagnostic {
     pub message: String,
     /// A stable identifier of the check.
     pub code: &'static str,
+    /// Other places the problem is about, e.g. the first definition of a
+    /// duplicate name, like the notes of rustc.
+    pub related: Vec<Related>,
+}
+
+/// A place a [`Diagnostic`] refers to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Related {
+    /// The file.
+    pub file: FileId,
+    /// The range.
+    pub range: TextRange,
+    /// What is there, e.g. `first defined here`.
+    pub message: String,
 }
 
 impl Diagnostic {
+    /// Adds a related place in `file`.
+    pub fn with_related(
+        mut self,
+        file: FileId,
+        range: TextRange,
+        message: impl Into<String>,
+    ) -> Diagnostic {
+        self.related.push(Related { file, range, message: message.into() });
+        self
+    }
+
     /// Returns `true` for checks that depend on other scripts being known:
     /// unknown types, members, parameters and names.
     pub fn needs_workspace(&self) -> bool {
@@ -55,49 +80,74 @@ impl Diagnostic {
 
     /// An error.
     pub fn error(range: TextRange, code: &'static str, message: impl Into<String>) -> Diagnostic {
-        Diagnostic { range, severity: Severity::Error, message: message.into(), code }
+        Diagnostic {
+            range,
+            severity: Severity::Error,
+            message: message.into(),
+            code,
+            related: Vec::new(),
+        }
     }
 
     /// A warning.
     pub fn warning(range: TextRange, code: &'static str, message: impl Into<String>) -> Diagnostic {
-        Diagnostic { range, severity: Severity::Warning, message: message.into(), code }
+        Diagnostic {
+            range,
+            severity: Severity::Warning,
+            message: message.into(),
+            code,
+            related: Vec::new(),
+        }
     }
 }
 
 /// All diagnostics of a file.
 pub fn diagnostics(ws: &Workspace, file: FileId) -> Vec<Diagnostic> {
-    let mut out = Vec::new();
     let data = ws.file(file);
-    let syntax_errors: Vec<_> = match &data.open {
-        Some(doc) => doc.errors.to_vec(),
+    let (src, errors) = match &data.open {
+        Some(doc) => (FileSource::load(ws, file), doc.errors.to_vec()),
         None => match ws.text(file) {
-            Some(text) => papyrus_parser::parse(&text).errors().to_vec(),
-            None => Vec::new(),
+            Some(text) => {
+                let (src, errors) = FileSource::parse(text);
+                (Some(src), errors)
+            }
+            None => (None, Vec::new()),
         },
     };
-    let has_syntax_errors = !syntax_errors.is_empty();
-    out.extend(
-        syntax_errors.into_iter().map(|e| Diagnostic::error(e.range(), "syntax", e.message())),
-    );
+    match src {
+        Some(src) => diagnostics_of(ws, file, &src, &errors),
+        None => Vec::new(),
+    }
+}
 
-    with_sema(ws, file, |sema| {
-        check_script_name(sema, &mut out);
-        check_duplicates(sema, &mut out);
-        check_declarations(sema, &mut out);
-        check_flags(sema, &mut out);
-        if !has_syntax_errors {
-            check_initializers(sema, &mut out);
-        }
-        // Name resolution on broken code is noisy; fix the syntax first.
-        if !has_syntax_errors && ws.script(Name::new("Form")).is_some() {
-            check_names(sema, &mut out);
-            check_types(sema, &mut out);
-        }
-    });
+/// Like [`diagnostics`], with the text already parsed: `src` and its
+/// `syntax_errors`, to check many files without parsing them twice.
+pub fn diagnostics_of(
+    ws: &Workspace,
+    file: FileId,
+    src: &FileSource,
+    syntax_errors: &[papyrus_parser::SyntaxError],
+) -> Vec<Diagnostic> {
+    let mut out: Vec<Diagnostic> =
+        syntax_errors.iter().map(|e| Diagnostic::error(e.range(), "syntax", e.message())).collect();
+    let has_syntax_errors = !syntax_errors.is_empty();
+    let sema = src.sema(ws, file);
+    let sema = &sema;
+    check_script_name(sema, &mut out);
+    check_duplicates(sema, &mut out);
+    check_declarations(sema, &mut out);
+    check_flags(sema, &mut out);
+    if !has_syntax_errors {
+        check_initializers(sema, &mut out);
+    }
+    // Name resolution on broken code is noisy; fix the syntax first.
+    if !has_syntax_errors && ws.script(Name::new("Form")).is_some() {
+        check_names(sema, &mut out);
+        check_types(sema, &mut out);
+    }
     out.sort_by_key(|d| (d.range.start(), d.severity));
     out
 }
-
 /// Diagnostics of the flags file.
 pub fn flag_file_diagnostics(ws: &Workspace) -> Vec<Diagnostic> {
     ws.flags()
@@ -160,17 +210,31 @@ fn check_duplicates(sema: &Sema<'_>, out: &mut Vec<Diagnostic>) {
             if m.kind == MemberKind::State && first.kind == MemberKind::State {
                 // The compiler merges the blocks (vanilla scripts do this);
                 // duplicate functions are reported per state above.
-                out.push(Diagnostic::warning(
-                    m.name_range,
-                    "duplicate-state",
-                    format!("state `{}` is declared again; the blocks are merged", m.name),
-                ));
+                out.push(
+                    Diagnostic::warning(
+                        m.name_range,
+                        "duplicate-state",
+                        format!("state `{}` is declared again; the blocks are merged", m.name),
+                    )
+                    .with_related(
+                        sema.file,
+                        first.name_range,
+                        "first declared here",
+                    ),
+                );
             } else {
-                out.push(Diagnostic::error(
-                    m.name_range,
-                    "duplicate-definition",
-                    format!("`{}` is already defined in this scope", m.name),
-                ));
+                out.push(
+                    Diagnostic::error(
+                        m.name_range,
+                        "duplicate-definition",
+                        format!("`{}` is already defined in this scope", m.name),
+                    )
+                    .with_related(
+                        sema.file,
+                        first.name_range,
+                        "first defined here",
+                    ),
+                );
             }
         } else {
             seen.insert(key, i);
@@ -218,8 +282,13 @@ fn check_duplicates(sema: &Sema<'_>, out: &mut Vec<Diagnostic>) {
 ///   locals not the name of a parameter, of a property of the script, or of
 ///   a local of an enclosing block (locals of sibling blocks may share it).
 fn check_declarations(sema: &Sema<'_>, out: &mut Vec<Diagnostic>) {
+    // The declaration of a member of the script, outside of states.
     let own = |kind: MemberKind, name: Name| {
-        sema.index.members.iter().any(|m| m.kind == kind && m.state.is_none() && m.name == name)
+        sema.index
+            .members
+            .iter()
+            .find(|m| m.kind == kind && m.state.is_none() && m.name == name)
+            .map(|m| m.name_range)
     };
     for node in sema.root.descendants() {
         match node.kind() {
@@ -238,14 +307,27 @@ fn check_declarations(sema: &Sema<'_>, out: &mut Vec<Diagnostic>) {
             SyntaxKind::VAR_DECL | SyntaxKind::PROPERTY => {
                 let Some(name) = node.children().find_map(ast::Name::cast) else { continue };
                 let n = Name::new(name.text());
-                if sema.script_name() == Some(n) || sema.ws.script(n).is_some() {
-                    out.push(Diagnostic::error(
+                let script = if sema.script_name() == Some(n) {
+                    Some(sema.file)
+                } else {
+                    sema.ws.script_near(n, sema.file)
+                };
+                if let Some(script) = script {
+                    let mut d = Diagnostic::error(
                         name.syntax().text_range(),
                         "name-is-type",
                         format!(
                             "`{n}` is the name of a script; variables and properties cannot use it"
                         ),
-                    ));
+                    );
+                    if let Some(range) = sema.ws.file(script).index.name_range {
+                        d = d.with_related(
+                            script,
+                            range,
+                            format!("the script `{n}` is declared here"),
+                        );
+                    }
+                    out.push(d);
                 }
             }
             SyntaxKind::FUNCTION | SyntaxKind::EVENT => {
@@ -254,58 +336,77 @@ fn check_declarations(sema: &Sema<'_>, out: &mut Vec<Diagnostic>) {
                 for p in list.iter().flat_map(|l| l.params()) {
                     let Some(name) = p.name() else { continue };
                     let n = Name::new(name.text());
-                    if own(MemberKind::Variable, n) {
-                        out.push(Diagnostic::error(
-                            name.syntax().text_range(),
-                            "name-conflict",
-                            format!("`{n}` is already defined as a variable of the script"),
-                        ));
+                    if let Some(var) = own(MemberKind::Variable, n) {
+                        out.push(
+                            Diagnostic::error(
+                                name.syntax().text_range(),
+                                "name-conflict",
+                                format!("`{n}` is already defined as a variable of the script"),
+                            )
+                            .with_related(
+                                sema.file,
+                                var,
+                                "the variable is declared here",
+                            ),
+                        );
                     }
-                    params.push(n);
+                    params.push((n, name.syntax().text_range()));
                 }
                 let Some(block) = node.children().find_map(ast::Block::cast) else { continue };
                 let mut scopes = vec![Vec::new()];
-                check_locals(&own, &params, block, &mut scopes, out);
+                check_locals(sema, &own, &params, block, &mut scopes, out);
             }
             _ => {}
         }
     }
 }
 
+/// A name and the range of its declaration.
+type Declared = (Name, TextRange);
+
 fn check_locals(
-    own: &dyn Fn(MemberKind, Name) -> bool,
-    params: &[Name],
+    sema: &Sema<'_>,
+    own: &dyn Fn(MemberKind, Name) -> Option<TextRange>,
+    params: &[Declared],
     block: ast::Block<'_>,
-    scopes: &mut Vec<Vec<Name>>,
+    scopes: &mut Vec<Vec<Declared>>,
     out: &mut Vec<Diagnostic>,
 ) {
+    let find = |list: &[Declared], n: Name| list.iter().find(|(m, _)| *m == n).map(|&(_, r)| r);
     for stmt in block.stmts() {
         let blocks: Vec<ast::Block<'_>> = match stmt {
             ast::Stmt::VarDecl(var) => {
                 let Some(name) = var.name() else { continue };
                 let n = Name::new(name.text());
-                let conflict = if params.contains(&n) {
-                    Some("as a parameter")
-                } else if scopes.last().is_some_and(|s| s.contains(&n)) {
-                    Some("in this block")
-                } else if scopes.iter().any(|s| s.contains(&n)) {
-                    Some("in an enclosing block, and locals cannot shadow it")
-                } else if own(MemberKind::Variable, n) {
-                    Some("as a variable of the script")
-                } else if own(MemberKind::Property, n) {
-                    Some("as a property of the script")
+                let conflict = if let Some(r) = find(params, n) {
+                    Some(("as a parameter", r, "the parameter is declared here"))
+                } else if let Some(r) = scopes.last().and_then(|s| find(s, n)) {
+                    Some(("in this block", r, "first declared here"))
+                } else if let Some(r) = scopes.iter().find_map(|s| find(s, n)) {
+                    Some((
+                        "in an enclosing block, and locals cannot shadow it",
+                        r,
+                        "the outer local is declared here",
+                    ))
+                } else if let Some(r) = own(MemberKind::Variable, n) {
+                    Some(("as a variable of the script", r, "the variable is declared here"))
                 } else {
-                    None
+                    own(MemberKind::Property, n).map(|r| {
+                        ("as a property of the script", r, "the property is declared here")
+                    })
                 };
-                if let Some(why) = conflict {
-                    out.push(Diagnostic::error(
-                        name.syntax().text_range(),
-                        "name-conflict",
-                        format!("`{n}` is already defined {why}"),
-                    ));
+                if let Some((why, range, note)) = conflict {
+                    out.push(
+                        Diagnostic::error(
+                            name.syntax().text_range(),
+                            "name-conflict",
+                            format!("`{n}` is already defined {why}"),
+                        )
+                        .with_related(sema.file, range, note),
+                    );
                 }
                 if let Some(s) = scopes.last_mut() {
-                    s.push(n);
+                    s.push((n, name.syntax().text_range()));
                 }
                 continue;
             }
@@ -320,12 +421,11 @@ fn check_locals(
         };
         for inner in blocks {
             scopes.push(Vec::new());
-            check_locals(own, params, inner, scopes, out);
+            check_locals(sema, own, params, inner, scopes, out);
             scopes.pop();
         }
     }
 }
-
 fn check_flags(sema: &Sema<'_>, out: &mut Vec<Diagnostic>) {
     let table = sema.ws.flags();
     for node in sema.root.descendants() {

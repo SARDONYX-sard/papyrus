@@ -62,7 +62,26 @@ export function updateStatus(status: ServerStatus): void {
   const health = status.health ?? "ok";
   const icon = { ok: "$(check)", limited: "$(info)", warning: "$(warning)", error: "$(error)" }[health];
   const mode = health === "limited" ? " (limited)" : "";
-  statusItem.text = status.indexing ? "$(sync~spin) Papyrus" : `${icon} Papyrus${mode}: ${status.files}`;
+
+  // Everything running, in this one item: the first in the text, all on hover.
+  const activities: { short: string; long: string }[] = [];
+  if (status.indexing) {
+    activities.push({ short: "indexing", long: "Indexing the scripts" });
+  }
+  const checking = status.checking;
+  if (checking) {
+    const left = checking.remainingMs != null ? `, about ${Math.ceil(checking.remainingMs / 1000)}s left` : "";
+    const last = checking.current ? ` (${checking.current})` : "";
+    activities.push({
+      short: `checking ${checking.done}/${checking.total}`,
+      long: `Checking the scripts: ${checking.done} of ${checking.total}${left}${last}`,
+    });
+  }
+  const more = activities.length > 1 ? ` +${activities.length - 1}` : "";
+  statusItem.text =
+    activities.length > 0
+      ? `$(sync~spin) Papyrus: ${activities[0].short}${more}`
+      : `${icon} Papyrus${mode}: ${status.files}`;
   statusItem.backgroundColor =
     health === "error"
       ? new vscode.ThemeColor("statusBarItem.errorBackground")
@@ -78,15 +97,19 @@ export function updateStatus(status: ServerStatus): void {
         ? new vscode.ThemeColor("charts.blue")
         : undefined;
 
-  const problems = (status.problems ?? []).map((p) => `\n• ${p}`).join("");
-  statusItem.tooltip = status.indexing
-    ? "Indexing Papyrus scripts..."
-    : `${status.files} scripts indexed, ${status.openFiles} open` +
-      (state.hasManifest ? "" : "\nLimited mode: no papyrus.toml, scripts compile with the built-in compiler and the editor settings. Click to create one.") +
-      problems;
+  const lines = activities.map((a) => `$(sync~spin) ${a.long}`);
+  lines.push(`${status.files} scripts indexed, ${status.openFiles} open`);
+  if (!state.hasManifest) {
+    lines.push(
+      "Limited mode: no papyrus.toml, scripts compile with the built-in compiler and the editor settings. Click to create one.",
+    );
+  }
+  lines.push(...(status.problems ?? []).map((p) => `• ${p}`));
+  // Markdown with icons; two spaces end a line.
+  statusItem.tooltip = new vscode.MarkdownString(lines.join("  \n"), true);
   statusItem.show();
 
-  if (status.indexing) {
-    setTimeout(() => void refreshStatus(), 1000);
+  if (activities.length > 0) {
+    setTimeout(() => void refreshStatus(), checking ? 300 : 1000);
   }
 }

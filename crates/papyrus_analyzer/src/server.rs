@@ -79,6 +79,51 @@ pub(crate) struct Server {
     index_tx: Sender<IndexEvent>,
     index_rx: Receiver<IndexEvent>,
     next_request_id: i32,
+    /// The job of the running full check of the closed files; a newer full
+    /// check stops it.
+    full_check: Arc<std::sync::atomic::AtomicU64>,
+    /// The id of the next check job (full or of a few files).
+    next_check_job: u64,
+    /// The job whose diagnostics each closed file shows: results of older
+    /// jobs are dropped.
+    checked_job: rustc_hash::FxHashMap<FileId, u64>,
+    check_tx: Sender<CheckEvent>,
+    check_rx: Receiver<CheckEvent>,
+    /// Closed files whose diagnostics are published, to clear them when they
+    /// go away.
+    published: rustc_hash::FxHashSet<PathBuf>,
+    /// The running check of the closed files.
+    checking: Option<CheckProgress>,
+}
+
+/// What the background check of the closed files sends.
+enum CheckEvent {
+    /// The diagnostics of one file (`None`: not checked, e.g. it does not
+    /// mention the changed scripts).
+    File { job: u64, file: FileId, path: PathBuf, diagnostics: Option<Vec<lsp_types::Diagnostic>> },
+    /// Every file of the job is checked.
+    Done { job: u64 },
+}
+
+/// The progress of the full check of the closed files, for `papyrus/status`.
+struct CheckProgress {
+    job: u64,
+    done: usize,
+    total: usize,
+    /// The last checked file.
+    current: String,
+    started: Instant,
+}
+
+impl CheckProgress {
+    /// The estimated time left, from the speed so far.
+    fn remaining(&self) -> Option<std::time::Duration> {
+        (self.done > 0).then(|| {
+            self.started
+                .elapsed()
+                .mul_f64((self.total - self.done.min(self.total)) as f64 / self.done as f64)
+        })
+    }
 }
 
 type HandlerResult = Result<Value, (ErrorCode, String)>;
@@ -96,6 +141,7 @@ impl Server {
             roots.extend(init.root_uri.as_ref().and_then(conv::uri_to_path));
         }
         let (index_tx, index_rx) = crossbeam_channel::unbounded();
+        let (check_tx, check_rx) = crossbeam_channel::unbounded();
         Server {
             sender,
             ws: Workspace::new(),
@@ -112,6 +158,13 @@ impl Server {
             index_tx,
             index_rx,
             next_request_id: 0,
+            full_check: Arc::default(),
+            next_check_job: 0,
+            checked_job: Default::default(),
+            check_tx,
+            check_rx,
+            published: Default::default(),
+            checking: None,
         }
     }
 
@@ -137,6 +190,11 @@ impl Server {
                 recv(self.index_rx) -> event => {
                     if let Ok(event) = event {
                         self.on_index_event(event);
+                    }
+                }
+                recv(self.check_rx) -> event => {
+                    if let Ok(event) = event {
+                        self.on_check_event(event);
                     }
                 }
             }
@@ -344,6 +402,10 @@ impl Server {
         let Some(path) = conv::uri_to_path(&params.text_document.uri) else { return };
         if is_manifest(&path) {
             self.reload_project();
+        } else if is_script(&path) {
+            // The scripts using the saved one may have new problems.
+            let name = self.ws.file_id(&path).and_then(|f| self.ws.file(f).index.name);
+            self.check_mentioning(name.into_iter().map(|n| n.to_string()).collect());
         }
     }
 
@@ -361,8 +423,24 @@ impl Server {
                 self.reload_project();
                 return;
             }
-        } else if let Some(file) = path.and_then(|p| self.ws.file_id(&p)) {
+        } else if let Some(path) = &path
+            && let Some(file) = self.ws.file_id(path)
+        {
             self.ws.close(file);
+            // A source of the project keeps its diagnostics, of the disk text
+            // (closing forgets files deleted from the disk).
+            if self.ws.file_id(path) == Some(file)
+                && self.is_checked(file, &self.build_output_dirs())
+                && let Some(diagnostics) = self.file_diagnostics(file)
+            {
+                self.published.insert(path.clone());
+                self.notify::<notification::PublishDiagnostics>(PublishDiagnosticsParams {
+                    uri,
+                    diagnostics,
+                    version: None,
+                });
+                return;
+            }
         }
         self.notify::<notification::PublishDiagnostics>(PublishDiagnosticsParams {
             uri,
@@ -373,8 +451,16 @@ impl Server {
     }
 
     fn did_change_watched_files(&mut self, params: lsp_types::DidChangeWatchedFilesParams) {
+        // The scripts that changed, by name: the scripts using them are
+        // checked again.
+        let mut changed: Vec<String> = Vec::new();
+        let build_dirs = self.build_output_dirs();
         for change in params.changes {
             let Some(path) = conv::uri_to_path(&change.uri) else { continue };
+            // Compiled and decompiled scripts are not sources.
+            if build_dirs.iter().any(|d| path.starts_with(d)) {
+                continue;
+            }
             if is_manifest(&path) {
                 if !self.other_docs.contains_key(&path) {
                     self.reload_project();
@@ -395,10 +481,13 @@ impl Server {
                 // The editor contents are authoritative.
                 continue;
             }
+            changed.extend(existing.and_then(|f| self.ws.file(f).index.name).map(|n| n.to_string()));
             match papyrus_ide::read_file(&path) {
                 Some(text) => {
                     let origin = self.origin_of(&path);
-                    self.ws.set_disk_index(path, papyrus_ide::index_text(&text), origin);
+                    let index = papyrus_ide::index_text(&text);
+                    changed.extend(index.name.map(|n| n.to_string()));
+                    self.ws.set_disk_index(path, index, origin);
                 }
                 None => {
                     if let Some(file) = existing {
@@ -408,6 +497,9 @@ impl Server {
             }
         }
         self.publish_open_diagnostics();
+        if !changed.is_empty() {
+            self.check_mentioning(changed);
+        }
     }
 
     fn set_config(&mut self, config: Config) {
@@ -436,7 +528,7 @@ impl Server {
             self.reset_workspace();
             self.start_indexing();
         }
-        self.publish_open_diagnostics();
+        self.refresh_diagnostics();
     }
 
     fn origin_of(&self, path: &Path) -> Origin {
@@ -495,6 +587,7 @@ impl Server {
             files: self.ws.len(),
             open_files: self.ws.open_files().count(),
             indexing: self.indexing,
+            checking: self.check_status(),
             generation: self.generation,
             roots: self.roots.iter().map(|p| p.display().to_string()).collect(),
             import_directories: self
@@ -557,12 +650,7 @@ impl Server {
         }
 
         // Build outputs hold copies of scripts (decompiled ones): not sources.
-        let skipped: Vec<PathBuf> = self
-            .build_dirs()
-            .into_iter()
-            .flat_map(|b| [PathBuf::from(b.compile), PathBuf::from(b.decompile)])
-            .chain(self.roots.iter().map(|r| papyrus_project::default_build_dir(r)))
-            .collect();
+        let skipped = self.build_output_dirs();
         let tx = self.index_tx.clone();
         let spawned = std::thread::Builder::new()
             .name("papyrus-indexer".to_owned())
@@ -610,6 +698,7 @@ impl Server {
                     });
                 }
                 self.publish_open_diagnostics();
+                self.check_closed_files();
             }
         }
     }
@@ -619,6 +708,13 @@ impl Server {
     }
 
     // === Diagnostics ===
+
+    /// Publishes the diagnostics of every file: open ones now, closed ones in
+    /// the background.
+    pub(crate) fn refresh_diagnostics(&mut self) {
+        self.publish_open_diagnostics();
+        self.check_closed_files();
+    }
 
     pub(crate) fn publish_open_diagnostics(&self) {
         let open: Vec<FileId> = self.ws.open_files().map(|(id, _)| id).collect();
@@ -630,23 +726,7 @@ impl Server {
     fn publish_diagnostics(&self, file: FileId) {
         let data = self.ws.file(file);
         let Some(doc) = &data.open else { return };
-        let Some(lines) = Lines::of(&self.ws, file) else { return };
-        let diagnostics = papyrus_ide::diagnostics(&self.ws, file)
-            .into_iter()
-            .filter(|d| self.config.semantic_diagnostics || !d.needs_workspace())
-            .chain(papyrus_lint::lint(&self.ws, file, &self.lint_config()))
-            .map(|d| lsp_types::Diagnostic {
-                range: lines.range(d.range),
-                severity: Some(match d.severity {
-                    papyrus_ide::Severity::Error => lsp_types::DiagnosticSeverity::ERROR,
-                    papyrus_ide::Severity::Warning => lsp_types::DiagnosticSeverity::WARNING,
-                }),
-                code: Some(NumberOrString::String(d.code.to_owned())),
-                source: Some("papyrus".to_owned()),
-                message: d.message,
-                ..Default::default()
-            })
-            .collect();
+        let Some(diagnostics) = self.file_diagnostics(file) else { return };
         self.notify::<notification::PublishDiagnostics>(PublishDiagnosticsParams {
             uri: conv::path_to_uri(&data.path),
             diagnostics,
@@ -654,6 +734,170 @@ impl Server {
         });
     }
 
+    fn file_diagnostics(&self, file: FileId) -> Option<Vec<lsp_types::Diagnostic>> {
+        file_diagnostics(&self.ws, file, self.config.semantic_diagnostics, &self.lint_config())
+    }
+
+    /// The directories of compiled and decompiled scripts: never sources.
+    fn build_output_dirs(&self) -> Vec<PathBuf> {
+        self.build_dirs()
+            .into_iter()
+            .flat_map(|b| [PathBuf::from(b.compile), PathBuf::from(b.decompile)])
+            .chain(self.roots.iter().map(|r| papyrus_project::default_build_dir(r)))
+            .collect()
+    }
+
+    /// Whether `file` is checked when closed: a script of the sources of
+    /// `papyrus.toml`, or of the workspace folders without manifest, outside
+    /// of the build directories.
+    fn is_checked(&self, file: FileId, build_dirs: &[PathBuf]) -> bool {
+        let data = self.ws.file(file);
+        if data.origin != Origin::Workspace || build_dirs.iter().any(|d| data.path.starts_with(d)) {
+            return false;
+        }
+        match &self.project {
+            Some(p) => p.sources.iter().any(|s| data.path.starts_with(s)),
+            None => self.roots.iter().any(|r| data.path.starts_with(r)),
+        }
+    }
+
+    /// The closed files to check.
+    fn closed_checked_files(&self) -> Vec<FileId> {
+        let build_dirs = self.build_output_dirs();
+        self.ws
+            .files()
+            .map(|(id, _)| id)
+            .filter(|&id| self.ws.file(id).open.is_none() && self.is_checked(id, &build_dirs))
+            .collect()
+    }
+
+    /// Checks every closed source script in the background, publishing as
+    /// results come; a newer full check stops the running one.
+    pub(crate) fn check_closed_files(&mut self) {
+        use std::sync::atomic::Ordering;
+
+        let files = self.closed_checked_files();
+        // Problems of files that are not checked anymore go away.
+        let checked: rustc_hash::FxHashSet<PathBuf> =
+            files.iter().map(|&f| self.ws.file(f).path.clone()).collect();
+        for path in std::mem::take(&mut self.published) {
+            if checked.contains(&path) {
+                self.published.insert(path);
+            } else if self.ws.file_id(&path).is_none_or(|f| self.ws.file(f).open.is_none()) {
+                self.notify::<notification::PublishDiagnostics>(PublishDiagnosticsParams {
+                    uri: conv::path_to_uri(&path),
+                    diagnostics: Vec::new(),
+                    version: None,
+                });
+            }
+        }
+        let job = self.spawn_check(files, None);
+        self.full_check.store(job, Ordering::SeqCst);
+    }
+
+    /// Checks again the closed source scripts whose text mentions one of
+    /// `names` (scripts that changed): only they can see a difference.
+    fn check_mentioning(&mut self, names: Vec<String>) {
+        let files = self.closed_checked_files();
+        self.spawn_check(files, Some(names));
+    }
+
+    /// Checks `files` in the background (only those mentioning `names` when
+    /// set), and returns the job id.
+    fn spawn_check(&mut self, files: Vec<FileId>, names: Option<Vec<String>>) -> u64 {
+        use std::sync::atomic::Ordering;
+
+        self.next_check_job += 1;
+        let job = self.next_check_job;
+        let full = names.is_none();
+        if full {
+            self.checking = Some(CheckProgress {
+                job,
+                done: 0,
+                total: files.len(),
+                current: String::new(),
+                started: Instant::now(),
+            });
+        }
+        let needles: Vec<String> =
+            names.unwrap_or_default().iter().map(|n| n.to_ascii_lowercase()).collect();
+        let ws = self.ws.clone();
+        let semantic = self.config.semantic_diagnostics;
+        let lints = self.lint_config();
+        let running = self.full_check.clone();
+        let tx = self.check_tx.clone();
+        let spawned =
+            std::thread::Builder::new().name("papyrus-checker".to_owned()).spawn(move || {
+                use rayon::prelude::*;
+                let start = Instant::now();
+                // A newer full check replaces this one.
+                let cancelled = || full && running.load(Ordering::SeqCst) > job;
+                files.par_iter().for_each(|&file| {
+                    if cancelled() {
+                        return;
+                    }
+                    let path = ws.file(file).path.clone();
+                    let mentions = needles.is_empty()
+                        || ws.text(file).is_some_and(|text| {
+                            let lower = text.to_ascii_lowercase();
+                            needles.iter().any(|n| lower.contains(n.as_str()))
+                        });
+                    let diagnostics =
+                        if mentions { file_diagnostics(&ws, file, semantic, &lints) } else { None };
+                    let _ = tx.send(CheckEvent::File { job, file, path, diagnostics });
+                });
+                if !cancelled() {
+                    log::info!("checked {} scripts in {:?}", files.len(), start.elapsed());
+                    let _ = tx.send(CheckEvent::Done { job });
+                }
+            });
+        if let Err(err) = spawned {
+            log::error!("cannot spawn the checker: {err}");
+        }
+        job
+    }
+
+    fn on_check_event(&mut self, event: CheckEvent) {
+        let (job, file, path, diagnostics) = match event {
+            CheckEvent::Done { job } => {
+                if self.checking.as_ref().is_some_and(|p| p.job == job) {
+                    self.checking = None;
+                }
+                return;
+            }
+            CheckEvent::File { job, file, path, diagnostics } => (job, file, path, diagnostics),
+        };
+        if let Some(p) = self.checking.as_mut().filter(|p| p.job == job) {
+            p.done += 1;
+            p.current = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        }
+        let Some(diagnostics) = diagnostics else { return };
+        // Results of a job older than the last one shown for the file are
+        // stale; an open file shows the diagnostics of the editor text.
+        if self.checked_job.get(&file).is_some_and(|&j| j > job)
+            || self.ws.file_id(&path) != Some(file)
+            || self.ws.file(file).open.is_some()
+        {
+            return;
+        }
+        self.checked_job.insert(file, job);
+        self.published.insert(path.clone());
+        self.notify::<notification::PublishDiagnostics>(PublishDiagnosticsParams {
+            uri: conv::path_to_uri(&path),
+            diagnostics,
+            version: None,
+        });
+    }
+
+    /// The running full check, for `papyrus/status`.
+    pub(crate) fn check_status(&self) -> Option<crate::ext::CheckStatus> {
+        self.checking.as_ref().map(|p| crate::ext::CheckStatus {
+            done: p.done,
+            total: p.total,
+            current: p.current.clone(),
+            remaining_ms: p.remaining().map(|d| d.as_millis() as u64),
+        })
+    }
     /// Resolves a document URI to a known file.
     pub(crate) fn file(&self, uri: &Uri) -> Result<FileId, (ErrorCode, String)> {
         conv::uri_to_path(uri).and_then(|p| self.ws.file_id(&p)).ok_or_else(|| {
@@ -782,7 +1026,11 @@ fn collect_scripts(
     flag_files: &mut Vec<PathBuf>,
 ) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
-    for entry in entries.flatten() {
+    // Sorted: among scripts declared twice, the first indexed wins, which
+    // must not depend on the order of the file system.
+    let mut entries: Vec<_> = entries.flatten().collect();
+    entries.sort_by_key(|e| e.path());
+    for entry in entries {
         let path = entry.path();
         let Ok(ty) = entry.file_type() else { continue };
         if ty.is_dir() {
@@ -802,4 +1050,57 @@ fn collect_scripts(
             flag_files.push(path);
         }
     }
+}
+
+/// The LSP diagnostics of a file: compiler checks and lints. The text is
+/// parsed once for both.
+fn file_diagnostics(
+    ws: &Workspace,
+    file: FileId,
+    semantic: bool,
+    lints: &papyrus_lint::LintConfig,
+) -> Option<Vec<lsp_types::Diagnostic>> {
+    let lines = Lines::of(ws, file)?;
+    let (src, errors) = match &ws.file(file).open {
+        Some(doc) => (papyrus_ide::sema::FileSource::load(ws, file)?, doc.errors.to_vec()),
+        None => papyrus_ide::sema::FileSource::parse(lines.text.clone()),
+    };
+    let found = papyrus_ide::diagnostics_of(ws, file, &src, &errors)
+        .into_iter()
+        .filter(|d| semantic || !d.needs_workspace())
+        .chain(papyrus_lint::lint_source(ws, file, &src, !errors.is_empty(), lints));
+    Some(
+        found
+            .map(|d| lsp_types::Diagnostic {
+                range: lines.range(d.range),
+                severity: Some(match d.severity {
+                    papyrus_ide::Severity::Error => lsp_types::DiagnosticSeverity::ERROR,
+                    papyrus_ide::Severity::Warning => lsp_types::DiagnosticSeverity::WARNING,
+                }),
+                code: Some(NumberOrString::String(d.code.to_owned())),
+                source: Some("papyrus".to_owned()),
+                message: d.message,
+                related_information: (!d.related.is_empty()).then(|| {
+                    d.related
+                        .iter()
+                        .filter_map(|r| {
+                            let range = if r.file == file {
+                                lines.range(r.range)
+                            } else {
+                                Lines::of(ws, r.file)?.range(r.range)
+                            };
+                            Some(lsp_types::DiagnosticRelatedInformation {
+                                location: lsp_types::Location {
+                                    uri: conv::path_to_uri(&ws.file(r.file).path),
+                                    range,
+                                },
+                                message: r.message.clone(),
+                            })
+                        })
+                        .collect()
+                }),
+                ..Default::default()
+            })
+            .collect(),
+    )
 }

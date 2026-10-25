@@ -708,7 +708,11 @@ fn misplaced_flags() {
 
 fn collect_psc(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
-    for entry in entries.flatten() {
+    // Sorted: among scripts declared twice (two versions of a library), the
+    // first indexed wins, which must not depend on the order of the OS.
+    let mut entries: Vec<_> = entries.flatten().collect();
+    entries.sort_by_key(|e| e.path());
+    for entry in entries {
         let path = entry.path();
         if path.is_dir() {
             collect_psc(&path, out);

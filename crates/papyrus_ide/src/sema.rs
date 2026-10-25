@@ -231,8 +231,13 @@ impl FileSource {
 
     /// Parses `text`.
     pub fn from_text(text: Arc<str>) -> FileSource {
-        let tree = papyrus_parser::parse(&text).into_parts().0;
-        FileSource { text, tree: Arc::new(tree) }
+        FileSource::parse(text).0
+    }
+
+    /// Parses `text`, keeping the syntax errors.
+    pub fn parse(text: Arc<str>) -> (FileSource, Vec<papyrus_parser::SyntaxError>) {
+        let (tree, errors) = papyrus_parser::parse(&text).into_parts();
+        (FileSource { text, tree: Arc::new(tree) }, errors.into_iter().collect())
     }
 
     /// The text.

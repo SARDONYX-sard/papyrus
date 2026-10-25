@@ -43,6 +43,8 @@ pub(crate) struct StatusResult {
     pub(crate) open_files: usize,
     /// Whether the workspace is being indexed.
     pub(crate) indexing: bool,
+    /// The check of the scripts not open, while it runs.
+    pub(crate) checking: Option<CheckStatus>,
     /// Incremented on every restart.
     pub(crate) generation: u64,
     /// Workspace folders.
@@ -218,4 +220,18 @@ pub(crate) struct BuildDirs {
     pub(crate) compile: String,
     /// The decompiled `.psc` files.
     pub(crate) decompile: String,
+}
+
+/// The progress of the check of the closed scripts, see [`StatusResult`].
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CheckStatus {
+    /// Scripts checked.
+    pub(crate) done: usize,
+    /// Scripts to check.
+    pub(crate) total: usize,
+    /// The last checked script.
+    pub(crate) current: String,
+    /// The estimated time left, once known.
+    pub(crate) remaining_ms: Option<u64>,
 }

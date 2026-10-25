@@ -1,150 +1,153 @@
 # Papyrus
 
+Tooling for the Papyrus scripting language of Skyrim, in Rust.
+
 ![lsp](https://github.com/user-attachments/assets/57595025-640f-4f9a-b418-91d32051996b)
 
-Inspired:
+## Features
 
-- [russo-2025/papyrus-compiler](https://github.com/russo-2025/papyrus-compiler)
-- [matklad's resilient LL parser](https://matklad.github.io/2023/05/21/resilient-ll-parsing-tutorial.html)
+- **Language server** (VS Code extension included)
+  - diagnostics like the official compiler, with related places (`defined here`)
+  - hover, go to definition / declaration (overridden function), references, rename
+  - completion, signature help, snippets, inlay hints (parameters, `overrides Quest`)
+  - code actions: quick fixes, De Morgan, inline variable
+  - semantic tokens, folding, symbols, formatting
+- **Compiler**: `.psc` → `.pex`, same code as `PapyrusCompiler.exe`, same arguments
+- **Decompiler**: `.pex` → `.psc` that compiles back to the same code
+- **Linter**: clippy-like levels and groups, `--fix`
+- **Formatter**, **disassembler**
 
-## Crates
-
-| Crate              | Role                                                                                              |
-| ------------------ | ------------------------------------------------------------------------------------------------- |
-| `papyrus_intern`   | Global, case-insensitive string interner (`Symbol`, `Name`).                                      |
-| `papyrus_lexer`    | Zero-copy lexer (`Lexer<'a>`). Newlines are tokens; `\` + newline is a line continuation.         |
-| `papyrus_parser`   | Resilient, line-oriented LL parser producing a flat lossless CST viewed through `SyntaxNode<'a>`. |
-| `papyrus_ide`      | Workspace index, name resolution, type inference and IDE features, independent of LSP.            |
-| `papyrus_analyzer` | Language server over stdio.                                                                       |
-
-Every script of `tests/fixtures/papyrus-compiler-test-sources` must parse without errors and
-without semantic diagnostics (`cargo test`).
-
-## Language server
-
-Features: diagnostics (syntax, names, types), hover (with keyword documentation and examples),
-go to definition, references, document highlight, completion (members, locals, overridable events,
-flags), signature help, document/workspace symbols, folding, semantic tokens, code lenses and
-formatting.
-
-Custom requests:
-
-- `papyrus/restart`: soft restart. Drops all indexes, applies `{ settings }`, re-indexes and
-  republishes diagnostics while keeping open documents.
-- `papyrus/status`: indexed files, open files, indexing state.
-- `papyrus/syntaxTree`: debug dump of a document's syntax tree.
-
-- `papyrus/compileCommands`: the compiler invocations described by `papyrus.toml` (run by the client).
-
-Build the VS Code extension with `npm run release`, then launch `Run Papyrus Analyzer Extension`.
-
-### `papyrus.toml`
-
-Optional. Without it the server indexes the workspace folders (plus `papyrus.importDirectories`)
-and picks the first `TESV_Papyrus_Flags.flg` it finds. With it, the imports and the flags file come
-from the manifest, and the compiler can be run from:
-
-- the `▶ Compile` code lens above `ScriptName`;
-- the `Compile…` status bar button, which compiles the scripts picked in a list (remembered);
-- the explorer context menu on one or several `.psc` files, the editor title button or `Ctrl+Shift+B`.
-
-`papyrus.toml` is searched in the workspace folders, their parents and up to three levels of
-subdirectories. `Papyrus: Create papyrus.toml` writes a template.
-
-`papyrus.toml` is committed and shared, so machine specific paths are written as `${NAME}`
-variables. A variable is taken from, first wins:
-
-1. the `papyrus.var` editor setting (VS Code user `settings.json`), or `papyrus_analyzer --var NAME=VALUE`
-   / `init_options = { var = { ... } }` for other editors;
-2. `[var]` of `papyrus.local.toml` next to the manifest (not committed, added to `.gitignore`);
-3. `[var]` of `papyrus.toml` (shared defaults).
-
-An undefined variable is an error (the status bar turns red). Like in VS Code settings,
-`${env:NAME}` reads the environment variable `NAME` and `${workspaceFolder}` (or
-`${workspaceFolder:name}`) is a workspace folder. `${game:SkyrimSE}` is the installation directory
-found in the registry (`SkyrimLE`, `SkyrimSE`, `SkyrimVR`, `Enderal`, `EnderalSE`); the registry
-only exists on Windows, so elsewhere set `SKYRIM_DIR` to a path instead. Values of
-variables may use them too, e.g. `"papyrus.var": { "SKYRIM_DIR": "${game:SkyrimSE}" }`. Hover a `${...}` or a `[var]` key in `papyrus.toml` to see
-its value and where it comes from.
-
-```toml
-[package]
-name = "MyMod"
-
-[compiler]
-path = "${SKYRIM_DIR}/Papyrus Compiler/PapyrusCompiler.exe"
-args = []
-
-[build]
-sources = ["."]                             # scripts to compile, recursively
-output = "output"                           # .pex output, keeps the directories of sources
-imports = ["${SKYRIM_DIR}/Data/Scripts/Source"]
-flags = "${SKYRIM_DIR}/Data/Scripts/Source/TESV_Papyrus_Flags.flg"
-optimize = true
-release = false
-final = false
-quiet = true
-```
-
-```jsonc
-// VS Code user settings.json
-"papyrus.var": { "SKYRIM_DIR": "${game:SkyrimSE}" }  // or an absolute path
-```
+## Quick start
 
 ```sh
-# Other editors: pass variables on the command line (see `papyrus_analyzer --help`).
-papyrus_analyzer --var "SKYRIM_DIR=D:/Steam/steamapps/common/Skyrim Special Edition"
+papyrus_analyzer                       # language server (stdio)
+papyrus_compiler MyQuest -i=Source -o=Scripts -f=TESV_Papyrus_Flags.flg
+papyrus_analyzer compile               # the project of papyrus.toml
+papyrus_analyzer decompile -o out Scripts/    # whole folders, structure kept
+papyrus_analyzer lint [--fix] [-D warnings] [PATH]...
+papyrus_analyzer fmt [--check] [PATH]...
+papyrus_analyzer disasm Foo.pex
 ```
 
-Without `papyrus.toml`, the game scripts below `SKYRIM_DIR` (or the installation found in the registry)
-are imported automatically; add more
-directories with `papyrus.importDirectories` (variables allowed, e.g. `${SKYRIM_DIR}/Data/Scripts/Source`).
+VS Code: the **Papyrus** view of the activity bar compiles or decompiles in one click.
 
-### Formatter
+```mermaid
+flowchart LR
+    mode{{"COMPILE MODE / DECOMPILE MODE"}} --> tree["scripts tree"]
+    tree -- "click a file" --> run["compile / decompile it"]
+    tree -- "▶ on a folder" --> all["everything below"]
+```
 
-`papyrus_analyzer fmt [--check] [PATH]...` formats scripts from the command line, and the editor
-formats through the language server. Options come from the editor, then `.editorconfig`
-(`indent_style`, `indent_size`, `end_of_line`, `insert_final_newline`), then `[format]` of
-`papyrus.toml`:
+## Architecture
+
+```mermaid
+flowchart LR
+    psc[".psc"] --> lexer --> parser["parser (lossless CST)"]
+    parser --> ide["papyrus_ide<br/>index · sema · HIR · typeck"]
+    ide --> lsp["papyrus_analyzer<br/>(LSP, CLI)"]
+    ide --> lint[papyrus_lint]
+    ide --> compiler["papyrus_compiler<br/>codegen → IR → opt"]
+    parser --> fmt[papyrus_fmt]
+    compiler --> pex[".pex"]
+    pex --> decompiler[papyrus_decompiler] --> psc2[".psc"]
+    pex --> disasm["papyrus_pex (read · write · disasm)"]
+```
+
+| Crate | Role |
+| --- | --- |
+| `papyrus_intern` | case-insensitive string interner |
+| `papyrus_lexer` / `papyrus_parser` | zero-copy lexer, resilient LL parser |
+| `papyrus_ide` | workspace, name resolution, types, IDE features, assists |
+| `papyrus_lint` | lints and their fixes |
+| `papyrus_fmt` | formatter |
+| `papyrus_compiler` | compiler and its CLI |
+| `papyrus_pex` | `.pex` model, reader, writer, disassembler, `pexdiff` |
+| `papyrus_decompiler` | decompiler |
+| `papyrus_project` | `papyrus.toml` |
+| `papyrus_analyzer` | language server and the `papyrus_analyzer` CLI |
+
+## `papyrus.toml`
+
+Optional: without it, the workspace and the installed game scripts are used ("limited" mode).
 
 ```toml
-[format]
-indent-style = "space"        # space or tab
-indent-size = 4
-keyword-case = "canonical"    # canonical, preserve, PascalCase, camelCase, lowercase, UPPERCASE
-max-blank-lines = 1
-newline = "auto"              # auto, lf, crlf
-final-newline = true
+[compiler]                      # no path: the built-in compiler
+path = "${SKYRIM_DIR}/Papyrus Compiler/PapyrusCompiler.exe"
 
-[format.keywords]               # single keywords, winning over keyword-case
-as = "As"
+[build]
+sources = ["."]
+output = "output"               # decompiled scripts go to output/decompile
+imports = ["${SKYRIM_DIR}/Data/Scripts/Source"]
+flags = "${SKYRIM_DIR}/Data/Scripts/Source/TESV_Papyrus_Flags.flg"
+
+[lints]
+complexity = "allow"
+unused-local = "deny"
+
+[format]
+indent-style = "space"
+indent-size = 4
 ```
 
-Scripts with syntax errors are not formatted, and the result is checked to contain the same tokens.
+- Machine paths are `${NAME}` variables, taken from (first wins):
+  1. the `papyrus.var` setting / `--var NAME=VALUE`
+  2. `[var]` of `papyrus.local.toml` (not committed)
+  3. `[var]` of `papyrus.toml`
+- Built-ins: `${env:NAME}`, `${workspaceFolder}`, `${game:SkyrimSE}` (registry, Windows).
+- Without manifest, outputs go to `build/papyrus/{compile,decompile}`.
+- `Papyrus: Create papyrus.toml` writes a commented template.
 
-### Packaging
+## Lints
 
-`node dist.js` copies the server next to the extension; `node dist.js --vsix --target <triple>`
-also packages `papyrus-analyzer-<platform>.vsix`. The CI build and release workflows use the same
-command (`npm run package` locally).
+- Levels: `allow` · `warn` · `deny` (error).
+- Groups: `correctness` (deny) · `suspicious` · `complexity` · `style` (warn) · `pedantic` (allow).
+- Precedence: lint name > group > `all`; command line flags win over `papyrus.toml`.
+
+```sh
+papyrus_analyzer lint --list
+papyrus_analyzer lint -D warnings -A style --fix Scripts/Source
+```
+
+## Contributing
+
+One file per feature, plus one line in a list:
+
+| Add | Where |
+| --- | --- |
+| lint (+ fix) | `crates/papyrus_lint/src/lints/` → `LINTS` |
+| assist | `crates/papyrus_ide/src/assists/` → `HANDLERS` |
+| snippet | `crates/papyrus_ide/src/features/snippets/*.psc` → `SNIPPETS` |
+| keyword docs | `crates/papyrus_ide/src/features/keyword_docs/*.md` |
+
+Tests (`cargo test`):
+
+- every script of `tests/fixtures/papyrus-compiler-test-sources` parses without diagnostics;
+- the compiler matches the official one (`pexdiff --loose`), the decompiler round-trips.
+
+## Packaging
+
+- `node dist.js` — copies the server next to the extension.
+- `node dist.js --vsix --target <triple>` — builds `papyrus-analyzer-<platform>.vsix` (used by CI).
 
 ## Todo
 
-- [x] Tokenizer
-- [x] Concrete Syntax Tree
-- [x] Concrete Syntax Tree Parser
-- [x] Formatter
-- [x] Semantic tree (index + name resolution)
-- [x] Type checker
-- [ ] Linter
+- [x] Lexer, parser, formatter
+- [x] Name resolution, type checker
 - [x] Language server
-- [ ] Compiler
-- [ ] Papyrus Virtual Machine(For unit test)
+- [x] Linter
+- [x] Compiler, decompiler
+- [ ] Inlining optimization
+- [ ] Papyrus virtual machine (unit tests)
+
+## Thanks
+
+- [rust-analyzer](https://github.com/rust-lang/rust-analyzer) — design studied closely
+- [russo-2025/papyrus-compiler](https://github.com/russo-2025/papyrus-compiler)
+- [matklad's resilient LL parsing](https://matklad.github.io/2023/05/21/resilient-ll-parsing-tutorial.html)
 
 ## License
 
-This code was created by studying [rust-analyzer](https://github.com/rust-lang/rust-analyzer).
-In other words, this code as a whole can be considered a product of rust-analyzer.
+This code was created by studying rust-analyzer; as a whole it can be considered a product of it.
 
 ```txt
 SPDX-FileCopyrightText: (C) 2026 rust-analyzer team

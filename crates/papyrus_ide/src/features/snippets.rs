@@ -34,8 +34,8 @@ pub(crate) struct Snippet {
     pub(crate) description: &'static str,
     /// Where it is offered.
     pub(crate) context: SnippetContext,
-    /// The text, in LSP snippet syntax.
-    pub(crate) body: &'static str,
+    /// The text, in LSP snippet syntax, with LF line breaks.
+    pub(crate) body: String,
 }
 
 macro_rules! snippet_files {
@@ -84,7 +84,8 @@ fn parse(file: &'static str) -> Option<Snippet> {
             description = comment;
         }
     }
-    let body = file[body_start..].trim_end_matches(['\r', '\n']);
+    // Checkouts with CRLF line breaks give CRLF files.
+    let body = file[body_start..].trim_end_matches(['\r', '\n']).replace("\r\n", "\n");
     Some(Snippet { prefix: prefix?, description, context: context?, body })
 }
 
@@ -123,7 +124,7 @@ mod tests {
         assert_eq!(SNIPPETS.iter().filter_map(|f| parse(f)).count(), SNIPPETS.len());
         for file in SNIPPETS {
             let s = parse(file).unwrap();
-            let code = preview(s.body);
+            let code = preview(&s.body);
             let src = match s.context {
                 SnippetContext::Item => format!("ScriptName T\n{code}\n"),
                 SnippetContext::Body => format!(
