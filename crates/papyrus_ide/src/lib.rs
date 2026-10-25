@@ -37,6 +37,7 @@ pub use crate::{
             Highlight, NavFile, NavTarget, flag_references, goto_declaration, goto_definition,
             highlight, references,
         },
+        overrides::{Override, OverrideKind, Overridden, overridden, overrides},
         semantic_tokens::{SemanticToken, TokenModifier, TokenType, semantic_tokens},
         signature_help::{SignatureHelp, signature_help},
         symbols::{

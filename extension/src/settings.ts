@@ -9,7 +9,10 @@ export function settings(): Record<string, unknown> {
     semanticDiagnostics: config.get<boolean>("semanticDiagnostics", true),
     flagsFile: expandPath(config.get<string>("flagsFile", "")) || null,
     var: config.get<Record<string, string>>("var", {}),
-    inlayHints: { parameterNames: config.get<boolean>("inlayHints.parameterNames", true) },
+    inlayHints: {
+      parameterNames: config.get<boolean>("inlayHints.parameterNames", true),
+      overrides: config.get<boolean>("inlayHints.overrides", true),
+    },
   };
 }
 

@@ -232,6 +232,11 @@
           "type": "boolean",
           "default": true,
           "markdownDescription": "Show parameter names before call arguments, e.g. `Debug.Trace(asTextToPrint: msg)`. Hidden for named arguments and for arguments spelled like the parameter (`actor` for `akActor`)."
+        },
+        "papyrus.inlayHints.overrides": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show `overrides Quest` after functions and events replacing one of a parent script, and `event of Form` after events the game sends. Click the script name to go to the replaced declaration."
         }
       }
     },

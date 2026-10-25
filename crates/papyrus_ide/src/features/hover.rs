@@ -46,6 +46,9 @@ fn name_hover(sema: &Sema<'_>, offset: TextSize) -> Option<HoverResult> {
     if let Some(container) = info.container {
         markdown.push_str(&format!("\n*{container}*"));
     }
+    if let Some(line) = super::overrides::hover_line(sema, def) {
+        markdown.push_str(&format!("\n\n{line}"));
+    }
     if !info.docs.is_empty() {
         markdown.push_str("\n\n---\n\n");
         markdown.push_str(&info.docs);

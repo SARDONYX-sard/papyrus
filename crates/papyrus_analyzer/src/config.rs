@@ -30,11 +30,13 @@ pub(crate) struct Config {
 pub(crate) struct InlayHintsConfig {
     /// Parameter names before call arguments.
     pub(crate) parameter_names: bool,
+    /// `overrides Quest` after functions replacing one of a parent script.
+    pub(crate) overrides: bool,
 }
 
 impl Default for InlayHintsConfig {
     fn default() -> Self {
-        InlayHintsConfig { parameter_names: true }
+        InlayHintsConfig { parameter_names: true, overrides: true }
     }
 }
 

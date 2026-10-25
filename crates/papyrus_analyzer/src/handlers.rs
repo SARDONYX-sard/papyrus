@@ -360,8 +360,38 @@ impl Server {
             }),
             data: None,
         };
-        self.manifest.as_ref()?;
-        Some(vec![lens("▶\u{fe0e} Compile", "papyrus.compile", Some(vec![uri]))])
+        let mut lenses = vec![lens("▶\u{fe0e} Compile", "papyrus.compile", Some(vec![uri.clone()]))];
+        // `overridden in N scripts` above functions child scripts replace;
+        // the client turns the arguments into a references view.
+        let mut cache = FxHashMap::default();
+        for o in papyrus_ide::overridden(&self.ws, file) {
+            let locations: Vec<Location> = o
+                .by
+                .iter()
+                .filter_map(|t| self.nav_location(t.file, t.focus_range, &mut cache))
+                .collect();
+            let position = lines.position(o.name_range.start());
+            let line = lsp_types::Range::new(Position::new(position.line, 0), Position::new(position.line, 0));
+            let title = match locations.len() {
+                1 => "overridden in 1 script".to_owned(),
+                n => format!("overridden in {n} scripts"),
+            };
+            let arguments = vec![
+                uri.clone(),
+                serde_json::to_value(position).ok()?,
+                serde_json::to_value(&locations).ok()?,
+            ];
+            lenses.push(CodeLens {
+                range: line,
+                command: Some(Command {
+                    title,
+                    command: "papyrus.showReferences".to_owned(),
+                    arguments: Some(arguments),
+                }),
+                data: None,
+            });
+        }
+        Some(lenses)
     }
 
     pub(crate) fn folding_ranges(
@@ -482,17 +512,13 @@ impl Server {
     }
 
     pub(crate) fn inlay_hints(&mut self, params: InlayHintParams) -> Option<Vec<InlayHint>> {
-        if !self.config.inlay_hints.parameter_names {
-            return Some(Vec::new());
-        }
         let file = self.file(&params.text_document.uri).ok()?;
         let lines = Lines::of(&self.ws, file)?;
         let range = lines.text_range(params.range);
-        let hints = papyrus_ide::inlay_hints(&self.ws, file, Some(range));
-        Some(
-            hints
-                .into_iter()
-                .map(|h| InlayHint {
+        let mut out = Vec::new();
+        if self.config.inlay_hints.parameter_names {
+            out.extend(papyrus_ide::inlay_hints(&self.ws, file, Some(range)).into_iter().map(|h| {
+                InlayHint {
                     position: lines.position(h.offset),
                     label: InlayHintLabel::String(h.label),
                     kind: Some(InlayHintKind::PARAMETER),
@@ -504,11 +530,50 @@ impl Server {
                     padding_left: None,
                     padding_right: Some(true),
                     data: None,
-                })
-                .collect(),
-        )
+                }
+            }));
+        }
+        if self.config.inlay_hints.overrides {
+            let mut cache = FxHashMap::default();
+            for o in papyrus_ide::overrides(&self.ws, file) {
+                if range.intersect(o.name_range).is_none() {
+                    continue;
+                }
+                // The script name links to the replaced function.
+                let location = self.nav_location(o.base.file, o.base.focus_range, &mut cache);
+                let (prefix, tooltip) = match o.kind {
+                    papyrus_ide::OverrideKind::Override => {
+                        ("overrides ", format!("Replaces the function of `{}`", o.base_script))
+                    }
+                    papyrus_ide::OverrideKind::EngineEvent => {
+                        ("event of ", format!("An event the game sends, declared by `{}`", o.base_script))
+                    }
+                };
+                out.push(InlayHint {
+                    position: lines.position(o.hint_offset),
+                    label: InlayHintLabel::LabelParts(vec![
+                        lsp_types::InlayHintLabelPart {
+                            value: prefix.to_owned(),
+                            ..Default::default()
+                        },
+                        lsp_types::InlayHintLabelPart {
+                            value: o.base_script.to_string(),
+                            location,
+                            tooltip: Some(lsp_types::InlayHintLabelPartTooltip::String(tooltip)),
+                            command: None,
+                        },
+                    ]),
+                    kind: None,
+                    text_edits: None,
+                    tooltip: None,
+                    padding_left: Some(true),
+                    padding_right: None,
+                    data: None,
+                });
+            }
+        }
+        Some(out)
     }
-
     pub(crate) fn syntax_tree(&mut self, params: ext::SyntaxTreeParams) -> String {
         let Ok(file) = self.file(&params.text_document.uri) else { return String::new() };
         let Some(text) = self.ws.text(file) else { return String::new() };

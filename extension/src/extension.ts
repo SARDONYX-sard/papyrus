@@ -10,6 +10,7 @@ import { state } from "./state";
 import { createStatusBar } from "./statusBar";
 import { showStatus } from "./statusCommand";
 import { showSyntaxTree } from "./syntaxTree";
+import { showReferences } from "./references";
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   state.context = context;
@@ -22,6 +23,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     vscode.commands.registerCommand("papyrus.restartServer", restartServer),
     vscode.commands.registerCommand("papyrus.showStatus", showStatus),
+    vscode.commands.registerCommand("papyrus.showReferences", showReferences),
     vscode.commands.registerCommand("papyrus.showSyntaxTree", showSyntaxTree),
     vscode.commands.registerCommand("papyrus.compile", compileCommand),
     vscode.commands.registerCommand("papyrus.compileAll", compileAll),

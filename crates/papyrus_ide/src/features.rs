@@ -7,6 +7,7 @@ pub(crate) mod hover;
 pub(crate) mod inlay_hints;
 pub(crate) mod keyword_docs;
 pub(crate) mod navigation;
+pub(crate) mod overrides;
 pub(crate) mod semantic_tokens;
 pub(crate) mod signature_help;
 pub(crate) mod symbols;
