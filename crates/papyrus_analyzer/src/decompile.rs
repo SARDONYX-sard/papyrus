@@ -105,6 +105,9 @@ pub(crate) fn run(args: &[String]) -> i32 {
 
 /// Decompiles a `.pex` file to source, or with `assembly` disassembles it.
 /// Returns the script name and the text; errors start with the path.
+///
+/// The source starts with a comment saying where it comes from: it looks
+/// like a script of the project, and must not be mistaken for the original.
 pub(crate) fn decompile_file(file: &Path, assembly: bool) -> Result<(String, String), String> {
     let bytes = std::fs::read(file).map_err(|e| format!("{}: {e}", file.display()))?;
     let pex = PexFile::from_bytes(&bytes).map_err(|e| format!("{}: {e}", file.display()))?;
@@ -115,7 +118,12 @@ pub(crate) fn decompile_file(file: &Path, assembly: bool) -> Result<(String, Str
     let text = if assembly {
         papyrus_pex::disasm::disassemble(&pex, Default::default())
     } else {
-        papyrus_decompiler::decompile(&pex)
+        let pex_name = file.file_name().map(|n| n.to_string_lossy()).unwrap_or_default();
+        format!(
+            "; DECOMPILED from {pex_name} by papyrus_analyzer: not the original source.\n\
+             ; Comments and formatting of the original are lost; edits here do not change the .pex.\n\n{}",
+            papyrus_decompiler::decompile(&pex)
+        )
     };
     Ok((name, text))
 }

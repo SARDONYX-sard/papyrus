@@ -23,7 +23,7 @@ args = []
 
 [build]
 # Directories of the scripts to compile, searched recursively (relative to this file).
-sources = ["./simple", "./compiler"]
+sources = ["./simple"]
 # Where the compiled `.pex` files go, keeping the directory structure of `sources`.
 output = "${workspaceFolder}/target/papyrus"
 # Other script sources, in lookup order (after `sources`).

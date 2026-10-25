@@ -7,9 +7,11 @@ import type { LanguageClient } from "vscode-languageclient/node";
 
 /**
  * Read-only documents of decompiled `.pex` files:
- * `papyrus-pex:/dir/Name.psc?<uri of the .pex>` for the source,
- * `papyrus-pex:/dir/Name.pas?<uri of the .pex>` for the assembly. The `.psc`
- * extension gives the source the Papyrus language.
+ * `papyrus-pex:/dir/Name (decompiled).psc?<uri of the .pex>` for the source,
+ * `papyrus-pex:/dir/Name (assembly).pas?<uri of the .pex>` for the assembly.
+ * The `.psc` extension gives the source the Papyrus language. So that they
+ * are not mistaken for the original scripts, the tab says `(decompiled)`
+ * with a badge, and the source starts with a comment saying so.
  */
 export const PEX_SCHEME = "papyrus-pex";
 
@@ -48,7 +50,7 @@ function pexDocumentUri(pex: vscode.Uri, assembly: boolean): vscode.Uri {
   const name = path.posix.basename(pex.path, path.posix.extname(pex.path));
   return vscode.Uri.from({
     scheme: PEX_SCHEME,
-    path: `${dir}/${name}.${assembly ? "pas" : "psc"}`,
+    path: assembly ? `${dir}/${name} (assembly).pas` : `${dir}/${name} (decompiled).psc`,
     query: pex.toString(),
   });
 }
@@ -101,10 +103,26 @@ class PexEditorProvider implements vscode.CustomReadonlyEditorProvider {
   }
 }
 
+/** A badge on the tabs of decompiled documents. */
+class PexDecorationProvider implements vscode.FileDecorationProvider {
+  provideFileDecoration(uri: vscode.Uri): vscode.FileDecoration | undefined {
+    if (uri.scheme !== PEX_SCHEME) {
+      return undefined;
+    }
+    const pex = vscode.Uri.parse(uri.query).fsPath;
+    return {
+      badge: "D",
+      tooltip: `Decompiled from ${pex}, read-only: not the original source`,
+      color: new vscode.ThemeColor("charts.purple"),
+    };
+  }
+}
+
 /** Registers the provider, the editor and the commands. */
 export function registerDecompiler(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.workspace.registerTextDocumentContentProvider(PEX_SCHEME, new PexContentProvider()),
+    vscode.window.registerFileDecorationProvider(new PexDecorationProvider()),
     vscode.window.registerCustomEditorProvider(PEX_VIEW_TYPE, new PexEditorProvider()),
     vscode.commands.registerCommand("papyrus.decompile", decompileCommand),
     vscode.commands.registerCommand("papyrus.showAssembly", showAssemblyCommand),
