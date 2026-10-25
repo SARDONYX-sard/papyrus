@@ -42,8 +42,12 @@ use toml::Spanned;
 
 mod editorconfig;
 mod vars;
+mod workspace;
 
-pub use crate::editorconfig::EditorConfig;
+pub use crate::{
+    editorconfig::EditorConfig,
+    workspace::{ProjectWorkspace, find_workspace_root, load_workspace, load_workspace_with},
+};
 
 pub use crate::vars::{
     SKYRIM_DIR, VarSource, Variables, detect_skyrim_dir, game_dir, game_script_dirs,
@@ -68,11 +72,19 @@ pub struct ManifestError {
     pub message: String,
     /// The byte range in the manifest.
     pub span: Option<Range<usize>>,
+    /// The manifest, when not the loaded one (a member of a workspace).
+    pub file: Option<PathBuf>,
 }
 
 impl ManifestError {
     fn new(message: impl Into<String>, span: Option<Range<usize>>) -> ManifestError {
-        ManifestError { message: message.into(), span }
+        ManifestError { message: message.into(), span, file: None }
+    }
+
+    /// Places the error in `file`, unless it already has a file.
+    pub(crate) fn in_file(mut self, file: &Path) -> ManifestError {
+        self.file.get_or_insert_with(|| file.to_path_buf());
+        self
     }
 }
 
@@ -97,6 +109,10 @@ struct RawManifest {
     format: RawFormat,
     #[serde(default)]
     lints: BTreeMap<String, Spanned<toml::Value>>,
+    #[serde(default)]
+    workspace: Option<workspace::RawWorkspace>,
+    #[serde(default)]
+    dependencies: BTreeMap<String, workspace::RawDependency>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -140,6 +156,18 @@ pub struct FormatSettings {
 }
 
 impl FormatSettings {
+    /// Takes the values set in `other`, keeping the others (the ones of a
+    /// workspace under the ones of a member).
+    pub(crate) fn merge(&mut self, other: FormatSettings) {
+        self.use_tabs = other.use_tabs.or(self.use_tabs);
+        self.indent_size = other.indent_size.or(self.indent_size);
+        self.keyword_case = other.keyword_case.or(self.keyword_case);
+        self.keywords.extend(other.keywords);
+        self.max_blank_lines = other.max_blank_lines.or(self.max_blank_lines);
+        self.newline = other.newline.or(self.newline);
+        self.final_newline = other.final_newline.or(self.final_newline);
+    }
+
     /// Applies the set values to formatter options.
     pub fn apply(&self, options: &mut papyrus_fmt::FormatOptions) {
         let size = |options: &papyrus_fmt::FormatOptions| match options.indent {
@@ -182,6 +210,17 @@ fn lint_settings(
     errors: &mut Vec<ManifestError>,
 ) -> papyrus_lint::LintConfig {
     let mut config = papyrus_lint::LintConfig::default();
+    lint_settings_into(&mut config, raw, errors);
+    config
+}
+
+/// Adds the settings of a `[lints]` table to `config`: they win over the
+/// ones already there (of the workspace).
+pub(crate) fn lint_settings_into(
+    config: &mut papyrus_lint::LintConfig,
+    raw: &BTreeMap<String, Spanned<toml::Value>>,
+    errors: &mut Vec<ManifestError>,
+) {
     for (name, value) in raw {
         let span = Some(value.span()).filter(|r| !r.is_empty());
         let level = match value.get_ref() {
@@ -201,7 +240,6 @@ fn lint_settings(
             errors.push(ManifestError::new(e, span));
         }
     }
-    config
 }
 
 /// Reads only the `[lints]` table of a manifest; like [`load_format`], it
@@ -301,46 +339,23 @@ struct RawCompiler {
     args: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
+/// `[build]`. Unset values come from `[workspace.build]`, then defaults.
+#[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 struct RawBuild {
-    #[serde(default = "default_sources")]
-    sources: Vec<Spanned<String>>,
+    sources: Option<Vec<Spanned<String>>>,
     output: Option<Spanned<String>>,
     #[serde(default)]
     imports: Vec<Spanned<String>>,
     flags: Option<Spanned<String>>,
-    #[serde(default = "yes")]
-    optimize: bool,
-    #[serde(default)]
-    release: bool,
-    #[serde(default)]
-    r#final: bool,
-    #[serde(default = "yes")]
-    quiet: bool,
-}
-
-impl Default for RawBuild {
-    fn default() -> Self {
-        RawBuild {
-            sources: default_sources(),
-            output: None,
-            imports: Vec::new(),
-            flags: None,
-            optimize: true,
-            release: false,
-            r#final: false,
-            quiet: true,
-        }
-    }
+    optimize: Option<bool>,
+    release: Option<bool>,
+    r#final: Option<bool>,
+    quiet: Option<bool>,
 }
 
 fn default_sources() -> Vec<Spanned<String>> {
     vec![Spanned::new(0..0, ".".to_owned())]
-}
-
-fn yes() -> bool {
-    true
 }
 
 /// A loaded manifest with every path resolved.
@@ -371,8 +386,16 @@ pub struct Project {
     pub sources: Vec<PathBuf>,
     /// `build.output`: the directory of the compiled `.pex` files.
     pub output: PathBuf,
-    /// `build.imports`: other source directories, in priority order.
+    /// `build.imports`: other source directories, in priority order (the
+    /// imports of `[workspace.build]` included, after).
     pub imports: Vec<PathBuf>,
+    /// The sources of `[dependencies]`, transitively: imported before
+    /// `imports`.
+    pub dependency_sources: Vec<PathBuf>,
+    /// `[dependencies]`: name and manifest directory.
+    pub dependencies: Vec<(String, PathBuf)>,
+    /// The manifest of the workspace this project is a member of.
+    pub workspace_manifest: Option<PathBuf>,
     /// `build.flags`: the flags file.
     pub flags: Option<PathBuf>,
     /// `build.optimize`
@@ -533,32 +556,74 @@ pub fn parse(
     local: Option<&str>,
     vars: &Variables,
 ) -> Result<Project, Vec<ManifestError>> {
+    parse_with(manifest_path, text, local, vars, None)
+}
+
+/// Like [`parse`], for a member of a workspace: unset values come from the
+/// workspace.
+pub(crate) fn parse_with(
+    manifest_path: &Path,
+    text: &str,
+    local: Option<&str>,
+    vars: &Variables,
+    inherited: Option<&workspace::Inherited>,
+) -> Result<Project, Vec<ManifestError>> {
     let raw: RawManifest = toml::from_str(text)
         .map_err(|e| vec![ManifestError::new(e.message().to_owned(), e.span())])?;
     let mut vars = vars.clone();
-    vars.manifest = raw.var.clone();
+    // The variables of the workspace come first; the member wins.
+    if let Some(i) = inherited {
+        vars.manifest = i.var.clone();
+        vars.local = i.local.clone();
+    }
+    vars.manifest.extend(raw.var.clone());
     if let Some(local) = local {
         let raw_local: RawLocal = toml::from_str(local).map_err(|e| {
             vec![ManifestError::new(format!("{LOCAL_MANIFEST_NAME}: {}", e.message()), None)]
         })?;
-        vars.local = raw_local.var;
+        vars.local.extend(raw_local.var);
     }
 
     let root = manifest_path.parent().map(Path::to_path_buf).unwrap_or_default();
     let mut resolver =
         Resolver { root: &root, vars: &vars, used: BTreeMap::new(), errors: Vec::new() };
 
-    let compiler = raw.compiler.path.as_ref().map(|p| resolver.path(p));
-    let sources: Vec<PathBuf> = raw.build.sources.iter().map(|p| resolver.path(p)).collect();
+    let raw_sources = raw.build.sources.clone().unwrap_or_else(default_sources);
+    let compiler = raw
+        .compiler
+        .path
+        .as_ref()
+        .map(|p| resolver.path(p))
+        .or_else(|| inherited.and_then(|i| i.compiler.clone()));
+    let sources: Vec<PathBuf> = raw_sources.iter().map(|p| resolver.path(p)).collect();
     let output = match &raw.build.output {
         Some(p) => resolver.path(p),
         None => root.join("output"),
     };
-    let imports: Vec<PathBuf> = raw.build.imports.iter().map(|p| resolver.path(p)).collect();
-    let flags = raw.build.flags.as_ref().map(|p| resolver.path(p));
-    let extra_args = raw.compiler.args.iter().map(|a| resolver.expand(a, None)).collect();
-    let format = format_settings(&raw.format, &mut resolver.errors);
-    let lints = lint_settings(&raw.lints, &mut resolver.errors);
+    let mut imports: Vec<PathBuf> = raw.build.imports.iter().map(|p| resolver.path(p)).collect();
+    if let Some(i) = inherited {
+        imports.extend(i.imports.iter().filter(|d| !imports.contains(d)).cloned().collect::<Vec<_>>());
+    }
+    let flags = raw
+        .build
+        .flags
+        .as_ref()
+        .map(|p| resolver.path(p))
+        .or_else(|| inherited.and_then(|i| i.flags.clone()));
+    let mut extra_args: Vec<String> = inherited.map(|i| i.args.clone()).unwrap_or_default();
+    extra_args.extend(raw.compiler.args.iter().map(|a| resolver.expand(a, None)));
+    let mut format = inherited.map(|i| i.format.clone()).unwrap_or_default();
+    format.merge(format_settings(&raw.format, &mut resolver.errors));
+    let mut lints = inherited.map(|i| i.lints.clone()).unwrap_or_default();
+    lint_settings_into(&mut lints, &raw.lints, &mut resolver.errors);
+    let dependencies: Vec<(String, PathBuf)> = raw
+        .dependencies
+        .iter()
+        .map(|(name, dep)| (name.clone(), resolver.path(&dep.path)))
+        .collect();
+    let flag = |own: Option<bool>, ws: Option<Option<bool>>, default: bool| {
+        own.or(ws.flatten()).unwrap_or(default)
+    };
 
     if !resolver.errors.is_empty() {
         return Err(resolver.errors);
@@ -568,7 +633,7 @@ pub fn parse(
     let mut warnings = Vec::new();
     let span = |s: &Spanned<String>| Some(s.span()).filter(|r| !r.is_empty());
     for (path, raw) in
-        sources.iter().zip(&raw.build.sources).chain(imports.iter().zip(&raw.build.imports))
+        sources.iter().zip(&raw_sources).chain(imports.iter().zip(&raw.build.imports))
     {
         if !path.is_dir() {
             warnings.push(ManifestError::new(
@@ -605,11 +670,14 @@ pub fn parse(
         sources,
         output,
         imports,
+        dependency_sources: Vec::new(),
+        dependencies,
+        workspace_manifest: inherited.map(|i| i.manifest.clone()),
         flags,
-        optimize: raw.build.optimize,
-        release: raw.build.release,
-        r#final: raw.build.r#final,
-        quiet: raw.build.quiet,
+        optimize: flag(raw.build.optimize, inherited.map(|i| i.optimize), true),
+        release: flag(raw.build.release, inherited.map(|i| i.release), false),
+        r#final: flag(raw.build.r#final, inherited.map(|i| i.r#final), false),
+        quiet: flag(raw.build.quiet, inherited.map(|i| i.quiet), true),
         format,
         lints,
         variables,
@@ -695,8 +763,18 @@ pub fn variable_at(text: &str, offset: usize) -> Option<(String, Range<usize>)> 
 pub fn resolve_path(root: &Path, value: &str) -> PathBuf {
     let path = PathBuf::from(value);
     let path = if path.is_absolute() { path } else { root.join(path) };
-    // Rebuilding from components normalizes separators and drops `.`.
-    path.components().collect()
+    // Rebuilding from components normalizes separators and drops `.`; `..`
+    // pops lexically, so `App/../Lib` and `Lib` name the same directory.
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            std::path::Component::ParentDir if out.file_name().is_some() => {
+                out.pop();
+            }
+            c => out.push(c),
+        }
+    }
+    out
 }
 impl Project {
     /// A project for a folder without manifest: its scripts compile with the
@@ -721,6 +799,9 @@ impl Project {
             builtin_compiler: None,
             extra_args: Vec::new(),
             imports,
+            dependency_sources: Vec::new(),
+            dependencies: Vec::new(),
+            workspace_manifest: None,
             flags,
             optimize: false,
             release: false,
@@ -737,7 +818,7 @@ impl Project {
     /// lookup order: the sources, then the imports.
     pub fn import_dirs(&self) -> Vec<PathBuf> {
         let mut dirs: Vec<PathBuf> = Vec::new();
-        for dir in self.sources.iter().chain(&self.imports) {
+        for dir in self.sources.iter().chain(&self.dependency_sources).chain(&self.imports) {
             if !dirs.contains(dir) {
                 dirs.push(dir.clone());
             }
@@ -758,7 +839,7 @@ impl Project {
                 dirs.push(parent.to_path_buf());
             }
         }
-        for dir in self.sources.iter().chain(&self.imports) {
+        for dir in self.sources.iter().chain(&self.dependency_sources).chain(&self.imports) {
             if !dirs.contains(dir) {
                 dirs.push(dir.clone());
             }
@@ -918,6 +999,10 @@ release = false
 final = false
 quiet = true
 
+# Projects whose sources this one uses (transitively), imported after `sources`.
+[dependencies]
+# MCMHelper = { path = "../MCMHelper" }
+
 # Lint levels: "allow", "warn" or "deny", by lint (`papyrus_analyzer lint --list`),
 # by group (correctness, suspicious, complexity, style, pedantic) or "all".
 [lints]
@@ -936,6 +1021,18 @@ quiet = true
 # Spelling of single keywords, winning over keyword-case.
 # [format.keywords]
 # as = "As"
+
+# Several projects in one folder, like Cargo workspaces: in the papyrus.toml of
+# the parent folder. Members inherit these settings; their own values win
+# (imports are appended). Each member sees only its sources, its
+# dependencies and its imports.
+# [workspace]
+# members = ["*"]               # subdirectories with a papyrus.toml, or paths
+# exclude = []
+# [workspace.var]
+# [workspace.build]             # imports, flags, optimize, release, final, quiet
+# [workspace.lints]
+# [workspace.format]
 "#;
 
 /// A `papyrus.local.toml` to start from.
@@ -1102,6 +1199,45 @@ mod tests {
         assert_eq!(s(&c.program), "pa");
         assert_eq!(c.args[..2], ["compile".to_owned(), "/m/X.psc".to_owned()]);
         assert!(c.args[2].starts_with("-import="));
+    }
+
+    #[test]
+    fn workspace_members_inherit_and_see_dependencies() {
+        let dir = std::env::temp_dir().join(format!("papyrus-ws-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        for d in ["mods/Lib", "mods/App", "mods/Old", "game"] {
+            std::fs::create_dir_all(dir.join(d)).unwrap();
+        }
+        let w = |p: &str, text: &str| std::fs::write(dir.join(p), text).unwrap();
+        w(
+            "papyrus.toml",
+            "[workspace]\nmembers = [\"mods/*\"]\nexclude = [\"mods/Old\"]\n[workspace.var]\nGAME = \"game\"\n[workspace.build]\nimports = [\"${GAME}\"]\nflags = \"${GAME}/f.flg\"\noptimize = false\n[workspace.lints]\nall = \"deny\"\n[workspace.format]\nindent-size = 2\n",
+        );
+        w("mods/Lib/papyrus.toml", "[package]\nname = \"Lib\"\n");
+        w(
+            "mods/App/papyrus.toml",
+            "[package]\nname = \"App\"\n[dependencies]\nLib = { path = \"../Lib\" }\n[lints]\nunused-local = \"allow\"\n[format]\nindent-style = \"tab\"\n",
+        );
+        w("mods/Old/papyrus.toml", "[package]\nname = \"Old\"\n");
+
+        // Loading from a member finds the workspace.
+        let ws = load_workspace(&dir.join("mods/App/papyrus.toml"), &vars()).unwrap();
+        let names: Vec<_> = ws.members.iter().map(|m| m.name.clone().unwrap()).collect();
+        assert_eq!(names, ["App", "Lib"]);
+        let app = &ws.members[0];
+        assert_eq!(app.flags.as_deref(), Some(dir.join("game/f.flg").as_path()));
+        assert!(!app.optimize);
+        assert_eq!(app.imports, [dir.join("game")]);
+        assert_eq!(app.import_dirs(), [dir.join("mods/App"), dir.join("mods/Lib"), dir.join("game")]);
+        let lib = &ws.members[1];
+        assert_eq!(lib.import_dirs(), [dir.join("mods/Lib"), dir.join("game")]);
+        // The member wins over the workspace.
+        let level = |p: &Project, code| p.lints.level(papyrus_lint::find(code).unwrap());
+        assert_eq!(level(app, "unused-local"), papyrus_lint::Level::Allow);
+        assert_eq!(level(app, "unreachable-code"), papyrus_lint::Level::Deny);
+        assert_eq!((app.format.use_tabs, app.format.indent_size), (Some(true), Some(2)));
+        assert_eq!(ws.member_for(&dir.join("mods/Lib/A.psc")).unwrap().name.as_deref(), Some("Lib"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

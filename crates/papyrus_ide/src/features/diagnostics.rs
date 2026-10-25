@@ -260,7 +260,7 @@ fn check_duplicates(sema: &Sema<'_>, out: &mut Vec<Diagnostic>) {
             })
             || m.name.as_str().eq_ignore_ascii_case(Builtin::OnBeginState.name())
             || m.name.as_str().eq_ignore_ascii_case(Builtin::OnEndState.name());
-        let parent_unknown = sema.index.extends.is_some_and(|p| sema.ws.script(p).is_none());
+        let parent_unknown = sema.index.extends.is_some_and(|p| sema.ws.script_near(p, sema.file).is_none());
         if !declared_elsewhere && !parent_unknown && m.kind == MemberKind::Function {
             out.push(Diagnostic::error(
                 m.name_range,
@@ -629,7 +629,7 @@ fn check_name_ref(
 
     // A plain name: only report when every script it could come from is known.
     let complete = sema.script_name().is_none_or(|s| sema.chain_is_complete(s))
-        && sema.index.imports.iter().all(|&i| sema.ws.script(i).is_some());
+        && sema.index.imports.iter().all(|&i| sema.ws.script_near(i, sema.file).is_some());
     if complete {
         out.push(Diagnostic::error(
             range,

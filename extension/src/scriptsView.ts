@@ -65,6 +65,8 @@ class ScriptsProvider implements vscode.TreeDataProvider<Node> {
   private loaded = false;
   private readonly statuses = new Map<string, Status>();
   private readonly errors = new Map<string, string>();
+  /** The file nodes by path key, to refresh one row when its status changes. */
+  private nodes = new Map<string, FileNode>();
 
   constructor(private readonly memento: vscode.Memento) {
     this.mode = memento.get<Mode>(MODE_KEY, "compile");
@@ -88,7 +90,12 @@ class ScriptsProvider implements vscode.TreeDataProvider<Node> {
     } else {
       this.errors.delete(key(file));
     }
-    this.changed.fire(undefined);
+    // Only the row of the file: redrawing thousands of rows for each script
+    // compiled keeps the extension host busy.
+    const node = this.nodes.get(key(file));
+    if (node) {
+      this.changed.fire(node);
+    }
   }
 
   /** The directories whose scripts are listed, and those to leave out. */
@@ -108,7 +115,10 @@ class ScriptsProvider implements vscode.TreeDataProvider<Node> {
     const pattern = this.mode === "compile" ? "**/*.psc" : "**/*.pex";
     const found = await Promise.all(
       include.map((dir) =>
-        vscode.workspace.findFiles(new vscode.RelativePattern(vscode.Uri.file(dir), pattern), "**/node_modules/**"),
+        vscode.workspace.findFiles(
+          new vscode.RelativePattern(vscode.Uri.file(dir), pattern),
+          "**/{node_modules,target,.git}/**",
+        ),
       ),
     );
     const roots: FolderNode[] = include.map((dir) => ({
@@ -117,17 +127,17 @@ class ScriptsProvider implements vscode.TreeDataProvider<Node> {
       name: path.basename(dir),
       children: [],
     }));
-    const seen = new Set<string>();
+    const nodes = new Map<string, FileNode>();
     found.forEach((files, i) => {
       for (const file of files) {
         const k = key(file.fsPath);
-        if (seen.has(k) || exclude.some((dir) => isBelow(file.fsPath, dir))) {
+        if (nodes.has(k) || exclude.some((dir) => isBelow(file.fsPath, dir))) {
           continue;
         }
-        seen.add(k);
-        insert(roots[i], file);
+        nodes.set(k, insert(roots[i], file));
       }
     });
+    this.nodes = nodes;
     for (const root of roots) {
       sort(root);
     }
@@ -167,7 +177,8 @@ class ScriptsProvider implements vscode.TreeDataProvider<Node> {
       return item;
     }
     if (node.kind === "folder") {
-      const item = new vscode.TreeItem(node.name, vscode.TreeItemCollapsibleState.Expanded);
+      // Collapsed: a workspace may hold thousands of scripts.
+      const item = new vscode.TreeItem(node.name, vscode.TreeItemCollapsibleState.Collapsed);
       item.resourceUri = node.uri;
       item.contextValue = "papyrusFolder";
       item.iconPath = vscode.ThemeIcon.Folder;
@@ -196,7 +207,7 @@ class ScriptsProvider implements vscode.TreeDataProvider<Node> {
   }
 }
 
-function insert(root: FolderNode, file: vscode.Uri): void {
+function insert(root: FolderNode, file: vscode.Uri): FileNode {
   const parts = path.relative(root.uri.fsPath, file.fsPath).split(path.sep);
   let folder = root;
   for (const part of parts.slice(0, -1)) {
@@ -207,7 +218,9 @@ function insert(root: FolderNode, file: vscode.Uri): void {
     }
     folder = next;
   }
-  folder.children.push({ kind: "file", uri: file });
+  const node: FileNode = { kind: "file", uri: file };
+  folder.children.push(node);
+  return node;
 }
 
 /** Folders first, then by name. */

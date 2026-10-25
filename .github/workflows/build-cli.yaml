@@ -71,5 +71,5 @@ jobs:
       - name: Upload VSIX
         uses: actions/upload-artifact@v4.6.2
         with:
-          name: vsix-${{ matrix.job.target }}
+          name: ${{ env.APP_NAME }}-vsix-${{ matrix.job.target }}
           path: "*.vsix"

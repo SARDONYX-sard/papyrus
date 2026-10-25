@@ -65,10 +65,16 @@ pub(crate) struct Server {
     cli: CliOptions,
     pub(crate) roots: Vec<PathBuf>,
     pub(crate) caps: ClientCapabilities,
-    /// The loaded `papyrus.toml`.
+    /// The first project of `members`.
     pub(crate) project: Option<papyrus_project::Project>,
-    /// The `papyrus.toml` found in the workspace, valid or not.
+    /// The projects of the loaded `papyrus.toml`: its members for a
+    /// `[workspace]`, else the project alone.
+    pub(crate) members: Vec<papyrus_project::Project>,
+    /// The `papyrus.toml` found in the workspace (the root of its
+    /// `[workspace]`), valid or not.
     pub(crate) manifest: Option<PathBuf>,
+    /// The manifests whose problems are published.
+    pub(crate) manifest_files: Vec<PathBuf>,
     /// Why `manifest` could not be loaded.
     pub(crate) manifest_error: Option<String>,
     /// Open `.flg` and `papyrus.toml` documents, by path.
@@ -94,7 +100,24 @@ pub(crate) struct Server {
     published: rustc_hash::FxHashSet<PathBuf>,
     /// The running check of the closed files.
     checking: Option<CheckProgress>,
+    /// The threads checking closed files: not all cores, so that the editor
+    /// keeps responding during a full check.
+    check_pool: Arc<rayon::ThreadPool>,
+    /// Set while a message of the editor is handled: the background check
+    /// waits, leaving the cores to it.
+    check_paused: Arc<std::sync::atomic::AtomicBool>,
+    /// Diagnostics of closed files waiting to be published, in order; see
+    /// [`Server::flush_publishes`].
+    pending: rustc_hash::FxHashMap<PathBuf, Vec<lsp_types::Diagnostic>>,
+    pending_order: std::collections::VecDeque<PathBuf>,
+    flush_tick: Receiver<Instant>,
 }
+
+/// At most this many diagnostics of closed files are published per
+/// [`PUBLISH_INTERVAL`]: a burst of thousands of notifications keeps the
+/// editor busy, and its answers to hover, completion, ... wait behind them.
+const PUBLISH_BATCH: usize = 100;
+const PUBLISH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 
 /// What the background check of the closed files sends.
 enum CheckEvent {
@@ -150,7 +173,9 @@ impl Server {
             roots,
             caps: init.capabilities.clone(),
             project: None,
+            members: Vec::new(),
             manifest: None,
+            manifest_files: Vec::new(),
             manifest_error: None,
             other_docs: Default::default(),
             generation: 0,
@@ -165,6 +190,11 @@ impl Server {
             check_rx,
             published: Default::default(),
             checking: None,
+            check_pool: Arc::new(check_pool()),
+            check_paused: Arc::default(),
+            pending: Default::default(),
+            pending_order: Default::default(),
+            flush_tick: crossbeam_channel::tick(PUBLISH_INTERVAL),
         }
     }
 
@@ -173,18 +203,23 @@ impl Server {
         self.load_project();
         self.start_indexing();
         loop {
+            // The editor first: hover, completion, ... are answered before
+            // any further result of the background check is handled.
+            match connection.receiver.try_recv() {
+                Ok(msg) => {
+                    if self.on_message(connection, msg)? {
+                        return Ok(());
+                    }
+                    continue;
+                }
+                Err(crossbeam_channel::TryRecvError::Disconnected) => return Ok(()),
+                Err(crossbeam_channel::TryRecvError::Empty) => {}
+            }
             select! {
                 recv(connection.receiver) -> msg => {
                     let Ok(msg) = msg else { return Ok(()) };
-                    match msg {
-                        Message::Request(req) => {
-                            if connection.handle_shutdown(&req)? {
-                                return Ok(());
-                            }
-                            self.on_request(req);
-                        }
-                        Message::Notification(not) => self.on_notification(not),
-                        Message::Response(_) => {}
+                    if self.on_message(connection, msg)? {
+                        return Ok(());
                     }
                 }
                 recv(self.index_rx) -> event => {
@@ -197,8 +232,36 @@ impl Server {
                         self.on_check_event(event);
                     }
                 }
+                recv(self.flush_tick) -> _ => self.flush_publishes(),
             }
         }
+    }
+
+    /// Handles a message of the editor; `true` once it asked for shutdown.
+    fn on_message(&mut self, connection: &Connection, msg: Message) -> anyhow::Result<bool> {
+        use std::sync::atomic::Ordering;
+
+        /// Resumes the background check when dropped.
+        struct Resume(Arc<std::sync::atomic::AtomicBool>);
+        impl Drop for Resume {
+            fn drop(&mut self) {
+                self.0.store(false, Ordering::SeqCst);
+            }
+        }
+        // The background check waits meanwhile.
+        self.check_paused.store(true, Ordering::SeqCst);
+        let _resume = Resume(self.check_paused.clone());
+        match msg {
+            Message::Request(req) => {
+                if connection.handle_shutdown(&req)? {
+                    return Ok(true);
+                }
+                self.on_request(req);
+            }
+            Message::Notification(not) => self.on_notification(not),
+            Message::Response(_) => {}
+        }
+        Ok(false)
     }
 
     // === Messaging ===
@@ -552,6 +615,8 @@ impl Server {
             })
             .collect();
         self.ws = Workspace::new();
+        let scopes = self.scopes();
+        self.ws.set_scopes(&scopes);
         for (path, text, version) in open {
             self.ws.set_open(path, text, version);
         }
@@ -602,7 +667,7 @@ impl Server {
             variables: self.variables_report(),
             build_dirs: self.build_dirs(),
             sources: self
-                .project
+                .members
                 .iter()
                 .flat_map(|p| &p.sources)
                 .map(|p| p.display().to_string())
@@ -736,7 +801,8 @@ impl Server {
     }
 
     fn file_diagnostics(&self, file: FileId) -> Option<Vec<lsp_types::Diagnostic>> {
-        file_diagnostics(&self.ws, file, self.config.semantic_diagnostics, &self.lint_config())
+        let lints = self.lint_config(&self.ws.file(file).path);
+        file_diagnostics(&self.ws, file, self.config.semantic_diagnostics, &lints)
     }
 
     /// The directories of compiled and decompiled scripts: never sources.
@@ -748,18 +814,18 @@ impl Server {
             .collect()
     }
 
-    /// Whether `file` is checked when closed: a script of the sources of
-    /// `papyrus.toml`, or of the workspace folders without manifest, outside
-    /// of the build directories.
+    /// Whether `file` is checked when closed: a script of the sources of the
+    /// projects of `papyrus.toml`, or of the workspace folders without
+    /// manifest, outside of the build directories.
     fn is_checked(&self, file: FileId, build_dirs: &[PathBuf]) -> bool {
         let data = self.ws.file(file);
         if data.origin != Origin::Workspace || build_dirs.iter().any(|d| data.path.starts_with(d)) {
             return false;
         }
-        match &self.project {
-            Some(p) => p.sources.iter().any(|s| data.path.starts_with(s)),
-            None => self.roots.iter().any(|r| data.path.starts_with(r)),
+        if self.members.is_empty() {
+            return self.roots.iter().any(|r| data.path.starts_with(r));
         }
+        self.members.iter().flat_map(|p| &p.sources).any(|s| data.path.starts_with(s))
     }
 
     /// The closed files to check.
@@ -785,6 +851,7 @@ impl Server {
             if checked.contains(&path) {
                 self.published.insert(path);
             } else if self.ws.file_id(&path).is_none_or(|f| self.ws.file(f).open.is_none()) {
+                self.pending.remove(&path);
                 self.notify::<notification::PublishDiagnostics>(PublishDiagnosticsParams {
                     uri: conv::path_to_uri(&path),
                     diagnostics: Vec::new(),
@@ -824,16 +891,22 @@ impl Server {
             names.unwrap_or_default().iter().map(|n| n.to_ascii_lowercase()).collect();
         let ws = self.ws.clone();
         let semantic = self.config.semantic_diagnostics;
-        let lints = self.lint_config();
+        let lints = self.lint_configs();
         let running = self.full_check.clone();
         let tx = self.check_tx.clone();
+        let pool = self.check_pool.clone();
+        let paused = self.check_paused.clone();
         let spawned =
             std::thread::Builder::new().name("papyrus-checker".to_owned()).spawn(move || {
                 use rayon::prelude::*;
                 let start = Instant::now();
                 // A newer full check replaces this one.
                 let cancelled = || full && running.load(Ordering::SeqCst) > job;
-                files.par_iter().for_each(|&file| {
+                pool.install(|| files.par_iter().for_each(|&file| {
+                    // Requests of the editor come first.
+                    while paused.load(Ordering::SeqCst) && !cancelled() {
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                    }
                     if cancelled() {
                         return;
                     }
@@ -843,10 +916,13 @@ impl Server {
                             let lower = text.to_ascii_lowercase();
                             needles.iter().any(|n| lower.contains(n.as_str()))
                         });
-                    let diagnostics =
-                        if mentions { file_diagnostics(&ws, file, semantic, &lints) } else { None };
+                    let diagnostics = if mentions {
+                        file_diagnostics(&ws, file, semantic, lints.for_path(&path))
+                    } else {
+                        None
+                    };
                     let _ = tx.send(CheckEvent::File { job, file, path, diagnostics });
-                });
+                }));
                 if !cancelled() {
                     log::info!("checked {} scripts in {:?}", files.len(), start.elapsed());
                     let _ = tx.send(CheckEvent::Done { job });
@@ -892,11 +968,27 @@ impl Server {
         } else {
             self.published.insert(path.clone());
         }
-        self.notify::<notification::PublishDiagnostics>(PublishDiagnosticsParams {
-            uri: conv::path_to_uri(&path),
-            diagnostics,
-            version: None,
-        });
+        if self.pending.insert(path.clone(), diagnostics).is_none() {
+            self.pending_order.push_back(path);
+        }
+    }
+
+    /// Publishes the next [`PUBLISH_BATCH`] pending diagnostics of closed
+    /// files.
+    fn flush_publishes(&mut self) {
+        for _ in 0..PUBLISH_BATCH {
+            let Some(path) = self.pending_order.pop_front() else { return };
+            let Some(diagnostics) = self.pending.remove(&path) else { continue };
+            // Opened since: the editor text has its own diagnostics.
+            if self.ws.file_id(&path).is_some_and(|f| self.ws.file(f).open.is_some()) {
+                continue;
+            }
+            self.notify::<notification::PublishDiagnostics>(PublishDiagnosticsParams {
+                uri: conv::path_to_uri(&path),
+                diagnostics,
+                version: None,
+            });
+        }
     }
 
     /// The running full check, for `papyrus/status`.
@@ -914,6 +1006,17 @@ impl Server {
             (ErrorCode::InvalidParams, format!("unknown document: {}", uri.as_str()))
         })
     }
+}
+
+/// The threads of the background check: half of the cores, the others are
+/// left to the editor and to the requests.
+fn check_pool() -> rayon::ThreadPool {
+    let cores = std::thread::available_parallelism().map_or(2, |n| n.get());
+    rayon::ThreadPoolBuilder::new()
+        .num_threads((cores / 2).max(1))
+        .thread_name(|i| format!("papyrus-check-{i}"))
+        .build()
+        .expect("cannot create the check threads")
 }
 
 fn progress_token(generation: u64) -> NumberOrString {

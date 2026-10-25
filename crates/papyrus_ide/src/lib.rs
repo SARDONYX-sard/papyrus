@@ -24,7 +24,7 @@ use std::path::Path;
 pub use papyrus_parser::{TextRange, TextSize};
 
 pub use crate::{
-    db::{FileData, FileId, OpenDoc, Origin, Workspace},
+    db::{FileData, FileId, OpenDoc, Origin, Scope, Workspace},
     features::{
         completion::{
             CompletionItem, CompletionKind, Completions, completions, flag_file_completions,

@@ -2,9 +2,11 @@
 //!
 //! The manifest of the first workspace folder containing one (searching its
 //! ancestors too) provides import directories, the flags file and the
-//! compiler invocation. Its problems are published as diagnostics on the
-//! manifest itself, live while it is edited; the project is reloaded, and the
-//! workspace re-indexed when needed, once the manifest is saved.
+//! compiler invocation. A manifest with `[workspace]`, or a member of one,
+//! loads every member: each script then sees, compiles and is linted like in
+//! its own project. Problems are published as diagnostics on each manifest,
+//! live while it is edited; the projects are reloaded, and the workspace
+//! re-indexed when needed, once a manifest is saved.
 //!
 //! The flags file is, in order of preference: `[build] flags` of the manifest,
 //! the `papyrus.flagsFile` setting, a `TESV_Papyrus_Flags.flg` found while
@@ -52,26 +54,50 @@ impl Server {
         }
     }
 
-    /// Import directories: those of the manifest, then the configured ones.
-    /// Without manifest, the game scripts of `SKYRIM_DIR` come last, so that
-    /// a workspace resolves vanilla scripts with no configuration at all.
+    /// Import directories: those of the projects of the manifest, then the
+    /// configured ones. Without manifest, the game scripts of `SKYRIM_DIR`
+    /// come last, so that a workspace resolves vanilla scripts with no
+    /// configuration at all.
     pub(crate) fn import_dirs(&self) -> Vec<PathBuf> {
-        let mut dirs = self.project.as_ref().map(Project::import_dirs).unwrap_or_default();
         let configured =
             self.config.import_directories.iter().filter_map(|d| self.expand_setting(d));
-        let game = match &self.project {
-            None => self
+        let game = match self.members.is_empty() {
+            true => self
                 .skyrim_dir()
                 .map(|(dir, _)| papyrus_project::game_script_dirs(&dir))
                 .unwrap_or_default(),
-            Some(_) => Vec::new(),
+            false => Vec::new(),
         };
-        for dir in configured.chain(game) {
+        let mut dirs = Vec::new();
+        for dir in self.members.iter().flat_map(Project::import_dirs).chain(configured).chain(game) {
             if !dirs.contains(&dir) {
                 dirs.push(dir);
             }
         }
         dirs
+    }
+
+    /// The scripts each project of a `[workspace]` sees, like the compiler:
+    /// its sources, its dependencies, its imports and the configured import
+    /// directories. Empty for one project, which sees every script.
+    pub(crate) fn scopes(&self) -> Vec<papyrus_ide::Scope> {
+        if self.members.len() < 2 {
+            return Vec::new();
+        }
+        let configured: Vec<PathBuf> =
+            self.config.import_directories.iter().filter_map(|d| self.expand_setting(d)).collect();
+        self.members
+            .iter()
+            .map(|m| papyrus_ide::Scope {
+                sources: m.sources.clone(),
+                visible: m.import_dirs().into_iter().chain(configured.iter().cloned()).collect(),
+            })
+            .collect()
+    }
+
+    /// The project whose sources contain `path`, the innermost one.
+    pub(crate) fn member_for(&self, path: &Path) -> Option<&Project> {
+        innermost(&self.members, path)
     }
 
     /// The flags file setting, with variables expanded.
@@ -114,9 +140,12 @@ impl Server {
         if let Some(error) = &self.manifest_error {
             errors.push(format!("papyrus.toml: {error}"));
         }
-        if let Some(project) = &self.project {
-            warnings
-                .extend(project.warnings.iter().map(|w| format!("papyrus.toml: {}", w.message)));
+        for project in &self.members {
+            let manifest = match self.members.len() {
+                1 => papyrus_project::MANIFEST_NAME.to_owned(),
+                _ => project.manifest_path.display().to_string(),
+            };
+            warnings.extend(project.warnings.iter().map(|w| format!("{manifest}: {}", w.message)));
         }
         for dir in &self.config.import_directories {
             let text = dir.to_string_lossy();
@@ -188,10 +217,13 @@ impl Server {
         self.roots.iter().find_map(|root| papyrus_project::find_manifest(root))
     }
 
-    /// Loads the manifest, from the editor if it is open, and publishes its
-    /// problems.
+    /// Loads the manifest and the members of its `[workspace]`, from the
+    /// editor when open, and publishes their problems.
     pub(crate) fn load_project(&mut self) {
-        let found = self.manifest_path();
+        // A member of a workspace loads the whole workspace.
+        let found = self
+            .manifest_path()
+            .map(|m| papyrus_project::find_workspace_root(&m).unwrap_or(m));
         if found != self.manifest {
             self.manifest = found.clone();
             self.refresh_code_lenses();
@@ -199,31 +231,65 @@ impl Server {
         self.manifest_error = None;
         let Some(path) = found else {
             self.project = None;
+            self.members.clear();
+            self.publish_manifest_problems(&PathBuf::new(), Err(Vec::new()));
+            self.ws.set_scopes(&[]);
             return;
         };
-        let Some(text) = self.doc_or_disk(&path) else {
-            self.project = None;
-            self.manifest_error = Some(format!("cannot read {}", path.display()));
-            return;
-        };
-        let local = self.doc_or_disk(&path.with_file_name(papyrus_project::LOCAL_MANIFEST_NAME));
-        let result = papyrus_project::parse(&path, &text, local.as_deref(), &self.vars());
-        let problems = match &result {
-            Ok(project) => project.warnings.clone(),
-            Err(errors) => errors.clone(),
-        };
-        self.publish_manifest_diagnostics(&path, &text, &problems, result.is_err());
+        let result =
+            papyrus_project::load_workspace_with(&path, &self.vars(), &|p| self.doc_or_disk(p));
+        self.publish_manifest_problems(&path, result.as_ref().map_err(Clone::clone));
         match result {
-            Ok(project) => {
-                log::info!("loaded {}", path.display());
-                self.project = Some(project);
+            Ok(ws) => {
+                log::info!("loaded {} ({} projects)", path.display(), ws.members.len());
+                self.project = ws.members.first().cloned();
+                self.members = ws.members;
             }
             Err(errors) => {
-                log::warn!("invalid {}: {}", path.display(), errors[0]);
-                self.manifest_error = Some(errors[0].message.clone());
-                // Keep the previous project rather than losing all imports.
+                let first = &errors[0];
+                log::warn!("invalid {}: {first}", path.display());
+                self.manifest_error = Some(match &first.file {
+                    Some(file) if *file != path => format!("{}: {}", file.display(), first.message),
+                    _ => first.message.clone(),
+                });
+                // Keep the previous projects rather than losing all imports.
             }
         }
+        let scopes = self.scopes();
+        self.ws.set_scopes(&scopes);
+    }
+
+    /// Publishes the problems of each manifest of the workspace of `root`,
+    /// clearing those of the manifests published before.
+    fn publish_manifest_problems(
+        &mut self,
+        root: &Path,
+        result: Result<&papyrus_project::ProjectWorkspace, Vec<ManifestError>>,
+    ) {
+        let mut problems: BTreeMap<PathBuf, Vec<ManifestError>> =
+            std::mem::take(&mut self.manifest_files).into_iter().map(|p| (p, Vec::new())).collect();
+        let fatal = result.is_err();
+        match result {
+            Ok(ws) => {
+                for m in &ws.members {
+                    problems.entry(m.manifest_path.clone()).or_default().extend(m.warnings.clone());
+                }
+            }
+            Err(errors) => {
+                for e in errors {
+                    let file = e.file.clone().unwrap_or_else(|| root.to_path_buf());
+                    problems.entry(file).or_default().push(e);
+                }
+            }
+        }
+        if !root.as_os_str().is_empty() {
+            problems.entry(root.to_path_buf()).or_default();
+        }
+        for (file, list) in &problems {
+            let text = self.doc_or_disk(file).unwrap_or_default();
+            self.publish_manifest_diagnostics(file, &text, list, fatal);
+        }
+        self.manifest_files = problems.into_keys().filter(|p| !p.as_os_str().is_empty()).collect();
     }
 
     /// Asks the client to query code lenses again, e.g. after the manifest
@@ -294,22 +360,13 @@ impl Server {
     pub(crate) fn other_doc_changed(&mut self, path: &Path) {
         let Some(doc) = self.other_docs.get(path) else { return };
         if is_manifest(path) {
-            // Validate live; the project itself is reloaded on save.
+            // Validate live, with the settings of the workspace; the projects
+            // themselves are reloaded on save.
             let manifest = path.with_file_name(papyrus_project::MANIFEST_NAME);
-            if manifest != path {
-                // `papyrus.local.toml`: problems are reported on the manifest.
-                self.load_project();
-                return;
-            }
-            let text = doc.text.clone();
-            let local =
-                self.doc_or_disk(&path.with_file_name(papyrus_project::LOCAL_MANIFEST_NAME));
-            let result = papyrus_project::parse(path, &text, local.as_deref(), &self.vars());
-            let (problems, fatal) = match &result {
-                Ok(project) => (project.warnings.clone(), false),
-                Err(errors) => (errors.clone(), true),
-            };
-            self.publish_manifest_diagnostics(path, &text, &problems, fatal);
+            let root = papyrus_project::find_workspace_root(&manifest).unwrap_or(manifest);
+            let result =
+                papyrus_project::load_workspace_with(&root, &self.vars(), &|p| self.doc_or_disk(p));
+            self.publish_manifest_problems(&root, result.as_ref().map_err(Clone::clone));
         } else if is_flags(path) {
             // Only the active flags file (or any, without one) drives the scripts.
             if self.ws.is_flags_file(path) || self.ws.flags().path.is_none() {
@@ -390,33 +447,38 @@ impl Server {
         }
         // Without manifest (limited mode), the scripts still compile with the
         // built-in compiler, the configured imports and the known flags file.
-        let mut project = match &self.project {
-            Some(p) => p.clone(),
-            None => {
-                let root = self.roots.first().cloned().ok_or("no workspace folder")?;
-                let flags = self.flags_setting().or_else(|| self.ws.flags().path.clone());
-                Project::without_manifest(root, self.import_dirs(), flags)
-            }
-        };
+        let mut projects = self.members.clone();
+        if projects.is_empty() {
+            let root = self.roots.first().cloned().ok_or("no workspace folder")?;
+            let flags = self.flags_setting().or_else(|| self.ws.flags().path.clone());
+            projects.push(Project::without_manifest(root, self.import_dirs(), flags));
+        }
         // `papyrus_analyzer compile` takes the arguments of PapyrusCompiler.exe.
         let exe = std::env::current_exe().map_err(|e| format!("cannot find the server: {e}"))?;
-        project.builtin_compiler = Some((exe, vec!["compile".to_owned()]));
-        let project = &project;
+        for project in &mut projects {
+            project.builtin_compiler = Some((exe.clone(), vec!["compile".to_owned()]));
+        }
         let mut docs = params.files;
         docs.extend(params.text_document);
         let commands = if params.all || docs.is_empty() {
-            project.compile_all()?
+            let mut commands = Vec::new();
+            for project in &projects {
+                commands.extend(project.compile_all()?);
+            }
+            commands
         } else {
             docs.iter()
                 .map(|doc| {
                     let path = conv::uri_to_path(&doc.uri).ok_or("not a file")?;
-                    project.compile_file(&path)
+                    // A script of a member compiles with the settings of the member.
+                    innermost(&projects, &path).unwrap_or(&projects[0]).compile_file(&path)
                 })
                 .collect::<Result<Vec<_>, String>>()?
         };
+        let first = &projects[0];
         Ok(CompileCommandsResult {
-            manifest: project.manifest_path.display().to_string(),
-            output: project.output.display().to_string(),
+            manifest: self.manifest.as_ref().unwrap_or(&first.manifest_path).display().to_string(),
+            output: first.output.display().to_string(),
             commands: commands
                 .into_iter()
                 .map(|c| CompileCommand {
@@ -436,39 +498,88 @@ impl Server {
         crate::decompile::decompile_file(&path, params.assembly).map(|(_, text)| text)
     }
 
-    /// The lint levels: `[lints]` of `papyrus.toml`, which is read on its own
-    /// when the rest of the manifest does not load (e.g. undefined variables).
-    pub(crate) fn lint_config(&self) -> papyrus_lint::LintConfig {
+    /// The lint levels of the scripts of the projects of the manifest.
+    pub(crate) fn lint_configs(&self) -> LintConfigs {
+        let mut by_dir: Vec<(PathBuf, papyrus_lint::LintConfig)> = self
+            .members
+            .iter()
+            .flat_map(|m| m.sources.iter().map(|s| (s.clone(), m.lints.clone())))
+            .collect();
+        by_dir.sort_by_key(|(dir, _)| std::cmp::Reverse(dir.components().count()));
+        LintConfigs { by_dir, default: self.default_lint_config() }
+    }
+
+    /// The lint levels of `path`: `[lints]` of its project.
+    pub(crate) fn lint_config(&self, path: &Path) -> papyrus_lint::LintConfig {
+        match self.member_for(path) {
+            Some(p) => p.lints.clone(),
+            None => self.default_lint_config(),
+        }
+    }
+
+    /// The lint levels of scripts of no project: those of the first project,
+    /// else `[lints]` of `papyrus.toml`, which is read on its own when the
+    /// rest of the manifest does not load (e.g. undefined variables).
+    fn default_lint_config(&self) -> papyrus_lint::LintConfig {
         match (&self.project, &self.manifest) {
             (Some(p), _) => p.lints.clone(),
             (None, Some(manifest)) => papyrus_project::load_lints(manifest).unwrap_or_default(),
             (None, None) => papyrus_lint::LintConfig::default(),
         }
     }
-    /// The output directories of each workspace folder, for `papyrus/status`.
+
+    /// The output directories of each project (each workspace folder without
+    /// manifest), for `papyrus/status`.
     pub(crate) fn build_dirs(&self) -> Vec<BuildDirs> {
+        if !self.members.is_empty() {
+            return self
+                .members
+                .iter()
+                .map(|p| BuildDirs {
+                    root: p.root.display().to_string(),
+                    compile: p.output.display().to_string(),
+                    decompile: p.output.join("decompile").display().to_string(),
+                })
+                .collect();
+        }
         self.roots
             .iter()
             .map(|root| {
-                let compile = match &self.project {
-                    Some(p) => p.output.clone(),
-                    None => papyrus_project::default_build_dir(root).join("compile"),
-                };
+                let build = papyrus_project::default_build_dir(root);
                 BuildDirs {
                     root: root.display().to_string(),
-                    compile: compile.display().to_string(),
-                    decompile: self.decompile_output(root).display().to_string(),
+                    compile: build.join("compile").display().to_string(),
+                    decompile: build.join("decompile").display().to_string(),
                 }
             })
             .collect()
     }
 
-    /// Where decompiled scripts go for a file of the workspace folder `root`.
-    fn decompile_output(&self, root: &Path) -> PathBuf {
-        match &self.project {
-            Some(p) => p.output.join("decompile"),
-            None => papyrus_project::default_build_dir(root).join("decompile"),
+    /// Where the decompiled script of `path` goes: the directory structure
+    /// below the returned base directory is kept in the returned output.
+    fn decompile_target(&self, path: &Path) -> (PathBuf, PathBuf) {
+        // The innermost project or workspace folder containing the file.
+        let project = self
+            .members
+            .iter()
+            .filter(|p| path.starts_with(&p.root))
+            .max_by_key(|p| p.root.components().count());
+        if let Some(p) = project {
+            return (p.root.clone(), p.output.join("decompile"));
         }
+        let root = self
+            .roots
+            .iter()
+            .filter(|r| path.starts_with(r))
+            .max_by_key(|r| r.components().count())
+            .cloned()
+            .or_else(|| path.parent().map(Path::to_path_buf))
+            .unwrap_or_default();
+        let output = match &self.project {
+            Some(p) => p.output.join("decompile"),
+            None => papyrus_project::default_build_dir(&root).join("decompile"),
+        };
+        (root, output)
     }
 
     /// Handles `papyrus/decompileFiles`.
@@ -481,16 +592,7 @@ impl Server {
                 let result = conv::uri_to_path(&file)
                     .ok_or_else(|| "not a file".to_owned())
                     .and_then(|path| {
-                        // Relative to the workspace folder (the innermost one).
-                        let root = self
-                            .roots
-                            .iter()
-                            .filter(|r| path.starts_with(r))
-                            .max_by_key(|r| r.components().count())
-                            .cloned()
-                            .or_else(|| path.parent().map(Path::to_path_buf))
-                            .unwrap_or_default();
-                        let out = self.decompile_output(&root);
+                        let (root, out) = self.decompile_target(&path);
                         let relative =
                             path.strip_prefix(&root).unwrap_or(&path).with_extension("psc");
                         let target = out.join(relative);
@@ -506,8 +608,40 @@ impl Server {
             })
             .collect();
         let output = output.unwrap_or_else(|| {
-            self.decompile_output(&self.roots.first().cloned().unwrap_or_default())
+            self.decompile_target(&self.roots.first().cloned().unwrap_or_default()).1
         });
         DecompileFilesResult { output: output.display().to_string(), results }
     }
+}
+
+/// The lint levels of the scripts of each project, by source directory.
+#[derive(Clone, Default)]
+pub(crate) struct LintConfigs {
+    /// Innermost directories first.
+    by_dir: Vec<(PathBuf, papyrus_lint::LintConfig)>,
+    default: papyrus_lint::LintConfig,
+}
+
+impl LintConfigs {
+    /// The lint levels of `path`.
+    pub(crate) fn for_path(&self, path: &Path) -> &papyrus_lint::LintConfig {
+        self.by_dir.iter().find(|(dir, _)| path.starts_with(dir)).map_or(&self.default, |(_, c)| c)
+    }
+}
+
+/// The project whose sources contain `path`, the innermost one.
+fn innermost<'a>(projects: &'a [Project], path: &Path) -> Option<&'a Project> {
+    projects
+        .iter()
+        .filter_map(|p| {
+            let depth = p
+                .sources
+                .iter()
+                .filter(|s| path.starts_with(s))
+                .map(|s| s.components().count())
+                .max()?;
+            Some((depth, p))
+        })
+        .max_by_key(|(depth, _)| *depth)
+        .map(|(_, p)| p)
 }

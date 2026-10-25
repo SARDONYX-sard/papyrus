@@ -97,6 +97,45 @@ indent-size = 4
 - Without manifest, outputs go to `build/papyrus/{compile,decompile}`.
 - `Papyrus: Create papyrus.toml` writes a commented template.
 
+### Workspaces
+
+Several mods in one folder, like Cargo workspaces:
+
+```text
+my-mods/
+├─ papyrus.toml          # [workspace]: members + shared settings
+├─ MCMHelper/
+│  ├─ papyrus.toml       # [package] name = "MCMHelper"
+│  └─ Source/Scripts/MCM.psc
+└─ Requiem/
+   ├─ papyrus.toml       # [dependencies] MCMHelper = { path = "../MCMHelper" }
+   └─ Source/Scripts/REQ_MCM_DataStorage.psc
+```
+
+```toml
+# my-mods/papyrus.toml
+[workspace]
+members = ["*"]                 # subdirectories with a papyrus.toml; or explicit paths
+exclude = ["Old"]
+
+[workspace.var]
+SKYRIM_DIR = "C:/Games/Skyrim Special Edition"
+
+[workspace.build]               # defaults of every member
+imports = ["${SKYRIM_DIR}/Data/Scripts/Source"]
+flags = "${SKYRIM_DIR}/Data/Scripts/Source/TESV_Papyrus_Flags.flg"
+
+[workspace.lints]
+style = "allow"
+```
+
+- Inherited: `[workspace.var]`, `compiler`, `build`, `lints`, `format`; the member's own values win (imports are appended).
+- A member sees only its sources, its `[dependencies]` (transitively) and its imports, like the compiler:
+  - `MCM` in Requiem → `MCMHelper/…/MCM.psc`.
+  - A sibling member that is not a dependency is invisible: no false `name-is-type`.
+- Opening a member folder loads the whole workspace.
+- Each member compiles into its own `output`; lints and format follow the member.
+
 ## Lints
 
 - Levels: `allow` · `warn` · `deny` (error).

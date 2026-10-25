@@ -518,6 +518,30 @@ fn rename_only_workspace_scripts() {
     assert!(err.contains("imported script"), "{err}");
 }
 
+#[test]
+fn scopes_limit_visible_scripts() {
+    let mut ws = Workspace::new();
+    let add = |ws: &mut Workspace, path: &str, text: &str| {
+        ws.set_disk_index(PathBuf::from(path), index_text(text), Origin::Workspace)
+    };
+    let mcm = add(&mut ws, "/ws/Helper/MCM.psc", "ScriptName MCM\n");
+    add(&mut ws, "/ws/Other/Util.psc", "ScriptName Util\n");
+    let app = add(&mut ws, "/ws/App/App.psc", "ScriptName App\nInt MCM\n");
+    ws.set_scopes(&[
+        Scope { sources: vec!["/ws/App".into()], visible: vec!["/ws/App".into(), "/ws/Helper".into()] },
+        Scope { sources: vec!["/ws/Other".into()], visible: vec!["/ws/Other".into()] },
+        Scope { sources: vec!["/ws/Helper".into()], visible: vec!["/ws/Helper".into()] },
+    ]);
+    let util = papyrus_intern::Name::new("Util");
+    assert_eq!(ws.script_near(papyrus_intern::Name::new("MCM"), app), Some(mcm));
+    assert_eq!(ws.script_near(util, app), None);
+    assert!(ws.script_near(util, mcm).is_none());
+    // Unscoped lookups see everything.
+    assert!(ws.script(util).is_some());
+    ws.set_scopes(&[]);
+    assert!(ws.script_near(util, app).is_some());
+}
+
 /// Rules found by comparing with the official compiler.
 #[test]
 fn compiler_rules() {

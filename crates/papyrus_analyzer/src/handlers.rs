@@ -592,7 +592,8 @@ impl Server {
         let lines = Lines::of(&self.ws, file)?;
         let range = lines.text_range(params.range);
         let mut assists = papyrus_ide::assists::assists(&self.ws, file, range);
-        assists.extend(papyrus_lint::fixes(&self.ws, file, range, &self.lint_config()));
+        let lints = self.lint_config(&self.ws.file(file).path);
+        assists.extend(papyrus_lint::fixes(&self.ws, file, range, &lints));
         let only = params.context.only.unwrap_or_default();
         let uri = params.text_document.uri;
         let actions = assists

@@ -69,7 +69,35 @@ pub struct FileData {
     pub open: Option<OpenDoc>,
     /// Where the file comes from.
     pub origin: Origin,
+    /// The [`Scope`] the file belongs to, if any.
+    scope: Option<u8>,
+    /// The scopes seeing the file, as bits.
+    visible_in: u64,
 }
+
+/// A project of a multi-project workspace, for name resolution: like for the
+/// compiler, its scripts see only the scripts below its `visible`
+/// directories. A file belongs to the scope with the innermost source
+/// directory containing it; files of no scope see every script.
+#[derive(Clone, Debug, Default)]
+pub struct Scope {
+    /// The source directories of the project.
+    pub sources: Vec<PathBuf>,
+    /// The directories its scripts see: its sources, the sources of its
+    /// dependencies and its imports.
+    pub visible: Vec<PathBuf>,
+}
+
+/// [`Scope`] directories as [`path_key`]s ending with `/`.
+#[derive(Clone, Debug, Default)]
+struct ScopeKeys {
+    sources: Vec<String>,
+    visible: Vec<String>,
+}
+
+/// At most this many scopes restrict name resolution; files of the others
+/// see every script.
+const MAX_SCOPES: usize = 64;
 
 /// All known files. Cheap to clone: indexes and trees are shared.
 #[derive(Clone, Debug, Default)]
@@ -78,6 +106,7 @@ pub struct Workspace {
     by_path: FxHashMap<String, FileId>,
     by_script: FxHashMap<Symbol, Vec<FileId>>,
     flags: FlagTable,
+    scopes: Vec<ScopeKeys>,
 }
 
 /// Normalizes a path into a lookup key. Windows paths are case-insensitive.
@@ -134,7 +163,14 @@ impl Workspace {
                 }
                 id
             }
-            None => self.insert(FileData { path, index: Arc::new(index), open: None, origin }),
+            None => self.insert(FileData {
+                path,
+                index: Arc::new(index),
+                open: None,
+                origin,
+                scope: None,
+                visible_in: 0,
+            }),
         }
     }
 
@@ -154,6 +190,8 @@ impl Workspace {
                 index: Arc::new(index),
                 open: Some(doc),
                 origin: Origin::Workspace,
+                scope: None,
+                visible_in: 0,
             }),
         }
     }
@@ -185,7 +223,56 @@ impl Workspace {
         }
     }
 
-    fn insert(&mut self, data: FileData) -> FileId {
+    /// Sets the projects of a multi-project workspace; empty for one project,
+    /// whose scripts see every script.
+    pub fn set_scopes(&mut self, scopes: &[Scope]) {
+        let dir_key = |d: &PathBuf| {
+            let mut k = path_key(d);
+            if !k.ends_with('/') {
+                k.push('/');
+            }
+            k
+        };
+        self.scopes = scopes
+            .iter()
+            .map(|s| ScopeKeys {
+                sources: s.sources.iter().map(dir_key).collect(),
+                visible: s.visible.iter().map(dir_key).collect(),
+            })
+            .collect();
+        let scopings: Vec<_> =
+            self.files.iter().map(|f| f.as_ref().map(|f| self.scoping(&f.path))).collect();
+        for (file, scoping) in self.files.iter_mut().zip(scopings) {
+            if let (Some(file), Some(scoping)) = (file, scoping) {
+                (file.scope, file.visible_in) = scoping;
+            }
+        }
+    }
+
+    /// The scope of a file and the scopes seeing it.
+    fn scoping(&self, path: &Path) -> (Option<u8>, u64) {
+        if self.scopes.is_empty() {
+            return (None, 0);
+        }
+        let key = path_key(path);
+        let scopes = self.scopes.iter().take(MAX_SCOPES).enumerate();
+        let scope = scopes
+            .clone()
+            .filter_map(|(i, s)| {
+                let depth =
+                    s.sources.iter().filter(|d| key.starts_with(d.as_str())).map(String::len).max()?;
+                Some((depth, i as u8))
+            })
+            .max_by_key(|(depth, _)| *depth)
+            .map(|(_, i)| i);
+        let visible_in = scopes
+            .filter(|(_, s)| s.visible.iter().any(|d| key.starts_with(d.as_str())))
+            .fold(0, |bits, (i, _)| bits | 1 << i);
+        (scope, visible_in)
+    }
+
+    fn insert(&mut self, mut data: FileData) -> FileId {
+        (data.scope, data.visible_in) = self.scoping(&data.path);
         let id = FileId(self.files.len() as u32);
         self.by_path.insert(path_key(&data.path), id);
         if let Some(name) = data.index.name {
@@ -230,11 +317,14 @@ impl Workspace {
 
     fn pick_script(&self, name: Name, near: Option<FileId>) -> Option<FileId> {
         let ids = self.by_script.get(&name.key())?;
+        // A file of a scope sees only the scripts visible from its scope.
+        let scope = near.and_then(|n| self.file(n).scope);
+        let visible = |id: FileId| scope.is_none_or(|s| self.file(id).visible_in & 1 << s != 0);
         if let [only] = ids.as_slice() {
-            return Some(*only);
+            return Some(*only).filter(|&id| visible(id));
         }
         let near_dir = near.and_then(|n| self.file(n).path.parent().map(Path::to_path_buf));
-        ids.iter().copied().min_by_key(|&id| {
+        ids.iter().copied().filter(|&id| visible(id)).min_by_key(|&id| {
             let f = self.file(id);
             let stem_matches = f
                 .path

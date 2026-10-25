@@ -205,6 +205,52 @@
           "type": "boolean"
         }
       }
+    },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Several projects in one folder, like Cargo workspaces. Members inherit these settings; their own values win (imports are appended).",
+      "properties": {
+        "members": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Member directories, each with a papyrus.toml; a trailing * means every subdirectory with one, e.g. \"mods/*\"."
+        },
+        "exclude": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Directories matched by members that are not members."
+        },
+        "var": { "$ref": "#/properties/var" },
+        "compiler": { "$ref": "#/properties/compiler" },
+        "build": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Defaults of [build] of every member.",
+          "properties": {
+            "imports": { "$ref": "#/properties/build/properties/imports" },
+            "flags": { "$ref": "#/properties/build/properties/flags" },
+            "optimize": { "$ref": "#/properties/build/properties/optimize" },
+            "release": { "$ref": "#/properties/build/properties/release" },
+            "final": { "$ref": "#/properties/build/properties/final" },
+            "quiet": { "$ref": "#/properties/build/properties/quiet" }
+          }
+        },
+        "lints": { "$ref": "#/properties/lints" },
+        "format": { "$ref": "#/properties/format" }
+      }
+    },
+    "dependencies": {
+      "type": "object",
+      "description": "Projects whose sources this project imports (transitively), after its own sources: e.g. MCMHelper = { path = \"../MCMHelper\" }.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path"],
+        "properties": {
+          "path": { "type": "string", "description": "The directory of the project (with a papyrus.toml)." }
+        }
+      }
     }
   }
 }
