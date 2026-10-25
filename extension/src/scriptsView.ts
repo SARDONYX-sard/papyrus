@@ -3,7 +3,7 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 
 import { compileEvents, runCompile } from "./compile/task";
-import { client } from "./decompile";
+import { client, showAssemblyCommand } from "./decompile";
 import { DecompileFilesRequest } from "./protocol";
 import { state } from "./state";
 
@@ -613,6 +613,12 @@ export function registerScriptsView(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("papyrus.scripts.open", (node: Node) => {
       if (node.kind === "file") {
         open(node.uri);
+      }
+    }),
+    // The assembly of a `.pex`, or of a `.psc` compiled in memory.
+    vscode.commands.registerCommand("papyrus.scripts.assemble", (node: Node) => {
+      if (node.kind === "file") {
+        void showAssemblyCommand(node.uri);
       }
     }),
   );

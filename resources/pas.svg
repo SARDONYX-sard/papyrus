@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <!-- Papyrus assembly: a listing of instructions, the purple of .pex. -->
+  <rect x="2" y="1.5" width="12" height="13" rx="1.5" fill="#a074c4"/>
+  <path d="M4.5 4.5h2M8 4.5h3.5M4.5 8h2M8 8h2.5M4.5 11.5h2M8 11.5h3" stroke="#f1e6fb" stroke-width="1.3" stroke-linecap="round"/>
+</svg>

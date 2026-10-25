@@ -31,6 +31,9 @@ export async function client(): Promise<LanguageClient | undefined> {
 }
 
 class PexContentProvider implements vscode.TextDocumentContentProvider {
+  readonly changed = new vscode.EventEmitter<vscode.Uri>();
+  readonly onDidChange = this.changed.event;
+
   async provideTextDocumentContent(uri: vscode.Uri): Promise<string> {
     const c = await client();
     if (!c) {
@@ -39,7 +42,7 @@ class PexContentProvider implements vscode.TextDocumentContentProvider {
     try {
       return await c.sendRequest(DecompileRequest, { uri: uri.query, assembly: uri.path.endsWith(".pas") });
     } catch (e) {
-      return `; cannot decompile ${vscode.Uri.parse(uri.query).fsPath}: ${e instanceof Error ? e.message : String(e)}`;
+      return `; ${vscode.Uri.parse(uri.query).fsPath}: ${e instanceof Error ? e.message : String(e)}`;
     }
   }
 }
@@ -55,35 +58,59 @@ function pexDocumentUri(pex: vscode.Uri, assembly: boolean): vscode.Uri {
   });
 }
 
-/** The `.pex` file of a command: the clicked one, or the active decompiled view. */
-function targetPex(arg?: vscode.Uri): vscode.Uri | undefined {
+/**
+ * The file of a command: the clicked one (a URI, or a row of the scripts
+ * view), else the active decompiled view or script.
+ */
+function targetPex(arg?: vscode.Uri | { uri: vscode.Uri }): vscode.Uri | undefined {
   if (arg) {
-    return arg;
+    return arg instanceof vscode.Uri ? arg : arg.uri;
   }
-  const active = vscode.window.activeTextEditor?.document.uri;
-  if (active?.scheme === PEX_SCHEME) {
-    return vscode.Uri.parse(active.query);
+  const active = vscode.window.activeTextEditor?.document;
+  if (active?.uri.scheme === PEX_SCHEME) {
+    return vscode.Uri.parse(active.uri.query);
+  }
+  if (active?.uri.scheme === "file" && active.languageId === "papyrus") {
+    return active.uri;
   }
   return undefined;
 }
 
-async function open(arg: vscode.Uri | undefined, assembly: boolean, column?: vscode.ViewColumn): Promise<void> {
+async function open(
+  arg: vscode.Uri | { uri: vscode.Uri } | undefined,
+  assembly: boolean,
+  column?: vscode.ViewColumn,
+): Promise<void> {
   const pex = targetPex(arg);
   if (!pex) {
-    void vscode.window.showWarningMessage("Select a .pex file to decompile.");
+    void vscode.window.showWarningMessage(
+      assembly ? "Select a .pex or .psc file to show its assembly." : "Select a .pex file to decompile.",
+    );
     return;
   }
-  const doc = await vscode.workspace.openTextDocument(pexDocumentUri(pex, assembly));
+  // The source of a script is the script itself.
+  if (pex.path.toLowerCase().endsWith(".psc") && !assembly) {
+    await vscode.window.showTextDocument(pex, { viewColumn: column });
+    return;
+  }
+  let doc = await vscode.workspace.openTextDocument(pexDocumentUri(pex, assembly));
+  // `.pas` is Pascal too: an extension for it may win over the file pattern.
+  if (assembly && doc.languageId !== "papyrus-assembly") {
+    doc = await vscode.languages.setTextDocumentLanguage(doc, "papyrus-assembly");
+  }
   await vscode.window.showTextDocument(doc, { preview: true, viewColumn: column });
 }
 
 /** `papyrus.decompile`: shows the source of a `.pex` file. */
-export async function decompileCommand(arg?: vscode.Uri): Promise<void> {
+export async function decompileCommand(arg?: vscode.Uri | { uri: vscode.Uri }): Promise<void> {
   await open(arg, false);
 }
 
-/** `papyrus.showAssembly`: shows the assembly of a `.pex` file. */
-export async function showAssemblyCommand(arg?: vscode.Uri): Promise<void> {
+/**
+ * `papyrus.showAssembly`: shows the assembly of a `.pex` file, or of a
+ * `.psc` file compiled in memory.
+ */
+export async function showAssemblyCommand(arg?: vscode.Uri | { uri: vscode.Uri }): Promise<void> {
   await open(arg, true, arg ? undefined : vscode.ViewColumn.Beside);
 }
 
@@ -109,10 +136,14 @@ class PexDecorationProvider implements vscode.FileDecorationProvider {
     if (uri.scheme !== PEX_SCHEME) {
       return undefined;
     }
-    const pex = vscode.Uri.parse(uri.query).fsPath;
+    const from = vscode.Uri.parse(uri.query).fsPath;
+    if (uri.path.endsWith(".pas")) {
+      const how = from.toLowerCase().endsWith(".psc") ? "Compiled in memory from" : "Disassembled from";
+      return { badge: "A", tooltip: `${how} ${from}, read-only`, color: new vscode.ThemeColor("charts.purple") };
+    }
     return {
       badge: "D",
-      tooltip: `Decompiled from ${pex}, read-only: not the original source`,
+      tooltip: `Decompiled from ${from}, read-only: not the original source`,
       color: new vscode.ThemeColor("charts.purple"),
     };
   }
@@ -120,8 +151,15 @@ class PexDecorationProvider implements vscode.FileDecorationProvider {
 
 /** Registers the provider, the editor and the commands. */
 export function registerDecompiler(context: vscode.ExtensionContext): void {
+  const content = new PexContentProvider();
   context.subscriptions.push(
-    vscode.workspace.registerTextDocumentContentProvider(PEX_SCHEME, new PexContentProvider()),
+    vscode.workspace.registerTextDocumentContentProvider(PEX_SCHEME, content),
+    // The assembly of a script follows its edits, on save.
+    vscode.workspace.onDidSaveTextDocument((doc) => {
+      if (doc.languageId === "papyrus" && doc.uri.scheme === "file") {
+        content.changed.fire(pexDocumentUri(doc.uri, true));
+      }
+    }),
     vscode.window.registerFileDecorationProvider(new PexDecorationProvider()),
     vscode.window.registerCustomEditorProvider(PEX_VIEW_TYPE, new PexEditorProvider()),
     vscode.commands.registerCommand("papyrus.decompile", decompileCommand),

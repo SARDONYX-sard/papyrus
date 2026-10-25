@@ -57,6 +57,20 @@
         }
       },
       {
+        "id": "papyrus-assembly",
+        "aliases": [
+          "Papyrus Assembly"
+        ],
+        "filenamePatterns": [
+          "* (assembly).pas"
+        ],
+        "configuration": "./assembly-language-configuration.json",
+        "icon": {
+          "light": "./resources/pas.svg",
+          "dark": "./resources/pas.svg"
+        }
+      },
+      {
         "id": "papyrus-compiled",
         "aliases": [
           "Papyrus Compiled Script"
@@ -80,6 +94,11 @@
         "path": "./syntaxes/papyrus-flags.tmLanguage.json",
         "language": "papyrus-flags",
         "scopeName": "source.papyrus-flags"
+      },
+      {
+        "path": "./syntaxes/papyrus-assembly.tmLanguage.json",
+        "language": "papyrus-assembly",
+        "scopeName": "source.papyrus-assembly"
       },
       {
         "scopeName": "markdown.papyrus.codeblock",
@@ -217,6 +236,11 @@
         "title": "Open",
         "category": "Papyrus",
         "command": "papyrus.scripts.open"
+      },
+      {
+        "title": "Assemble (Preview)",
+        "category": "Papyrus",
+        "command": "papyrus.scripts.assemble"
       }
     ],
     "viewsContainers": {
@@ -393,6 +417,10 @@
         {
           "command": "papyrus.scripts.open",
           "when": "false"
+        },
+        {
+          "command": "papyrus.scripts.assemble",
+          "when": "false"
         }
       ],
       "explorer/context": [
@@ -457,6 +485,11 @@
         },
         {
           "command": "papyrus.scripts.open",
+          "when": "view == papyrus.scripts && viewItem =~ /^papyrusFile(Other)?$/",
+          "group": "1_run"
+        },
+        {
+          "command": "papyrus.scripts.assemble",
           "when": "view == papyrus.scripts && viewItem =~ /^papyrusFile(Other)?$/",
           "group": "1_run"
         }

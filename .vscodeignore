@@ -6,6 +6,7 @@
 !LICENSE-*
 !language-configuration.json
 !flags-language-configuration.json
+!assembly-language-configuration.json
 !syntaxes/**
 !schemas/**
 !resources/**

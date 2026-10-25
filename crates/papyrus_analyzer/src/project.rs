@@ -495,10 +495,28 @@ impl Server {
         })
     }
 
-    /// Handles `papyrus/decompile`.
+    /// Handles `papyrus/decompile`. For a `.psc` file, the assembly of the
+    /// script compiled in memory, as the editor has it, with the settings of
+    /// its project.
     pub(crate) fn decompile(&mut self, params: DecompileParams) -> Result<String, String> {
         let path = conv::uri_to_path(&params.uri).ok_or("not a file")?;
-        crate::decompile::decompile_file(&path, params.assembly).map(|(_, text)| text)
+        if !path.extension().is_some_and(|e| e.eq_ignore_ascii_case("psc")) {
+            return crate::decompile::decompile_file(&path, params.assembly).map(|(_, text)| text);
+        }
+        let file = self.ws.file_id(&path).ok_or("not a script of the workspace")?;
+        let options = papyrus_compiler::CompileOptions {
+            optimize: self.member_for(&path).is_some_and(|p| p.optimize),
+            debug_info: true,
+        };
+        match papyrus_compiler::compile(&self.ws, file, &options) {
+            Ok(pex) => Ok(papyrus_pex::disasm::disassemble(&pex, Default::default())),
+            Err(papyrus_compiler::CompileError::Unreadable) => Err("cannot read the script".into()),
+            Err(papyrus_compiler::CompileError::Diagnostics(errors)) => Err(format!(
+                "the script has {} errors, the first: {}",
+                errors.len(),
+                errors[0].message
+            )),
+        }
     }
 
     /// The lint levels of the scripts of the projects of the manifest.

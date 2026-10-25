@@ -1,0 +1,113 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Papyrus Assembly",
+  "scopeName": "source.papyrus-assembly",
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#declaration" },
+    { "include": "#directive" },
+    { "include": "#label" },
+    { "include": "#instruction" },
+    { "include": "#operand" }
+  ],
+  "repository": {
+    "comment": {
+      "patterns": [
+        {
+          "match": "(;)(@line)\\s+(\\d+)",
+          "name": "comment.line.semicolon.line-number.papyrus-assembly",
+          "captures": {
+            "2": { "name": "keyword.other.line-number.papyrus-assembly" },
+            "3": { "name": "constant.numeric.line-number.papyrus-assembly" }
+          }
+        },
+        { "match": ";.*$", "name": "comment.line.semicolon.papyrus-assembly" }
+      ]
+    },
+    "declaration": {
+      "patterns": [
+        {
+          "match": "^\\s*(\\.object)\\s+(\\S+)(?:\\s+(\\S+))?",
+          "captures": {
+            "1": { "name": "keyword.control.directive.papyrus-assembly" },
+            "2": { "name": "entity.name.type.class.papyrus-assembly" },
+            "3": { "name": "entity.other.inherited-class.papyrus-assembly" }
+          }
+        },
+        {
+          "match": "^\\s*(\\.function)\\s+(\\S+)((?:\\s+(?:static|native))*)",
+          "captures": {
+            "1": { "name": "keyword.control.directive.papyrus-assembly" },
+            "2": { "name": "entity.name.function.papyrus-assembly" },
+            "3": { "name": "storage.modifier.papyrus-assembly" }
+          }
+        },
+        {
+          "match": "^\\s*(\\.state)(?:\\s+(\\S+))?",
+          "captures": {
+            "1": { "name": "keyword.control.directive.papyrus-assembly" },
+            "2": { "name": "entity.name.namespace.state.papyrus-assembly" }
+          }
+        },
+        {
+          "match": "^\\s*(\\.(?:local|param|variable|property))\\s+(\\S+)\\s+(\\S+)(.*)$",
+          "captures": {
+            "1": { "name": "keyword.control.directive.papyrus-assembly" },
+            "2": { "name": "variable.other.papyrus-assembly" },
+            "3": { "name": "entity.name.type.papyrus-assembly" },
+            "4": { "patterns": [{ "include": "#operand" }] }
+          }
+        },
+        {
+          "match": "^\\s*(\\.(?:return|autoVar))\\s+(\\S+)",
+          "captures": {
+            "1": { "name": "keyword.control.directive.papyrus-assembly" },
+            "2": { "name": "entity.name.type.papyrus-assembly" }
+          }
+        },
+        {
+          "match": "^\\s*(\\.flag)\\s+(\\S+)",
+          "captures": {
+            "1": { "name": "keyword.control.directive.papyrus-assembly" },
+            "2": { "name": "entity.name.tag.flag.papyrus-assembly" }
+          }
+        }
+      ]
+    },
+    "directive": {
+      "match": "^\\s*\\.[A-Za-z]+",
+      "name": "keyword.control.directive.papyrus-assembly"
+    },
+    "label": {
+      "match": "^\\s*([A-Za-z_]\\w*)(:)",
+      "captures": {
+        "1": { "name": "entity.name.label.papyrus-assembly" },
+        "2": { "name": "punctuation.separator.label.papyrus-assembly" }
+      }
+    },
+    "instruction": {
+      "match": "^\\s*(JUMPT|JUMPF|JUMP)\\b|^\\s*([A-Z][A-Z_]*)\\b",
+      "captures": {
+        "1": { "name": "keyword.control.jump.papyrus-assembly" },
+        "2": { "name": "keyword.other.opcode.papyrus-assembly" }
+      }
+    },
+    "operand": {
+      "patterns": [
+        {
+          "begin": "\"",
+          "end": "\"",
+          "name": "string.quoted.double.papyrus-assembly",
+          "patterns": [{ "match": "\\\\.", "name": "constant.character.escape.papyrus-assembly" }]
+        },
+        { "match": "::\\w+", "name": "variable.language.temporary.papyrus-assembly" },
+        { "match": "\\b(?i:true|false|none)\\b", "name": "constant.language.papyrus-assembly" },
+        {
+          "match": "(?<![\\w:])-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?\\b",
+          "name": "constant.numeric.papyrus-assembly"
+        },
+        { "match": "\\blabel\\d+\\b", "name": "entity.name.label.papyrus-assembly" }
+      ]
+    }
+  }
+}
