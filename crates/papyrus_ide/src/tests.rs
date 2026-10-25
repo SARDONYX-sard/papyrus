@@ -483,6 +483,22 @@ fn rename_refusals() {
     );
 }
 
+#[test]
+fn snippets_by_context() {
+    let has = |src: &str, label: &str| {
+        let (ws, file, offset) = workspace(&[("T.psc", src)]);
+        let c = crate::features::completion::completions(&ws, file, offset);
+        c.items.iter().any(|i| i.label == label && i.kind == crate::CompletionKind::Snippet)
+    };
+    // Statements in bodies, declarations at script level and in states.
+    assert!(has("ScriptName T\nFunction F()\n    wh$0\nEndFunction\n", "while"));
+    assert!(!has("ScriptName T\nFunction F()\n    wh$0\nEndFunction\n", "function"));
+    assert!(has("ScriptName T\nfu$0\n", "function"));
+    assert!(has("ScriptName T\nState S\n    ev$0\nEndState\n", "event"));
+    // Not inside expressions.
+    assert!(!has("ScriptName T\nFunction F(Int x)\n    x = wh$0\nEndFunction\n", "while"));
+}
+
 /// Rules found by comparing with the official compiler.
 #[test]
 fn compiler_rules() {

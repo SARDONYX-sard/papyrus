@@ -225,6 +225,8 @@ impl Server {
         let items = completions
             .items
             .into_iter()
+            // Snippets need snippet support; their label alone means nothing.
+            .filter(|item| snippets || item.kind != papyrus_ide::CompletionKind::Snippet)
             .map(|item| {
                 let (new_text, format) = match (&item.snippet, snippets) {
                     (Some(snippet), true) => (snippet.clone(), InsertTextFormat::SNIPPET),

@@ -353,6 +353,7 @@ impl<'s, 'a> Ctx<'s, 'a> {
         for kw in STATEMENT_KEYWORDS {
             self.push(*kw, CompletionKind::Keyword, 4);
         }
+        self.add_snippets(super::snippets::SnippetContext::Body);
         self.add_primitives();
         self.add_scripts(true);
     }
@@ -361,8 +362,27 @@ impl<'s, 'a> Ctx<'s, 'a> {
         for kw in DECL_KEYWORDS {
             self.push(*kw, CompletionKind::Keyword, 1);
         }
+        self.add_snippets(super::snippets::SnippetContext::Item);
         self.add_primitives();
         self.add_scripts(true);
+    }
+
+    /// The snippets of `context`, where a statement or declaration starts:
+    /// first on its line.
+    fn add_snippets(&mut self, context: super::snippets::SnippetContext) {
+        let text = self.sema.text;
+        let start = usize::from(self.replace_range.start());
+        let line_start = text[..start].rfind('\n').map_or(0, |i| i + 1);
+        if !text[line_start..start].trim().is_empty() {
+            return;
+        }
+        for s in super::snippets::snippets(context) {
+            let item = self.push(s.prefix, CompletionKind::Snippet, 5);
+            item.detail = Some(s.description.to_owned());
+            item.documentation =
+                Some(format!("```papyrus\n{}\n```", super::snippets::preview(s.body)));
+            item.snippet = Some(s.body.to_owned());
+        }
     }
 
     fn add_primitives(&mut self) {
