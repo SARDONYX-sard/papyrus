@@ -81,6 +81,17 @@ fn hover_parent_tells_the_script_and_function() {
 }
 
 #[test]
+fn hover_operators_with_their_types() {
+    let src = "ScriptName T\nFunction F(Int i, Float f, String s)\n    f = i $0+ f\nEndFunction\n";
+    let (ws, file, offset) = workspace(&[("T.psc", src)]);
+    let md = hover(&ws, file, offset).unwrap().markdown;
+    assert!(md.contains("*operator*") && md.contains("Here: `Int` + `Float` → `Float`"), "{md}");
+    let src = "ScriptName T\nFunction F(Int i)\n    Bool b = i $0== 3\nEndFunction\n";
+    let (ws, file, offset) = workspace(&[("T.psc", src)]);
+    assert!(hover(&ws, file, offset).unwrap().markdown.contains("ignoring case"));
+}
+
+#[test]
 fn name_spellings_follow_definitions() {
     let (ws, file, _) = workspace(&[
         ("Form.psc", FORM),
