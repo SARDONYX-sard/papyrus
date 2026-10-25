@@ -26,6 +26,40 @@ fn workspace(files: &[(&str, &str)]) -> (Workspace, FileId, TextSize) {
 }
 
 #[test]
+fn hover_tells_whether_a_local_may_be_none() {
+    let hover_at = |body: &str| {
+        let src = format!(
+            "ScriptName T\nFunction F(Form f)\n    Actor a = f as Actor\n{body}EndFunction\n"
+        );
+        let (ws, file, offset) =
+            workspace(&[("Form.psc", FORM), ("Actor.psc", ACTOR), ("T.psc", &src)]);
+        hover(&ws, file, offset).unwrap().markdown
+    };
+    let maybe = hover_at("    a$0.Kill()\n");
+    assert!(
+        maybe.contains("comes from [here](file:///ws/T.psc#L3,15)")
+            && maybe.contains("`a` may be None here"),
+        "{maybe}"
+    );
+    let checked = hover_at("    If a\n        a$0.Kill()\n    EndIf\n");
+    assert!(checked.contains("`a` is not None here."), "{checked}");
+    let after_return = hover_at("    If !a\n        Return\n    EndIf\n    a$0.Kill()\n");
+    assert!(after_return.contains("`a` is not None here."), "{after_return}");
+}
+
+#[test]
+fn check_none_binds_a_cast_in_parentheses() {
+    let src = "ScriptName T\nFunction F(Form f)\n    (f as Actor).Kill$0()\nEndFunction\n";
+    let (ws, file, offset) = workspace(&[("Form.psc", FORM), ("Actor.psc", ACTOR), ("T.psc", src)]);
+    let found = assists::assists(&ws, file, TextRange::empty(offset));
+    let fix = found.iter().find(|a| a.id == "check_none").expect("check_none applies");
+    assert_eq!(
+        fix.edits[0].new_text,
+        "Actor akActor = f as Actor\n    If akActor\n        akActor.Kill()\n    EndIf"
+    );
+}
+
+#[test]
 fn name_spellings_follow_definitions() {
     let (ws, file, _) = workspace(&[
         ("Form.psc", FORM),

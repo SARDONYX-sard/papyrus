@@ -15,6 +15,7 @@
 //!    [`test_utils::check_assist_not_applicable`].
 
 mod apply_demorgan;
+mod check_none;
 mod fix_script_name;
 mod inline_local_variable;
 mod inline_script_variable;
@@ -95,6 +96,7 @@ pub type Handler = fn(&AssistCtx<'_>, &mut Vec<Assist>);
 const HANDLERS: &[Handler] = &[
     fix_script_name::fix_script_name,
     apply_demorgan::apply_demorgan,
+    check_none::check_none,
     inline_local_variable::inline_local_variable,
     inline_script_variable::inline_script_variable,
 ];

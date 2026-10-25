@@ -445,6 +445,7 @@ version = "0.0.0"
 dependencies = [
  "papyrus_ide",
  "papyrus_parser",
+ "rustc-hash",
 ]
 
 [[package]]

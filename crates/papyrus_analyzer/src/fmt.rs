@@ -145,8 +145,9 @@ pub(crate) fn names(ws: &Workspace, file: FileId) -> papyrus_fmt::Names {
 }
 
 /// A workspace with `scripts`, the scripts they use from the imports and the
-/// flags file, for name resolution.
-fn workspace(scripts: &[PathBuf]) -> Workspace {
+/// flags file, for name resolution (`fmt`, `lint`): the imports of the
+/// `papyrus.toml` of the current directory, else the game scripts.
+pub(crate) fn workspace(scripts: &[PathBuf]) -> Workspace {
     let cwd = std::env::current_dir().unwrap_or_default();
     let vars = papyrus_project::Variables::new(Default::default());
     let manifest =

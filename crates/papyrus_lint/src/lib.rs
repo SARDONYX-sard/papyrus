@@ -120,6 +120,8 @@ pub const LINTS: &[Lint] = &[
     lints::unused_local::LINT,
     lints::unreachable_code::LINT,
     lints::bool_literal_comparison::LINT,
+    lints::unchecked_none::CAST,
+    lints::unchecked_none::CALL,
 ];
 
 /// The lint named `code`.

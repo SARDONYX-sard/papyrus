@@ -118,10 +118,13 @@ pub(crate) fn run(args: &[String]) -> i32 {
         collect(path, &mut scripts);
     }
 
+    // The scripts they use, for the lints that need types (`unchecked-cast`).
+    let base = crate::fmt::workspace(&scripts);
     // Files are independent (lints look at one script): each gets its own
-    // workspace, in parallel; reports keep the order of the files.
+    // copy of the workspace, in parallel; reports keep the order of the files.
     use rayon::prelude::*;
-    let reports: Vec<FileReport> = scripts.par_iter().map(|p| lint_file(p, &config, fix)).collect();
+    let reports: Vec<FileReport> =
+        scripts.par_iter().map(|p| lint_file(p, &config, fix, &base)).collect();
     let (mut warnings, mut errors, mut fixed, mut fixed_files) = (0, 0, 0, 0);
     for report in reports {
         for line in &report.notes {
@@ -157,10 +160,10 @@ struct FileReport {
     fixed: usize,
 }
 
-fn lint_file(path: &Path, config: &LintConfig, fix: bool) -> FileReport {
+fn lint_file(path: &Path, config: &LintConfig, fix: bool, base: &Workspace) -> FileReport {
     let mut report = FileReport::default();
     let Some(text) = papyrus_ide::read_file(path) else { return report };
-    let mut ws = Workspace::new();
+    let mut ws = base.clone();
     let file = ws.set_open(path.to_path_buf(), Arc::from(text.as_str()), 0);
     // Like `fmt`: writing other encodings (often Windows-1252) back as UTF-8
     // would change more than the fixes.

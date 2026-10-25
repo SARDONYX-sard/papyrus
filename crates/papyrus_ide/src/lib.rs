@@ -16,6 +16,7 @@ pub mod flags;
 pub mod hir;
 pub mod index;
 mod line_index;
+pub mod none_flow;
 pub mod sema;
 pub mod typeck;
 

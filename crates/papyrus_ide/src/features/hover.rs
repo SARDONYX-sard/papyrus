@@ -49,11 +49,66 @@ fn name_hover(sema: &Sema<'_>, offset: TextSize) -> Option<HoverResult> {
     if let Some(line) = super::overrides::hover_line(sema, def) {
         markdown.push_str(&format!("\n\n{line}"));
     }
+    if let Some(line) = nullness_line(sema, range) {
+        markdown.push_str(&format!("\n\n{line}"));
+    }
     if !info.docs.is_empty() {
         markdown.push_str("\n\n---\n\n");
         markdown.push_str(&info.docs);
     }
     Some(HoverResult { range, markdown })
+}
+
+/// For a local used at `range`, whether it may be `None` there, like the
+/// null state of C# hovers, with a link to where the value comes from.
+fn nullness_line(sema: &Sema<'_>, range: TextRange) -> Option<String> {
+    use crate::{
+        hir::{Body, Expr},
+        none_flow::{NoneSource, Nullness},
+    };
+    let node = sema
+        .root
+        .covering_node(range)
+        .ancestors()
+        .find(|n| matches!(n.kind(), SyntaxKind::FUNCTION | SyntaxKind::EVENT))?;
+    let body = Body::lower(sema, node)?;
+    let (i, local) = body.exprs.iter().enumerate().find_map(|(i, (e, r))| match e {
+        Expr::Local(l) if *r == range => Some((i, *l)),
+        _ => None,
+    })?;
+    let types = crate::typeck::check_body(sema, &body);
+    let flow = crate::none_flow::analyze(sema, &body, &types);
+    let name = body.local(local).name;
+    let text = |r: TextRange| &sema.text[usize::from(r.start())..usize::from(r.end())];
+    let (at, why) = match flow.uses.get(&crate::hir::ExprId(i as u32))? {
+        Nullness::NotNone => return Some(format!("`{name}` is not None here.")),
+        Nullness::MaybeNone(NoneSource::Cast(at)) => {
+            (*at, format!("the cast `{}` gives None when it fails", text(*at)))
+        }
+        Nullness::MaybeNone(NoneSource::Call(at)) => {
+            (*at, format!("`{}` may return None", text(*at)))
+        }
+    };
+    let here = format!("[here]({})", location_link(sema, at));
+    Some(format!("`{name}` may be None here: its value comes from {here}, where {why}."))
+}
+
+/// A link opening the file of `sema` at `range`: `file:///...#L3,15`.
+fn location_link(sema: &Sema<'_>, range: TextRange) -> String {
+    let pos = crate::LineIndex::new(sema.text).line_col(sema.text, range.start());
+    let path = sema.ws.file(sema.file).path.to_string_lossy().replace('\\', "/");
+    let mut uri = String::from(if path.starts_with('/') { "file://" } else { "file:///" });
+    for c in path.chars() {
+        match c {
+            ' ' => uri.push_str("%20"),
+            '#' => uri.push_str("%23"),
+            '%' => uri.push_str("%25"),
+            '(' => uri.push_str("%28"),
+            ')' => uri.push_str("%29"),
+            c => uri.push(c),
+        }
+    }
+    format!("{uri}#L{},{}", pos.line + 1, pos.col + 1)
 }
 
 /// Describes the flag definition at `offset` in the flags file, or the

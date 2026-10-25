@@ -43,7 +43,9 @@ quiet = true
 # by group (correctness, suspicious, complexity, style, pedantic) or "all".
 [lints]
 complexity = "allow"
+# pedantic = "deny"
 unused-local = "deny"
+# unchecked-cast = "warn"
 
 # Formatter settings. Unset values come from .editorconfig, then from the editor.
 [format]
