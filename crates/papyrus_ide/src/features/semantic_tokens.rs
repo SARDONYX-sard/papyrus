@@ -119,6 +119,9 @@ pub fn semantic_tokens(
             }
             let kind = tok.kind();
             let (ty, modifiers) = match kind {
+                // Attributes (`; #[allow(...)]`) keep the colors of the grammar,
+                // which themes give Rust attributes (`meta.attribute.rust`).
+                SyntaxKind::LINE_COMMENT if is_attribute(tok.text()) => continue,
                 SyntaxKind::LINE_COMMENT | SyntaxKind::BLOCK_COMMENT => (TokenType::Comment, 0),
                 SyntaxKind::DOC_COMMENT => {
                     (TokenType::Comment, TokenModifier::Documentation as u32)
@@ -158,6 +161,12 @@ pub fn semantic_tokens(
         out
     })
     .unwrap_or_default()
+}
+
+/// `; #[...]` or `; #![...]`, see [`papyrus_parser::attrs`].
+fn is_attribute(comment: &str) -> bool {
+    let rest = comment.strip_prefix(';').unwrap_or_default().trim_start();
+    rest.starts_with("#[") || rest.starts_with("#![")
 }
 
 fn classify_ident(

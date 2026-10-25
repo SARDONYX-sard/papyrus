@@ -32,7 +32,8 @@ pub use crate::{
             member_docs,
         },
         diagnostics::{
-            Diagnostic, Related, Severity, diagnostics, diagnostics_of, flag_file_diagnostics,
+            COMPILER_CODES, Diagnostic, Related, Severity, diagnostics, diagnostics_of,
+            flag_file_diagnostics,
         },
         folding::{Fold, FoldKind, folding_ranges},
         hover::{HoverResult, flag_file_hover, hover},

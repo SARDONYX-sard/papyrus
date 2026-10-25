@@ -26,6 +26,7 @@
 //! ```
 
 pub mod ast;
+pub mod attrs;
 mod grammar;
 mod parser;
 mod syntax_kind;

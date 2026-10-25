@@ -100,6 +100,7 @@ property-case = "canonical"
 variable-case = "canonical"     # locals, parameters, script variables
 flag-case = "canonical"         # hidden → Hidden (the flags file)
 max-blank-lines = 1
+max-width = 0                   # > 0: longer lines break with \ (after , | before && ||), long attributes split · 0: as written
 newline = "auto"                # "auto" | "lf" | "crlf"
 final-newline = true            # true | false
 
@@ -187,6 +188,29 @@ Precedence: lint name > group > `all` · command line > `papyrus.toml`
 ```sh
 papyrus_analyzer lint --list
 papyrus_analyzer lint -D warnings -A style --fix Scripts/Source
+```
+
+### Attributes
+
+Rust-like attributes, in comments:
+
+| Attribute | Applies to |
+| --- | --- |
+| `; #[allow(names)]` | the next declaration \| statement (a whole `Function`, `If`...) · its line when after code |
+| `; #![allow(names)]` | the whole file |
+| `; #[fmt::skip]` | same as `#[allow]` — kept as written |
+| `; #![fmt::skip]` | the whole file, not formatted |
+
+`names`: lints (`unused_local` | `unused-local`) · groups · `all`; none → every lint. Text after `]` (a reason) is ignored.
+Quick fixes on a lint problem add them: *Allow `code` here* · *Allow `code` in this file*.
+
+```papyrus
+; #[allow(unused_local)]           ; the whole function
+Function F()
+    Int unused = 1
+    ; #[fmt::skip]                 ; aligned by hand
+    Float[] m = new Float[9]
+EndFunction
 ```
 
 ## Contributing

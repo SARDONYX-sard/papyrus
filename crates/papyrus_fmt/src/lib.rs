@@ -15,6 +15,10 @@
 //!   end of a block are removed;
 //! - trailing whitespace is removed and the file ends with one line break.
 //!
+//! Attributes in comments keep code as written, like `#[rustfmt::skip]`:
+//! `; #[fmt::skip]` the next declaration or statement (or its line, after
+//! code), `; #![fmt::skip]` the whole file. See [`papyrus_parser::attrs`].
+//!
 //! Scripts with syntax errors are not formatted. The result is checked before
 //! being returned: it must parse without errors and contain the same
 //! significant tokens as the input.
@@ -28,7 +32,7 @@
 
 use std::fmt;
 
-use papyrus_parser::{SyntaxKind, SyntaxToken};
+use papyrus_parser::{SyntaxKind, SyntaxToken, TextRange};
 
 /// How lines are indented.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -114,6 +118,10 @@ pub struct FormatOptions {
     pub newline: Newline,
     /// End the file with a line break.
     pub final_newline: bool,
+    /// Lines longer than this break with `\`, after commas and before `&&`,
+    /// `||`, like `max_width` of rustfmt; `0` (the default) keeps lines as
+    /// written.
+    pub max_width: usize,
     /// Spelling of the names, by kind. `Canonical` is the spelling of the
     /// definition, which `PascalCase` and `camelCase` start from too.
     pub name_cases: NameCases,
@@ -183,6 +191,7 @@ impl Default for FormatOptions {
             max_blank_lines: 1,
             newline: Newline::Auto,
             final_newline: true,
+            max_width: 0,
             name_cases: NameCases::default(),
             names: Default::default(),
         }
@@ -295,14 +304,24 @@ pub fn format(text: &str, options: &FormatOptions) -> Result<String, FormatError
     };
 
     let lines = split_lines(root.descendant_tokens());
+    let attrs = papyrus_parser::attrs::attributes(root);
+    let skip = |a: &papyrus_parser::attrs::Attribute<'_>| a.path.eq_ignore_ascii_case("fmt::skip");
+    if attrs.iter().any(|a| a.inner && skip(a)) {
+        return Ok(text.to_owned());
+    }
+    let skipped: Vec<TextRange> = attrs.iter().filter(|a| skip(a)).map(|a| a.target).collect();
+    let kept = kept_lines(&lines, &skipped);
     let levels = indent_levels(&lines);
     let mut out = String::with_capacity(text.len() + text.len() / 8);
     let mut pending_blank = 0usize;
     let mut written_any = false;
 
-    for (i, line) in lines.iter().enumerate() {
+    let mut i = 0;
+    while i < lines.len() {
+        let line = &lines[i];
         if line.is_blank() {
             pending_blank += 1;
+            i += 1;
             continue;
         }
         if written_any && pending_blank > 0 && keep_blank_lines(&lines, &levels, i) {
@@ -311,9 +330,41 @@ pub fn format(text: &str, options: &FormatOptions) -> Result<String, FormatError
             }
         }
         pending_blank = 0;
-        write_line(&mut out, line, levels[i], options);
+        // With `max_width`, a statement continued with `\` is laid out
+        // again from one line: joined when it fits, broken where it does not.
+        let end = (i + 1..lines.len()).find(|&j| !lines[j].continues()).unwrap_or(lines.len());
+        let joinable = options.max_width > 0
+            && end > i + 1
+            && (i..end).all(|j| !kept[j])
+            && lines[i..end].iter().flat_map(|l| &l.tokens).all(|t| !t.kind().is_comment());
+        if joinable {
+            let tokens = lines[i..end]
+                .iter()
+                .enumerate()
+                .flat_map(|(n, l)| {
+                    // The indentation of the continuations goes too.
+                    let skip = if n == 0 { 0 } else { 1 };
+                    l.tokens
+                        .iter()
+                        .skip_while(move |t| skip == 1 && t.kind() == SyntaxKind::WHITESPACE)
+                })
+                .filter(|t| t.kind() != SyntaxKind::LINE_CONTINUATION)
+                .copied()
+                .collect();
+            write_line(&mut out, &Line { tokens }, levels[i], options, newline);
+            out.push_str(newline);
+            written_any = true;
+            i = end;
+            continue;
+        }
+        if kept[i] {
+            write_verbatim(&mut out, line);
+        } else {
+            write_line(&mut out, line, levels[i], options, newline);
+        }
         out.push_str(newline);
         written_any = true;
+        i += 1;
     }
 
     if !options.final_newline && out.ends_with(newline) {
@@ -321,6 +372,29 @@ pub fn format(text: &str, options: &FormatOptions) -> Result<String, FormatError
     }
     verify(text, &out)?;
     Ok(out)
+}
+
+/// The lines in the code of `#[fmt::skip]` attributes, kept as written.
+fn kept_lines(lines: &[Line<'_>], skipped: &[TextRange]) -> Vec<bool> {
+    lines
+        .iter()
+        .map(|l| {
+            l.tokens.iter().find(|t| t.kind() != SyntaxKind::WHITESPACE).is_some_and(|t| {
+                skipped.iter().any(|r| r.contains_inclusive(t.text_range().start()))
+            })
+        })
+        .collect()
+}
+
+/// A line as written, but its line break.
+fn write_verbatim(out: &mut String, line: &Line<'_>) {
+    for tok in &line.tokens {
+        match tok.kind() {
+            // The token includes the line break, which the caller adds back.
+            SyntaxKind::LINE_CONTINUATION => out.push('\\'),
+            _ => out.push_str(tok.text()),
+        }
+    }
 }
 
 /// One physical line: its tokens without the line break.
@@ -434,6 +508,13 @@ fn indent_levels(lines: &[Line<'_>]) -> Vec<usize> {
             (0..i)
                 .rev()
                 .find(|&j| !lines[j].is_blank() && !lines[j].is_comment_only())
+                // The first line of a declaration continued with `\`.
+                .map(|mut j| {
+                    while j > 0 && lines[j].continues() {
+                        j -= 1;
+                    }
+                    j
+                })
                 .map_or(0, |j| levels[j])
         } else {
             match (i + 1..lines.len()).find(|&j| !lines[j].is_blank()) {
@@ -454,18 +535,146 @@ fn indent_levels(lines: &[Line<'_>]) -> Vec<usize> {
 
 /// Blank lines before line `i` are kept unless they open or close a block.
 fn keep_blank_lines(lines: &[Line<'_>], levels: &[usize], i: usize) -> bool {
-    let Some(prev) = (0..i).rev().find(|&j| !lines[j].is_blank()) else { return false };
+    let Some(mut prev) = (0..i).rev().find(|&j| !lines[j].is_blank()) else { return false };
+    // The first line of a statement continued with `\`.
+    while prev > 0 && lines[prev].continues() {
+        prev -= 1;
+    }
     let next_first = lines[i].first().expect("non blank");
     let closes = !lines[i].is_comment_only() && is_closer(next_first.kind());
     let opens = levels[i] > levels[prev] && !lines[prev].is_comment_only();
     !closes && !opens
 }
 
-fn write_line(out: &mut String, line: &Line<'_>, level: usize, options: &FormatOptions) {
+/// The indentation of `level`.
+fn indentation(level: usize, options: &FormatOptions) -> String {
     match options.indent {
-        Indent::Tabs => (0..level).for_each(|_| out.push('\t')),
-        Indent::Spaces(n) => (0..level * n as usize).for_each(|_| out.push(' ')),
+        Indent::Tabs => "\t".repeat(level),
+        Indent::Spaces(n) => " ".repeat(level * n as usize),
     }
+}
+
+/// The display width of a line, tabs counting as one indentation level.
+fn width(s: &str, options: &FormatOptions) -> usize {
+    let tab = match options.indent {
+        Indent::Spaces(n) => n as usize,
+        Indent::Tabs => 4,
+    };
+    s.chars().map(|c| if c == '\t' { tab } else { 1 }).sum()
+}
+
+fn write_line(
+    out: &mut String,
+    line: &Line<'_>,
+    level: usize,
+    options: &FormatOptions,
+    newline: &str,
+) {
+    let mut buf = indentation(level, options);
+    if let Some(split) = split_attribute(line, &buf, options, newline) {
+        out.push_str(&split);
+        return;
+    }
+    // Where the line may break when too long: after commas, before `&&`
+    // and `||`.
+    let mut breaks = Vec::new();
+    write_tokens(&mut buf, line, options, &mut breaks);
+    let breakable = !line
+        .tokens
+        .iter()
+        .any(|t| matches!(t.kind(), SyntaxKind::LINE_COMMENT | SyntaxKind::LINE_CONTINUATION));
+    if options.max_width == 0 || !breakable || width(&buf, options) <= options.max_width {
+        out.push_str(&buf);
+        return;
+    }
+    // Like rustfmt: lines over `max_width` break, here with `\`, and the
+    // continuations are one level deeper.
+    // A line continuing another is already one level deeper.
+    let continuation = indentation(if line.continues() { level } else { level + 1 }, options);
+    let mut start = 0;
+    let mut prefix_width = 0;
+    loop {
+        let fits =
+            |p: usize| prefix_width + width(&buf[start..p], options) + 2 <= options.max_width;
+        if prefix_width + width(&buf[start..], options) <= options.max_width {
+            break;
+        }
+        let candidates = || breaks.iter().copied().filter(|&p| p > start && p < buf.len());
+        let Some(at) = candidates().rfind(|&p| fits(p)).or_else(|| candidates().next()) else {
+            break;
+        };
+        out.push_str(buf[start..at].trim_end());
+        out.push_str(" \\");
+        out.push_str(newline);
+        out.push_str(&continuation);
+        start = at + (buf[at..].len() - buf[at..].trim_start().len());
+        prefix_width = width(&continuation, options);
+    }
+    out.push_str(&buf[start..]);
+}
+
+/// The parts of a normalized attribute with arguments:
+/// `; #[allow(a, b)] why` → (`; #[allow(`, [`a`, `b`], `why`).
+fn attribute_parts(attr: &str) -> Option<(&str, Vec<&str>, &str)> {
+    let open = attr.find('(')?;
+    let close = attr.find(")]")?;
+    let args = attr[open + 1..close].split(", ").filter(|a| !a.is_empty()).collect();
+    Some((&attr[..=open], args, attr[close + 2..].trim()))
+}
+
+/// An attribute alone on its line over `max_width`: one attribute per line,
+/// its arguments spread over them, the reason on the last one.
+fn split_attribute(
+    line: &Line<'_>,
+    indent: &str,
+    options: &FormatOptions,
+    newline: &str,
+) -> Option<String> {
+    if options.max_width == 0 || !line.is_comment_only() {
+        return None;
+    }
+    let comment = line.first()?;
+    let attr = papyrus_parser::attrs::normalize(comment.text())?;
+    if width(indent, options) + width(&attr, options) <= options.max_width {
+        return None;
+    }
+    let (prefix, args, rest) = attribute_parts(&attr)?;
+    let fits = |chunk: &[&str], last: bool| {
+        let reason = if last && !rest.is_empty() { rest.len() + 1 } else { 0 };
+        width(indent, options) + prefix.len() + chunk.join(", ").len() + 2 + reason
+            <= options.max_width
+    };
+    let mut chunks: Vec<Vec<&str>> = vec![Vec::new()];
+    for arg in args {
+        let current = chunks.last_mut().expect("one chunk");
+        current.push(arg);
+        if current.len() > 1 && !fits(current, false) {
+            current.pop();
+            chunks.push(vec![arg]);
+        }
+    }
+    if chunks.len() < 2 {
+        return None;
+    }
+    let count = chunks.len();
+    let lines: Vec<String> = chunks
+        .iter()
+        .enumerate()
+        .map(|(i, chunk)| {
+            let reason =
+                if i + 1 == count && !rest.is_empty() { format!(" {rest}") } else { String::new() };
+            format!("{indent}{prefix}{})]{reason}", chunk.join(", "))
+        })
+        .collect();
+    Some(lines.join(newline))
+}
+
+fn write_tokens(
+    out: &mut String,
+    line: &Line<'_>,
+    options: &FormatOptions,
+    breaks: &mut Vec<usize>,
+) {
     let mut prev: Option<SyntaxToken<'_>> = None;
     let mut pending_ws: Option<&str> = None;
     for tok in &line.tokens {
@@ -483,17 +692,29 @@ fn write_line(out: &mut String, line: &Line<'_>, level: usize, options: &FormatO
                     }
                     _ => out.push(' '),
                 }
-            } else if needs_space(p, *tok) {
-                out.push(' ');
+            } else {
+                if matches!(kind, SyntaxKind::AMP2 | SyntaxKind::PIPE2) {
+                    breaks.push(out.len());
+                }
+                if needs_space(p, *tok) {
+                    out.push(' ');
+                }
             }
         }
         pending_ws = None;
         match kind {
             // The token includes the line break, which the caller adds back.
             SyntaxKind::LINE_CONTINUATION => out.push('\\'),
+            SyntaxKind::LINE_COMMENT => match papyrus_parser::attrs::normalize(tok.text()) {
+                Some(attr) => out.push_str(&attr),
+                None => out.push_str(tok.text()),
+            },
             _ if kind.is_keyword() => out.push_str(&options.keyword_spelling(kind, tok.text())),
             SyntaxKind::IDENT => out.push_str(&options.name_spelling(*tok)),
             _ => out.push_str(tok.text()),
+        }
+        if kind == SyntaxKind::COMMA {
+            breaks.push(out.len());
         }
         prev = Some(*tok);
     }
@@ -577,13 +798,27 @@ fn verify(original: &str, formatted: &str) -> Result<(), FormatError> {
                     SyntaxKind::WHITESPACE | SyntaxKind::NEWLINE | SyntaxKind::LINE_CONTINUATION
                 )
             })
-            .map(|(k, t)| {
-                let text = if k.is_keyword() || k == SyntaxKind::IDENT {
-                    t.text.to_ascii_lowercase()
-                } else {
-                    t.text.to_owned()
-                };
-                (k, text)
+            .flat_map(|(k, t)| {
+                let attr = (k == SyntaxKind::LINE_COMMENT)
+                    .then(|| papyrus_parser::attrs::normalize(t.text))
+                    .flatten();
+                match attr {
+                    // An attribute: one entry per argument, as long ones are
+                    // split over several lines.
+                    Some(attr) => match attribute_parts(&attr) {
+                        Some((prefix, args, rest)) => args
+                            .iter()
+                            .map(|a| format!("{prefix}{a})]"))
+                            .chain((!rest.is_empty()).then(|| rest.to_owned()))
+                            .map(|s| (k, s))
+                            .collect(),
+                        None => vec![(k, attr)],
+                    },
+                    None if k.is_keyword() || k == SyntaxKind::IDENT => {
+                        vec![(k, t.text.to_ascii_lowercase())]
+                    }
+                    None => vec![(k, t.text.to_owned())],
+                }
             })
             .collect()
     };

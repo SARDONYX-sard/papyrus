@@ -60,6 +60,14 @@ fn check_none_binds_a_cast_in_parentheses() {
 }
 
 #[test]
+fn attributes_keep_the_grammar_colors() {
+    let src = "$0; #![allow(unused_local)] why\nScriptName T\n";
+    let (ws, file, _) = workspace(&[("T.psc", src)]);
+    let first = semantic_tokens(&ws, file, None).into_iter().next().unwrap();
+    assert_ne!(first.ty, TokenType::Comment, "the attribute has no semantic token");
+}
+
+#[test]
 fn name_spellings_follow_definitions() {
     let (ws, file, _) = workspace(&[
         ("Form.psc", FORM),

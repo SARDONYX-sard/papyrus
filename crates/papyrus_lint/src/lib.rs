@@ -15,6 +15,7 @@
 //! Fixes are assists ([`papyrus_ide::assists`]) of kind quick fix naming the
 //! lint code in [`Assist::fixes`].
 
+pub mod ignore;
 mod lints;
 
 use std::{fmt, str::FromStr};
@@ -199,6 +200,7 @@ pub fn lint_source(
         return Vec::new();
     }
     let sema = src.sema(ws, file);
+    let ignores = ignore::Ignores::of(sema.root);
     let mut out = Vec::new();
     for lint in LINTS {
         let severity = match config.level(lint) {
@@ -212,8 +214,26 @@ pub fn lint_source(
             d.severity = severity;
         }
     }
+    out.retain(|d| !ignores.silence(d));
+    out.extend(ignore::check_attributes(sema.root));
     out.sort_by_key(|d| d.range.start());
     out
+}
+
+/// Quick fixes silencing the lint problems at `range` of `file` with a
+/// attribute (see [`ignore`]): on their statement, or in the whole file.
+pub fn ignore_fixes(
+    ws: &Workspace,
+    file: FileId,
+    range: TextRange,
+    config: &LintConfig,
+) -> Vec<Assist> {
+    let Some(text) = ws.text(file) else { return Vec::new() };
+    lint(ws, file, config)
+        .iter()
+        .filter(|d| d.range.intersect(range).is_some())
+        .flat_map(|d| ignore::ignore_fixes(&text, d))
+        .collect()
 }
 
 /// The fixes of the reported lints applicable at `range` of `file`.

@@ -143,6 +143,8 @@ struct RawFormat {
     flag_case: Option<Spanned<String>>,
     #[serde(alias = "max_blank_lines")]
     max_blank_lines: Option<usize>,
+    #[serde(alias = "max_width")]
+    max_width: Option<usize>,
     newline: Option<Spanned<String>>,
     #[serde(alias = "final_newline")]
     final_newline: Option<bool>,
@@ -166,6 +168,8 @@ pub struct FormatSettings {
     pub name_cases: [Option<papyrus_fmt::Case>; 5],
     /// `max-blank-lines`
     pub max_blank_lines: Option<usize>,
+    /// `max-width`: longer lines break with `\`; `0`: never.
+    pub max_width: Option<usize>,
     /// `newline`: `"auto"`, `"lf"` or `"crlf"`.
     pub newline: Option<papyrus_fmt::Newline>,
     /// `final-newline`
@@ -184,6 +188,7 @@ impl FormatSettings {
             *mine = theirs.or(*mine);
         }
         self.max_blank_lines = other.max_blank_lines.or(self.max_blank_lines);
+        self.max_width = other.max_width.or(self.max_width);
         self.newline = other.newline.or(self.newline);
         self.final_newline = other.final_newline.or(self.final_newline);
     }
@@ -221,6 +226,9 @@ impl FormatSettings {
         }
         if let Some(n) = self.max_blank_lines {
             options.max_blank_lines = n;
+        }
+        if let Some(n) = self.max_width {
+            options.max_width = n;
         }
         if let Some(newline) = self.newline {
             options.newline = newline;
@@ -287,6 +295,7 @@ fn format_settings(raw: &RawFormat, errors: &mut Vec<ManifestError>) -> FormatSe
     let span = |r: Range<usize>| Some(r).filter(|r| !r.is_empty());
     let mut out = FormatSettings {
         max_blank_lines: raw.max_blank_lines,
+        max_width: raw.max_width,
         final_newline: raw.final_newline,
         ..Default::default()
     };
@@ -1046,6 +1055,7 @@ quiet = true                    # errors only
 # indent-style = "space"        # space | tab
 # indent-size = 4
 # max-blank-lines = 1
+# max-width = 0                # > 0: longer lines break with \, long attributes split; 0: as written
 # newline = "auto"              # auto | lf | crlf
 # final-newline = true
 #

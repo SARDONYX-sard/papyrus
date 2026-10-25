@@ -23,6 +23,38 @@ use crate::{
     sema::{Builtin, FileSource, Sema, Ty},
 };
 
+/// The codes of the diagnostics of the compiler checks, errors the official
+/// compiler rejects too (lints have their own codes, in `papyrus_lint`).
+pub const COMPILER_CODES: &[&str] = &[
+    "syntax",
+    "unknown-type",
+    "unknown-member",
+    "unknown-param",
+    "unresolved-name",
+    "script-name-mismatch",
+    "extends-self",
+    "builtin-redefined",
+    "duplicate-state",
+    "duplicate-definition",
+    "state-function-not-declared",
+    "reserved-name",
+    "name-is-type",
+    "name-conflict",
+    "unknown-flag",
+    "misplaced-flag",
+    "type-mismatch",
+    "invalid-operator",
+    "invalid-cast",
+    "invalid-member",
+    "invalid-assignment",
+    "not-an-array",
+    "not-global",
+    "read-only",
+    "wrong-arg-count",
+    "missing-return-value",
+    "unexpected-return-value",
+];
+
 /// The severity of a [`Diagnostic`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Severity {

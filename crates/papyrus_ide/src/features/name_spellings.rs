@@ -59,15 +59,9 @@ pub fn name_spellings(ws: &Workspace, file: FileId) -> Vec<NameSpelling> {
                     SyntaxKind::NAME_REF => {
                         def_spelling(sema, sema.resolve_name_ref(ast::NameRef::cast(parent)?)?)?
                     }
-                    SyntaxKind::NAME => match decl_def(sema, parent)? {
-                        // A declaration is its own definition, unless it
-                        // overrides a function of a parent script.
-                        Def::Member { file, index } => match overridden_name(sema, file, index) {
-                            Some(base) => (NameKind::Function, base),
-                            None => def_spelling(sema, Def::Member { file, index })?,
-                        },
-                        def => def_spelling(sema, def)?,
-                    },
+                    // A declaration is its own definition, unless it overrides a
+                    // function of a parent script.
+                    SyntaxKind::NAME => def_spelling(sema, decl_def(sema, parent)?)?,
                     _ => return None,
                 };
                 Some(NameSpelling { range: tok.text_range(), kind, spelling })
@@ -84,10 +78,15 @@ fn overridden_name(sema: &Sema<'_>, file: FileId, index: u32) -> Option<String> 
     if !is_overridable(m) {
         return None;
     }
-    sema.chain(sema.script_name()?).skip(1).find_map(|(_, parent)| {
-        let base = parent.members.iter().find(|b| is_overridable(b) && b.name == m.name)?;
-        Some(base.name.to_string())
-    })
+    // The first declaration, up the chain: every override takes its spelling.
+    let script = sema.ws.file(file).index.name?;
+    sema.chain(script)
+        .skip(1)
+        .filter_map(|(_, parent)| {
+            let base = parent.members.iter().find(|b| is_overridable(b) && b.name == m.name)?;
+            Some(base.name.to_string())
+        })
+        .last()
 }
 
 fn def_spelling(sema: &Sema<'_>, def: Def) -> Option<(NameKind, String)> {
@@ -104,7 +103,8 @@ fn def_spelling(sema: &Sema<'_>, def: Def) -> Option<(NameKind, String)> {
                 MemberKind::Variable => NameKind::Variable,
                 MemberKind::State => return None,
             };
-            (kind, m.name.to_string())
+            let name = overridden_name(sema, file, index).unwrap_or_else(|| m.name.to_string());
+            (kind, name)
         }
         Def::Script { file } => (NameKind::Script, sema.ws.file(file).index.name?.to_string()),
         Def::Builtin(b, _) => {

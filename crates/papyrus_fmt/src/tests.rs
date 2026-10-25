@@ -176,6 +176,51 @@ fn names_follow_their_definition() {
 }
 
 #[test]
+fn ignore_comments_keep_code_as_written() {
+    let options = FormatOptions::default();
+    let src = "scriptname A\nfunction F()\n; #[fmt::skip]\nint   x=1\nint   y=2   ; #[fmt::skip]\nint   z=3\nendfunction\n";
+    assert_eq!(
+        format(src, &options).unwrap(),
+        "ScriptName A\nFunction F()\n    ; #[fmt::skip]\nint   x=1\nint   y=2   ; #[fmt::skip]\n    Int z = 3\nEndFunction\n"
+    );
+    let file = "; #![fmt::skip]\nscriptname A\nint   x\n";
+    assert_eq!(format(file, &options).unwrap(), file);
+}
+
+#[test]
+fn max_width_breaks_long_lines() {
+    let src = "ScriptName A\nFunction F()\nFoo(alpha, beta, gamma, delta)\nIf alpha && beta || gamma\nEndIf\nEndFunction\n";
+    // Kept as written by default.
+    assert!(
+        format(src, &FormatOptions::default()).unwrap().contains("Foo(alpha, beta, gamma, delta)")
+    );
+    let options = FormatOptions { max_width: 24, ..FormatOptions::default() };
+    let out = format(src, &options).unwrap();
+    assert_eq!(
+        out,
+        "ScriptName A\nFunction F()\n    Foo(alpha, beta, \\\n        gamma, delta)\n    If alpha && beta \\\n        || gamma\n    EndIf\nEndFunction\n"
+    );
+    assert_eq!(format(&out, &options).unwrap(), out, "not idempotent");
+    // Wide enough: the continued lines are joined again.
+    let wide = FormatOptions { max_width: 200, ..FormatOptions::default() };
+    assert_eq!(format(&out, &wide).unwrap(), format(src, &wide).unwrap());
+    assert!(format(&out, &wide).unwrap().contains("    Foo(alpha, beta, gamma, delta)\n"));
+    // Without `max_width`, as written.
+    assert_eq!(format(&out, &FormatOptions::default()).unwrap(), out);
+}
+
+#[test]
+fn attributes_are_normalized_and_split() {
+    let src = ";  #[ allow( unused-local ,style ) ]   why\nScriptName A\n";
+    let out = format(src, &FormatOptions::default()).unwrap();
+    assert_eq!(out, "; #[allow(unused_local, style)] why\nScriptName A\n");
+    let options = FormatOptions { max_width: 30, ..FormatOptions::default() };
+    let split = format(src, &options).unwrap();
+    assert_eq!(split, "; #[allow(unused_local)]\n; #[allow(style)] why\nScriptName A\n");
+    assert_eq!(format(&split, &options).unwrap(), split, "not idempotent");
+}
+
+#[test]
 fn newline_options() {
     let options =
         FormatOptions { newline: Newline::CrLf, final_newline: false, ..FormatOptions::default() };

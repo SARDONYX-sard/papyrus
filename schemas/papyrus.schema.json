@@ -192,6 +192,12 @@
             "type": "string"
           }
         },
+        "max-width": {
+          "minimum": 0,
+          "default": 0,
+          "type": "integer",
+          "markdownDescription": "Lines longer than this break with `\\`, after commas and before `&&`, `||`; attributes alone on their line split into several (like `max_width` of rustfmt). `0`: keep lines as written."
+        },
         "max-blank-lines": {
           "minimum": 0,
           "description": "Consecutive blank lines kept at most.",

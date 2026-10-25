@@ -60,6 +60,23 @@ const grammar = {
       patterns: [
         { name: "comment.block.papyrus", begin: ";/", end: "/;" },
         { name: "comment.block.documentation.papyrus", begin: "\\{", end: "\\}" },
+        {
+          comment:
+            "Rust-like attributes in comments: `; #[allow(unused_local)] reason`, `; #![fmt::skip]`. Scoped like Rust attributes (`meta.attribute.rust`), which themes color (One Dark: orange); the language server leaves them to the grammar.",
+          match: "(;)(\\s*#!?\\[[^\\]]*\\])(.*)$",
+          captures: {
+            1: { name: "comment.line.semicolon.papyrus punctuation.definition.comment.papyrus" },
+            2: {
+              name: "meta.attribute.rust.papyrus",
+              patterns: [
+                { name: "punctuation.brackets.attribute.rust.papyrus", match: "#!?\\[|\\]" },
+                { name: "punctuation.brackets.round.rust.papyrus", match: "[()]" },
+                { name: "punctuation.comma.rust.papyrus", match: "," },
+              ],
+            },
+            3: { name: "comment.line.semicolon.papyrus" },
+          },
+        },
         { name: "comment.line.semicolon.papyrus", match: ";.*$" },
       ],
     },
