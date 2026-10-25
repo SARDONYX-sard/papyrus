@@ -69,7 +69,8 @@ impl Server {
             false => Vec::new(),
         };
         let mut dirs = Vec::new();
-        for dir in self.members.iter().flat_map(Project::import_dirs).chain(configured).chain(game) {
+        for dir in self.members.iter().flat_map(Project::import_dirs).chain(configured).chain(game)
+        {
             if !dirs.contains(&dir) {
                 dirs.push(dir);
             }
@@ -221,9 +222,8 @@ impl Server {
     /// editor when open, and publishes their problems.
     pub(crate) fn load_project(&mut self) {
         // A member of a workspace loads the whole workspace.
-        let found = self
-            .manifest_path()
-            .map(|m| papyrus_project::find_workspace_root(&m).unwrap_or(m));
+        let found =
+            self.manifest_path().map(|m| papyrus_project::find_workspace_root(&m).unwrap_or(m));
         if found != self.manifest {
             self.manifest = found.clone();
             self.refresh_code_lenses();

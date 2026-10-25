@@ -902,27 +902,29 @@ impl Server {
                 let start = Instant::now();
                 // A newer full check replaces this one.
                 let cancelled = || full && running.load(Ordering::SeqCst) > job;
-                pool.install(|| files.par_iter().for_each(|&file| {
-                    // Requests of the editor come first.
-                    while paused.load(Ordering::SeqCst) && !cancelled() {
-                        std::thread::sleep(std::time::Duration::from_millis(1));
-                    }
-                    if cancelled() {
-                        return;
-                    }
-                    let path = ws.file(file).path.clone();
-                    let mentions = needles.is_empty()
-                        || ws.text(file).is_some_and(|text| {
-                            let lower = text.to_ascii_lowercase();
-                            needles.iter().any(|n| lower.contains(n.as_str()))
-                        });
-                    let diagnostics = if mentions {
-                        file_diagnostics(&ws, file, semantic, lints.for_path(&path))
-                    } else {
-                        None
-                    };
-                    let _ = tx.send(CheckEvent::File { job, file, path, diagnostics });
-                }));
+                pool.install(|| {
+                    files.par_iter().for_each(|&file| {
+                        // Requests of the editor come first.
+                        while paused.load(Ordering::SeqCst) && !cancelled() {
+                            std::thread::sleep(std::time::Duration::from_millis(1));
+                        }
+                        if cancelled() {
+                            return;
+                        }
+                        let path = ws.file(file).path.clone();
+                        let mentions = needles.is_empty()
+                            || ws.text(file).is_some_and(|text| {
+                                let lower = text.to_ascii_lowercase();
+                                needles.iter().any(|n| lower.contains(n.as_str()))
+                            });
+                        let diagnostics = if mentions {
+                            file_diagnostics(&ws, file, semantic, lints.for_path(&path))
+                        } else {
+                            None
+                        };
+                        let _ = tx.send(CheckEvent::File { job, file, path, diagnostics });
+                    })
+                });
                 if !cancelled() {
                     log::info!("checked {} scripts in {:?}", files.len(), start.elapsed());
                     let _ = tx.send(CheckEvent::Done { job });

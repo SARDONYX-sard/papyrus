@@ -602,7 +602,8 @@ pub(crate) fn parse_with(
     };
     let mut imports: Vec<PathBuf> = raw.build.imports.iter().map(|p| resolver.path(p)).collect();
     if let Some(i) = inherited {
-        imports.extend(i.imports.iter().filter(|d| !imports.contains(d)).cloned().collect::<Vec<_>>());
+        imports
+            .extend(i.imports.iter().filter(|d| !imports.contains(d)).cloned().collect::<Vec<_>>());
     }
     let flags = raw
         .build
@@ -1228,7 +1229,10 @@ mod tests {
         assert_eq!(app.flags.as_deref(), Some(dir.join("game/f.flg").as_path()));
         assert!(!app.optimize);
         assert_eq!(app.imports, [dir.join("game")]);
-        assert_eq!(app.import_dirs(), [dir.join("mods/App"), dir.join("mods/Lib"), dir.join("game")]);
+        assert_eq!(
+            app.import_dirs(),
+            [dir.join("mods/App"), dir.join("mods/Lib"), dir.join("game")]
+        );
         let lib = &ws.members[1];
         assert_eq!(lib.import_dirs(), [dir.join("mods/Lib"), dir.join("game")]);
         // The member wins over the workspace.
@@ -1236,7 +1240,10 @@ mod tests {
         assert_eq!(level(app, "unused-local"), papyrus_lint::Level::Allow);
         assert_eq!(level(app, "unreachable-code"), papyrus_lint::Level::Deny);
         assert_eq!((app.format.use_tabs, app.format.indent_size), (Some(true), Some(2)));
-        assert_eq!(ws.member_for(&dir.join("mods/Lib/A.psc")).unwrap().name.as_deref(), Some("Lib"));
+        assert_eq!(
+            ws.member_for(&dir.join("mods/Lib/A.psc")).unwrap().name.as_deref(),
+            Some("Lib")
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

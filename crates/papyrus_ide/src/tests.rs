@@ -528,7 +528,10 @@ fn scopes_limit_visible_scripts() {
     add(&mut ws, "/ws/Other/Util.psc", "ScriptName Util\n");
     let app = add(&mut ws, "/ws/App/App.psc", "ScriptName App\nInt MCM\n");
     ws.set_scopes(&[
-        Scope { sources: vec!["/ws/App".into()], visible: vec!["/ws/App".into(), "/ws/Helper".into()] },
+        Scope {
+            sources: vec!["/ws/App".into()],
+            visible: vec!["/ws/App".into(), "/ws/Helper".into()],
+        },
         Scope { sources: vec!["/ws/Other".into()], visible: vec!["/ws/Other".into()] },
         Scope { sources: vec!["/ws/Helper".into()], visible: vec!["/ws/Helper".into()] },
     ]);

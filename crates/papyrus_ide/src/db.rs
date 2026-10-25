@@ -259,8 +259,12 @@ impl Workspace {
         let scope = scopes
             .clone()
             .filter_map(|(i, s)| {
-                let depth =
-                    s.sources.iter().filter(|d| key.starts_with(d.as_str())).map(String::len).max()?;
+                let depth = s
+                    .sources
+                    .iter()
+                    .filter(|d| key.starts_with(d.as_str()))
+                    .map(String::len)
+                    .max()?;
                 Some((depth, i as u8))
             })
             .max_by_key(|(depth, _)| *depth)

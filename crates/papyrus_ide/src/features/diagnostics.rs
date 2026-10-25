@@ -260,7 +260,8 @@ fn check_duplicates(sema: &Sema<'_>, out: &mut Vec<Diagnostic>) {
             })
             || m.name.as_str().eq_ignore_ascii_case(Builtin::OnBeginState.name())
             || m.name.as_str().eq_ignore_ascii_case(Builtin::OnEndState.name());
-        let parent_unknown = sema.index.extends.is_some_and(|p| sema.ws.script_near(p, sema.file).is_none());
+        let parent_unknown =
+            sema.index.extends.is_some_and(|p| sema.ws.script_near(p, sema.file).is_none());
         if !declared_elsewhere && !parent_unknown && m.kind == MemberKind::Function {
             out.push(Diagnostic::error(
                 m.name_range,
