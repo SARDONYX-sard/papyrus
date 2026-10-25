@@ -561,6 +561,15 @@ impl Server {
     pub(crate) fn formatting(&mut self, params: DocumentFormattingParams) -> Option<Vec<TextEdit>> {
         let file = self.file(&params.text_document.uri).ok()?;
         let data = self.ws.file(file);
+        // Like rust-analyzer with libraries: imported scripts (the game
+        // sources...) and files outside of the workspace folders are not ours
+        // to reformat.
+        let own = data.origin == papyrus_ide::Origin::Workspace
+            && self.roots.iter().any(|r| data.path.starts_with(r));
+        if !own {
+            log::info!("{}: not formatted, not a script of the workspace", data.path.display());
+            return None;
+        }
         let text = data.open.as_ref()?.text.clone();
         let editor = &params.options;
         let options = papyrus_project::format_options_for(&data.path, |o| {
