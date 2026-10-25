@@ -29,7 +29,8 @@ pub(crate) fn inline_local_variable(ctx: &AssistCtx<'_>, acc: &mut Vec<Assist>) 
     let Some(decl_range) = target(ctx) else { return };
     let Some(func) = enclosing_body(ctx, decl_range) else { return };
     let Some(body) = Body::lower(ctx.sema, func) else { return };
-    let Some(local) = body.locals.iter().position(|l| l.range == decl_range).map(|i| LocalId(i as u32))
+    let Some(local) =
+        body.locals.iter().position(|l| l.range == decl_range).map(|i| LocalId(i as u32))
     else {
         return;
     };
@@ -51,7 +52,8 @@ pub(crate) fn inline_local_variable(ctx: &AssistCtx<'_>, acc: &mut Vec<Assist>) 
     if uses.is_empty() || uses.iter().any(|u| u.text_range().start() < decl_range.start()) {
         return;
     }
-    let Some(var) = ctx.sema.root.covering_node(decl_range).ancestors().find_map(ast::VarDecl::cast)
+    let Some(var) =
+        ctx.sema.root.covering_node(decl_range).ancestors().find_map(ast::VarDecl::cast)
     else {
         return;
     };

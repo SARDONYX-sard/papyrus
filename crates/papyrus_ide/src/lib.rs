@@ -39,6 +39,7 @@ pub use crate::{
             highlight, references,
         },
         overrides::{Overridden, Override, OverrideKind, overridden, overrides},
+        rename::{RenameEdit, prepare_rename, rename},
         semantic_tokens::{SemanticToken, TokenModifier, TokenType, semantic_tokens},
         signature_help::{SignatureHelp, signature_help},
         symbols::{

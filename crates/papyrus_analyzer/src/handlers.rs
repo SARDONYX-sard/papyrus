@@ -638,6 +638,84 @@ impl Server {
             .collect();
         Some(actions)
     }
+    /// `textDocument/prepareRename`: the range of the name, or why it cannot
+    /// be renamed.
+    pub(crate) fn prepare_rename(
+        &mut self,
+        params: TextDocumentPositionParams,
+    ) -> Result<Option<lsp_types::PrepareRenameResponse>, String> {
+        let Some((file, lines, offset)) = self.position(&params) else { return Ok(None) };
+        let (range, placeholder) = papyrus_ide::prepare_rename(&self.ws, file, offset)?;
+        Ok(Some(lsp_types::PrepareRenameResponse::RangeWithPlaceholder {
+            range: lines.range(range),
+            placeholder,
+        }))
+    }
+
+    /// `textDocument/rename`.
+    pub(crate) fn rename(
+        &mut self,
+        params: lsp_types::RenameParams,
+    ) -> Result<Option<lsp_types::WorkspaceEdit>, String> {
+        use lsp_types::{
+            DocumentChangeOperation, DocumentChanges, OneOf,
+            OptionalVersionedTextDocumentIdentifier, RenameFile, ResourceOp, ResourceOperationKind,
+            TextDocumentEdit,
+        };
+
+        let Some((file, _, offset)) = self.position(&params.text_document_position) else {
+            return Ok(None);
+        };
+        let edit = papyrus_ide::rename(&self.ws, file, offset, &params.new_name)?;
+        let mut cache = FxHashMap::default();
+        // Edits grouped by document, in order.
+        let mut by_uri: Vec<(lsp_types::Uri, Vec<TextEdit>)> = Vec::new();
+        for (nav, range) in edit.ranges {
+            let Some(location) = self.nav_location(nav, range, &mut cache) else { continue };
+            let edit = TextEdit { range: location.range, new_text: params.new_name.clone() };
+            match by_uri.iter_mut().find(|(u, _)| *u == location.uri) {
+                Some((_, edits)) => edits.push(edit),
+                None => by_uri.push((location.uri, vec![edit])),
+            }
+        }
+        let can_rename_files = self
+            .caps
+            .workspace
+            .as_ref()
+            .and_then(|w| w.workspace_edit.as_ref())
+            .and_then(|e| e.resource_operations.as_ref())
+            .is_some_and(|ops| ops.contains(&ResourceOperationKind::Rename));
+        if edit.file_renames.is_empty() || !can_rename_files {
+            #[allow(clippy::mutable_key_type)]
+            let changes = by_uri.into_iter().collect();
+            return Ok(Some(lsp_types::WorkspaceEdit {
+                changes: Some(changes),
+                ..Default::default()
+            }));
+        }
+        // Text edits first, then the file renames.
+        let mut ops: Vec<DocumentChangeOperation> = by_uri
+            .into_iter()
+            .map(|(uri, edits)| {
+                DocumentChangeOperation::Edit(TextDocumentEdit {
+                    text_document: OptionalVersionedTextDocumentIdentifier { uri, version: None },
+                    edits: edits.into_iter().map(OneOf::Left).collect(),
+                })
+            })
+            .collect();
+        for (f, new_path) in edit.file_renames {
+            ops.push(DocumentChangeOperation::Op(ResourceOp::Rename(RenameFile {
+                old_uri: crate::conv::path_to_uri(&self.ws.file(f).path),
+                new_uri: crate::conv::path_to_uri(&new_path),
+                options: None,
+                annotation_id: None,
+            })));
+        }
+        Ok(Some(lsp_types::WorkspaceEdit {
+            document_changes: Some(DocumentChanges::Operations(ops)),
+            ..Default::default()
+        }))
+    }
     pub(crate) fn syntax_tree(&mut self, params: ext::SyntaxTreeParams) -> String {
         let Ok(file) = self.file(&params.text_document.uri) else { return String::new() };
         let Some(text) = self.ws.text(file) else { return String::new() };

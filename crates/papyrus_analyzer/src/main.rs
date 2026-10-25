@@ -91,6 +91,10 @@ fn capabilities() -> ServerCapabilities {
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         definition_provider: Some(OneOf::Left(true)),
         declaration_provider: Some(lsp_types::DeclarationCapability::Simple(true)),
+        rename_provider: Some(OneOf::Right(lsp_types::RenameOptions {
+            prepare_provider: Some(true),
+            work_done_progress_options: WorkDoneProgressOptions::default(),
+        })),
         code_action_provider: Some(lsp_types::CodeActionProviderCapability::Options(
             lsp_types::CodeActionOptions {
                 code_action_kinds: Some(vec![

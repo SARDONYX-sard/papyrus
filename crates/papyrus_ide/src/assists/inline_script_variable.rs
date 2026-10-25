@@ -24,7 +24,9 @@ pub(crate) fn inline_script_variable(ctx: &AssistCtx<'_>, acc: &mut Vec<Assist>)
     let Some(parent) = tok.parent() else { return };
     let def = match parent.kind() {
         SyntaxKind::NAME => decl_def(ctx.sema, parent),
-        SyntaxKind::NAME_REF => ast::NameRef::cast(parent).and_then(|nr| ctx.sema.resolve_name_ref(nr)),
+        SyntaxKind::NAME_REF => {
+            ast::NameRef::cast(parent).and_then(|nr| ctx.sema.resolve_name_ref(nr))
+        }
         _ => None,
     };
     let Some(def @ Def::Member { file, index }) = def else { return };

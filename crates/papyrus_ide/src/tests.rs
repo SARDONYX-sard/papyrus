@@ -397,6 +397,92 @@ fn overrides_and_overridden() {
     assert_eq!(overridden[1].by.len(), 1);
 }
 
+/// Applies a rename and returns the new texts by file name.
+fn renamed(files: &[(&str, &str)], new_name: &str) -> Result<Vec<(String, String)>, String> {
+    let (ws, file, offset) = workspace(files);
+    let edit = crate::rename(&ws, file, offset, new_name)?;
+    let mut out = Vec::new();
+    for (name, _) in files {
+        let id = ws.file_id(std::path::Path::new(&format!("/ws/{name}"))).unwrap();
+        let mut text = ws.text(id).unwrap().to_string();
+        let mut ranges: Vec<_> = edit
+            .ranges
+            .iter()
+            .filter(|(f, _)| *f == NavFile::Script(id))
+            .map(|(_, r)| *r)
+            .collect();
+        ranges.sort_by_key(|r| std::cmp::Reverse(r.start()));
+        for r in ranges {
+            text.replace_range(usize::from(r.start())..usize::from(r.end()), new_name);
+        }
+        let renamed_to = edit
+            .file_renames
+            .iter()
+            .find(|(f, _)| *f == id)
+            .map(|(_, p)| p.file_name().unwrap().to_string_lossy().into_owned());
+        out.push((renamed_to.unwrap_or_else(|| (*name).to_owned()), text));
+    }
+    Ok(out)
+}
+
+#[test]
+fn rename_functions_with_their_overrides() {
+    let base =
+        "ScriptName Base\nFunction Run()\nEndFunction\nFunction Go()\n  Run()\nEndFunction\n";
+    let child = "ScriptName Child extends Base\nFunction R$0un()\n  Parent.Run()\nEndFunction\nState S\n  Function Run()\n  EndFunction\nEndState\n";
+    let out = renamed(&[("Base.psc", base), ("Child.psc", child)], "Start").unwrap();
+    assert_eq!(
+        out[0].1,
+        "ScriptName Base\nFunction Start()\nEndFunction\nFunction Go()\n  Start()\nEndFunction\n"
+    );
+    assert_eq!(
+        out[1].1,
+        "ScriptName Child extends Base\nFunction Start()\n  Parent.Start()\nEndFunction\nState S\n  Function Start()\n  EndFunction\nEndState\n"
+    );
+}
+
+#[test]
+fn rename_parameters_and_named_arguments() {
+    let lib = "ScriptName Lib\nFunction Hit(Actor actor, Int amount) Global\n  amount += 1\nEndFunction\n";
+    let user = "ScriptName User\nFunction F()\n  Lib.Hit(None, amo$0unt = 2)\nEndFunction\n";
+    let out = renamed(&[("Lib.psc", lib), ("User.psc", user)], "damage").unwrap();
+    assert_eq!(
+        out[0].1,
+        "ScriptName Lib\nFunction Hit(Actor actor, Int damage) Global\n  damage += 1\nEndFunction\n"
+    );
+    assert_eq!(
+        out[1].1,
+        "ScriptName User\nFunction F()\n  Lib.Hit(None, damage = 2)\nEndFunction\n"
+    );
+}
+
+#[test]
+fn rename_scripts_with_their_file() {
+    let base = "ScriptName B$0ase\n";
+    let child = "ScriptName Child extends Base\nBase Property Other Auto\n";
+    let out = renamed(&[("Base.psc", base), ("Child.psc", child)], "Root").unwrap();
+    assert_eq!(out[0], ("Root.psc".to_owned(), "ScriptName Root\n".to_owned()));
+    assert_eq!(out[1].1, "ScriptName Child extends Root\nRoot Property Other Auto\n");
+}
+
+#[test]
+fn rename_refusals() {
+    let form = "ScriptName Form\nEvent OnInit() Native\n";
+    let child = "ScriptName Child extends Form\nEvent OnI$0nit()\nEndEvent\n";
+    assert!(
+        renamed(&[("Form.psc", form), ("Child.psc", child)], "Start")
+            .unwrap_err()
+            .contains("sent by the game")
+    );
+    let local = "ScriptName T\nFunction F()\n  Int $0x = 1\nEndFunction\n";
+    assert!(renamed(&[("T.psc", local)], "While").unwrap_err().contains("keyword"));
+    assert!(renamed(&[("T.psc", local)], "1x").unwrap_err().contains("not a valid name"));
+    assert_eq!(
+        renamed(&[("T.psc", local)], "y").unwrap()[0].1,
+        "ScriptName T\nFunction F()\n  Int y = 1\nEndFunction\n"
+    );
+}
+
 /// Rules found by comparing with the official compiler.
 #[test]
 fn compiler_rules() {

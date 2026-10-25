@@ -188,6 +188,19 @@ impl Server {
         use lsp_types::request::*;
         match method {
             HoverRequest::METHOD => handle::<HoverRequest>(self, params, Server::hover),
+            request::PrepareRenameRequest::METHOD => {
+                let params = serde_json::from_value(params)
+                    .map_err(|e| (ErrorCode::InvalidParams, format!("invalid params: {e}")))?;
+                let result =
+                    self.prepare_rename(params).map_err(|m| (ErrorCode::RequestFailed, m))?;
+                serde_json::to_value(result).map_err(|e| (ErrorCode::InternalError, e.to_string()))
+            }
+            request::Rename::METHOD => {
+                let params = serde_json::from_value(params)
+                    .map_err(|e| (ErrorCode::InvalidParams, format!("invalid params: {e}")))?;
+                let result = self.rename(params).map_err(|m| (ErrorCode::RequestFailed, m))?;
+                serde_json::to_value(result).map_err(|e| (ErrorCode::InternalError, e.to_string()))
+            }
             request::CodeActionRequest::METHOD => {
                 handle::<request::CodeActionRequest>(self, params, Server::code_actions)
             }
