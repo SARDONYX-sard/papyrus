@@ -6,96 +6,113 @@ Tooling for the Papyrus scripting language of Skyrim, in Rust.
 
 ## Features
 
-- **Language server** (VS Code extension included)
-  - diagnostics like the official compiler, with related places (`defined here`)
-  - hover, go to definition / declaration (overridden function), references, rename
-  - completion, signature help, snippets, inlay hints (parameters, `overrides Quest`)
-  - code actions: quick fixes, De Morgan, inline variable
-  - semantic tokens, folding, symbols, formatting
-- **Compiler**: `.psc` → `.pex`, same code as `PapyrusCompiler.exe`, same arguments
-- **Decompiler**: `.pex` → `.psc` that compiles back to the same code
-- **Linter**: clippy-like levels and groups, `--fix`
-- **Formatter**, **disassembler**
+| Tool                             | What                                                                    |
+| -------------------------------- | ----------------------------------------------------------------------- |
+| **Language server**              | VS Code extension included, see below                                   |
+| **Compiler**                     | `.psc` → `.pex` — same code and same arguments as `PapyrusCompiler.exe` |
+| **Decompiler**                   | `.pex` → `.psc` — compiles back to the same code                        |
+| **Linter**                       | clippy-like levels and groups, `--fix`                                  |
+| **Formatter** · **Disassembler** | `fmt` · `disasm`                                                        |
+
+Language server:
+
+|              |                                                                                      |
+| ------------ | ------------------------------------------------------------------------------------ |
+| Diagnostics  | like the official compiler, with related places (`defined here`)                     |
+| Navigation   | hover · definition · declaration (overridden function) · references · rename         |
+| Editing      | completion · signature help · snippets · inlay hints (parameters, `overrides Quest`) |
+| Code actions | quick fixes · De Morgan · inline variable                                            |
+| Display      | semantic tokens · folding · symbols · formatting                                     |
 
 ## Quick start
 
 ```sh
-papyrus_analyzer                       # language server (stdio)
-papyrus_compiler MyQuest -i=Source -o=Scripts -f=TESV_Papyrus_Flags.flg
-papyrus_analyzer compile               # the project of papyrus.toml
-papyrus_analyzer decompile -o out Scripts/    # whole folders, structure kept
+papyrus_analyzer                                  # language server (stdio)
+papyrus_analyzer compile                          # the project of papyrus.toml
+papyrus_analyzer decompile -o out Scripts/        # whole folders, structure kept
 papyrus_analyzer lint [--fix] [-D warnings] [PATH]...
 papyrus_analyzer fmt [--check] [PATH]...
 papyrus_analyzer disasm Foo.pex
+papyrus_compiler MyQuest -i=Source -o=Scripts -f=TESV_Papyrus_Flags.flg   # PapyrusCompiler.exe compatible
 ```
 
-VS Code: the **Papyrus** view of the activity bar compiles or decompiles in one click.
+VS Code: the **Papyrus** view of the activity bar compiles | decompiles in one click.
 
 ```mermaid
 flowchart LR
-    mode{{"COMPILE MODE / DECOMPILE MODE"}} --> tree["scripts tree"]
-    tree -- "click a file" --> run["compile / decompile it"]
+    mode{{"COMPILE MODE | DECOMPILE MODE"}} --> tree["scripts tree"]
+    tree -- "click a file" --> run["compile | decompile it"]
     tree -- "▶ on a folder" --> all["everything below"]
 ```
 
-## Architecture
-
-```mermaid
-flowchart LR
-    psc[".psc"] --> lexer --> parser["parser (lossless CST)"]
-    parser --> ide["papyrus_ide<br/>index · sema · HIR · typeck"]
-    ide --> lsp["papyrus_analyzer<br/>(LSP, CLI)"]
-    ide --> lint[papyrus_lint]
-    ide --> compiler["papyrus_compiler<br/>codegen → IR → opt"]
-    parser --> fmt[papyrus_fmt]
-    compiler --> pex[".pex"]
-    pex --> decompiler[papyrus_decompiler] --> psc2[".psc"]
-    pex --> disasm["papyrus_pex (read · write · disasm)"]
-```
-
-| Crate | Role |
-| --- | --- |
-| `papyrus_intern` | case-insensitive string interner |
-| `papyrus_lexer` / `papyrus_parser` | zero-copy lexer, resilient LL parser |
-| `papyrus_ide` | workspace, name resolution, types, IDE features, assists |
-| `papyrus_lint` | lints and their fixes |
-| `papyrus_fmt` | formatter |
-| `papyrus_compiler` | compiler and its CLI |
-| `papyrus_pex` | `.pex` model, reader, writer, disassembler, `pexdiff` |
-| `papyrus_decompiler` | decompiler |
-| `papyrus_project` | `papyrus.toml` |
-| `papyrus_analyzer` | language server and the `papyrus_analyzer` CLI |
-
 ## `papyrus.toml`
 
-Optional: without it, the workspace and the installed game scripts are used ("limited" mode).
+Optional. The two modes:
+
+|             | with `papyrus.toml`               | without ("limited")                                  |
+| ----------- | --------------------------------- | ---------------------------------------------------- |
+| Sources     | `[build] sources`                 | the workspace folders                                |
+| Imports     | `[build] imports`                 | the installed game scripts (`SKYRIM_DIR` → registry) |
+| Compiler    | `[compiler] path` \| built-in     | built-in                                             |
+| Output      | `[build] output` (+ `/decompile`) | `build/papyrus/{compile,decompile}`                  |
+| Diagnostics | every source script               | open scripts only                                    |
 
 ```toml
-[compiler]                      # no path: the built-in compiler
-path = "${SKYRIM_DIR}/Papyrus Compiler/PapyrusCompiler.exe"
+[package]
+name = "MyMod"
+version = "0.1.0"
 
-[build]
-sources = ["."]
-output = "output"               # decompiled scripts go to output/decompile
-imports = ["${SKYRIM_DIR}/Data/Scripts/Source"]
-flags = "${SKYRIM_DIR}/Data/Scripts/Source/TESV_Papyrus_Flags.flg"
+[var]                           # NAME = "value", used as ${NAME}
+SKYRIM_DIR = "${game:SkyrimSE}"
 
-[lints]
-complexity = "allow"
-unused-local = "deny"
+[compiler]
+path = "${SKYRIM_DIR}/Papyrus Compiler/PapyrusCompiler.exe"   # unset → built-in compiler
+args = []                       # extra arguments, passed as is
 
-[format]
-indent-style = "space"
-indent-size = 4
+[build]                         # relative paths → relative to this file
+sources = ["."]                 # script directories, searched recursively
+output = "output"               # .pex files (decompiled: output/decompile)
+imports = ["${SKYRIM_DIR}/Data/Scripts/Source"]   # lookup order, after sources
+flags = "${SKYRIM_DIR}/Data/Scripts/Source/TESV_Papyrus_Flags.flg"   # required by PapyrusCompiler.exe; unset → built-in Skyrim flags
+optimize = true                 # true | false
+release = false                 # true | false — strip DebugOnly calls
+final = false                   # true | false — strip BetaOnly calls
+quiet = true                    # true | false — errors only
+
+[dependencies]                  # other projects whose sources this one sees
+MCMHelper = { path = "../MCMHelper" }
+
+[lints]                         # lint name | group | "all" = level
+all = "warn"                    # "allow" | "warn" | "deny"
+complexity = "allow"            # group: correctness | suspicious | complexity | style | pedantic
+unused-local = { level = "deny" }   # "level" | { level = "level" }
+
+[format]                        # unset → .editorconfig → editor settings
+indent-style = "space"          # "space" | "tab"
+indent-size = 4                 # 1..=16
+keyword-case = "canonical"      # "canonical" | "preserve" | "PascalCase" | "camelCase" | "lowercase" | "UPPERCASE"
+max-blank-lines = 1
+newline = "auto"                # "auto" | "lf" | "crlf"
+final-newline = true            # true | false
+
+[format.keywords]               # spelling of single keywords; case only, wins over keyword-case
+as = "As"
 ```
 
-- Machine paths are `${NAME}` variables, taken from (first wins):
-  1. the `papyrus.var` setting / `--var NAME=VALUE`
-  2. `[var]` of `papyrus.local.toml` (not committed)
-  3. `[var]` of `papyrus.toml`
-- Built-ins: `${env:NAME}`, `${workspaceFolder}`, `${game:SkyrimSE}` (registry, Windows).
-- Without manifest, outputs go to `build/papyrus/{compile,decompile}`.
-- `Papyrus: Create papyrus.toml` writes a commented template.
+`Papyrus: Create papyrus.toml` writes a commented template.
+
+### Variables
+
+Machine paths are `${NAME}` variables. Lookup order, first wins:
+
+`papyrus.var` setting | `--var NAME=VALUE` > `[var]` of `papyrus.local.toml` (not committed) > `[var]` of `papyrus.toml`
+
+| Built-in             | Value                                                                                                    |
+| -------------------- | -------------------------------------------------------------------------------------------------------- |
+| `${env:NAME}`        | environment variable                                                                                     |
+| `${workspaceFolder}` | the workspace folder                                                                                     |
+| `${game:SkyrimSE}`   | game installation from the registry (Windows) — `SkyrimLE` \| `SkyrimVR` \| `Enderal` \| `EnderalSE` too |
+| `~`                  | home directory (leading only)                                                                            |
 
 ### Workspaces
 
@@ -115,32 +132,49 @@ my-mods/
 ```toml
 # my-mods/papyrus.toml
 [workspace]
-members = ["*"]                 # subdirectories with a papyrus.toml; or explicit paths
-exclude = ["Old"]
+members = ["*"]                 # "dir" | "dir/*" (subdirectories with a papyrus.toml); ${NAME} allowed
+exclude = ["Old"]               # same as members
 
-[workspace.var]
+[workspace.var]                 # variables of every member
 SKYRIM_DIR = "C:/Games/Skyrim Special Edition"
 
-[workspace.build]               # defaults of every member
-imports = ["${SKYRIM_DIR}/Data/Scripts/Source"]
+[workspace.compiler]            # path | args — defaults of every member
+[workspace.build]               # imports | flags | optimize | release | final | quiet
+imports = ["${SKYRIM_DIR}/Data/Scripts/Source"]   # appended after the member's
 flags = "${SKYRIM_DIR}/Data/Scripts/Source/TESV_Papyrus_Flags.flg"
 
-[workspace.lints]
+[workspace.lints]               # applied before the member's [lints]
 style = "allow"
+
+[workspace.format]              # overridden by the member's [format]
 ```
 
-- Inherited: `[workspace.var]`, `compiler`, `build`, `lints`, `format`; the member's own values win (imports are appended).
-- A member sees only its sources, its `[dependencies]` (transitively) and its imports, like the compiler:
-  - `MCM` in Requiem → `MCMHelper/…/MCM.psc`.
-  - A sibling member that is not a dependency is invisible: no false `name-is-type`.
-- Opening a member folder loads the whole workspace.
-- Each member compiles into its own `output`; lints and format follow the member.
+| Workspace table                                               | Member                                       |
+| ------------------------------------------------------------- | -------------------------------------------- |
+| `[workspace.var]` · `compiler` · `build` · `lints` · `format` | inherited; own values win (imports appended) |
+| `members` · `exclude`                                         | may use variables                            |
+
+- A member sees its sources + `[dependencies]` (transitively) + imports, nothing else — like the compiler:
+  - `MCM` in Requiem → `MCMHelper/…/MCM.psc` ✓
+  - sibling member, not a dependency → invisible (no false `name-is-type`) ✗
+- Opening a member folder → loads the whole workspace.
+- Each member → its own `output`, lints and format.
 
 ## Lints
 
-- Levels: `allow` · `warn` · `deny` (error).
-- Groups: `correctness` (deny) · `suspicious` · `complexity` · `style` (warn) · `pedantic` (allow).
-- Precedence: lint name > group > `all`; command line flags win over `papyrus.toml`.
+| Level   | Meaning |
+| ------- | ------- |
+| `allow` | off     |
+| `warn`  | warning |
+| `deny`  | error   |
+
+| Group                                 | Default |
+| ------------------------------------- | ------- |
+| `correctness`                         | `deny`  |
+| `suspicious` · `complexity` · `style` | `warn`  |
+| `pedantic`                            | `allow` |
+
+Precedence: lint name > group > `all` · command line > `papyrus.toml`
 
 ```sh
 papyrus_analyzer lint --list
@@ -149,34 +183,7 @@ papyrus_analyzer lint -D warnings -A style --fix Scripts/Source
 
 ## Contributing
 
-One file per feature, plus one line in a list:
-
-| Add | Where |
-| --- | --- |
-| lint (+ fix) | `crates/papyrus_lint/src/lints/` → `LINTS` |
-| assist | `crates/papyrus_ide/src/assists/` → `HANDLERS` |
-| snippet | `crates/papyrus_ide/src/features/snippets/*.psc` → `SNIPPETS` |
-| keyword docs | `crates/papyrus_ide/src/features/keyword_docs/*.md` |
-
-Tests (`cargo test`):
-
-- every script of `tests/fixtures/papyrus-compiler-test-sources` parses without diagnostics;
-- the compiler matches the official one (`pexdiff --loose`), the decompiler round-trips.
-
-## Packaging
-
-- `node dist.cjs` — copies the server next to the extension.
-- `node dist.cjs --vsix --target <triple>` — builds `papyrus-analyzer-<platform>.vsix` (used by CI).
-
-## Todo
-
-- [x] Lexer, parser, formatter
-- [x] Name resolution, type checker
-- [x] Language server
-- [x] Linter
-- [x] Compiler, decompiler
-- [ ] Inlining optimization
-- [ ] Papyrus virtual machine (unit tests)
+See [docs/developer.md](docs/developer.md): architecture, adding lints and assists, tests, building the extension.
 
 ## Thanks
 

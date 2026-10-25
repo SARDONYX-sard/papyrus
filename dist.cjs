@@ -7,7 +7,7 @@
 //              (default: the host build in target/<profile>/)
 //   --profile  the Cargo profile (default: release)
 //   --binary   the server binary to copy, instead of looking in target/
-//   --vsix     also compile the extension and package papyrus-analyzer-<platform>.vsix
+//   --vsix     also compile the extension and package build/papyrus-analyzer-<platform>.vsix
 //
 // The same script is used locally (`npm run release`) and by the CI workflows.
 const fs = require("fs");
@@ -58,7 +58,8 @@ if (vsix) {
   run("npm run compile");
   const platform = target ? PLATFORMS[target] : undefined;
   if (target && !platform) throw new Error(`no VS Code platform for target ${target}`);
-  const out = `papyrus-analyzer${platform ? `-${platform}` : ""}.vsix`;
+  fs.mkdirSync(path.join(__dirname, "build"), { recursive: true });
+  const out = `build/papyrus-analyzer${platform ? `-${platform}` : ""}.vsix`;
   // Vite bundles the dependencies into dist/extension.js.
   run(`npx --yes @vscode/vsce package --no-dependencies ${platform ? `--target ${platform}` : ""} --out ${out}`);
   console.log(`packaged ${out}`);

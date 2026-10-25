@@ -1,6 +1,4 @@
-name: Test(Cargo)
-permissions:
-  contents: read
+name: CI
 
 on:
   push:
@@ -8,6 +6,9 @@ on:
   pull_request:
     branches: ["*"]
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 # Only the latest push job is executed when successive pushes are performed.
 concurrency:
@@ -18,7 +19,15 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  test:
+  # Formatting does not depend on the platform.
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: cargo fmt --all -- --check
+
+  # Lint and test share the build of each platform.
+  check:
     strategy:
       fail-fast: false
       matrix:
@@ -38,8 +47,12 @@ jobs:
         with:
           prefix-key: cargo-debug-${{ matrix.job.target }}
 
+      - name: Lint
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
       # https://nexte.st/docs/installation/pre-built-binaries/#using-nextest-in-github-actions
-      - name: Install nextest(Parallel Test Execution CLI)
+      - name: Install nextest
         uses: taiki-e/install-action@nextest
+
       - name: Test
-        run: cargo nextest run --workspace --target ${{ matrix.job.target }} --no-fail-fast
+        run: cargo nextest run --workspace --no-fail-fast
