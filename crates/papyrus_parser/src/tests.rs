@@ -408,7 +408,8 @@ fn collect_psc(dir: &Path, out: &mut Vec<PathBuf>) {
 /// must parse without errors, and the tree must be lossless.
 #[test]
 fn corpus_parses_without_errors() {
-    let root = workspace_root().join("tests");
+    // Not `tests/playground`, which may hold scripts being written.
+    let root = workspace_root().join("tests/corpus");
     let mut files = Vec::new();
     collect_psc(&root, &mut files);
     if files.len() < 100 {

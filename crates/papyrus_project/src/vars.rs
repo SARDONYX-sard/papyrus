@@ -101,6 +101,14 @@ impl Variables {
         }
     }
 
+    /// The variables of a command run in `cwd`, outside of the editor:
+    /// `${workspaceFolder}` is the root of the git repository containing it,
+    /// else `cwd` itself.
+    pub fn for_command_line(cwd: &Path) -> Variables {
+        let root = cwd.ancestors().find(|d| d.join(".git").exists()).unwrap_or(cwd);
+        Variables::default().with_workspace_folders(vec![root.to_path_buf()])
+    }
+
     /// Sets the workspace folders.
     pub fn with_workspace_folders(mut self, folders: Vec<PathBuf>) -> Variables {
         self.workspace_folders = folders;
@@ -278,6 +286,21 @@ mod tests {
             "OTHER" => Some("/env/other".to_owned()),
             _ => None,
         }
+    }
+
+    #[test]
+    fn command_line_workspace_folder_is_the_repository() {
+        let dir = std::env::temp_dir().join(format!("papyrus-vars-test-{}", std::process::id()));
+        let sub = dir.join("repo/mods/a");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::create_dir_all(dir.join("repo/.git")).unwrap();
+        let folder = |cwd: &Path| Variables::for_command_line(cwd).workspace_folders[0].clone();
+        assert_eq!(folder(&sub), dir.join("repo"));
+        // Outside of a repository: the current directory.
+        let outside = dir.join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        assert!(folder(&outside).starts_with(&dir));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn vars() -> Variables {

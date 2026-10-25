@@ -25,18 +25,48 @@ pub fn hover(ws: &Workspace, file: FileId, offset: TextSize) -> Option<HoverResu
 }
 
 /// The documentation of the keyword at `offset`, with an example. For `Self`
-/// and `Parent`, the script they refer to follows.
+/// the script it refers to follows; for `Parent`, it comes first, with the
+/// function of the parent script it calls.
 fn keyword_hover(sema: &Sema<'_>, offset: TextSize) -> Option<HoverResult> {
     let tok = sema.root.token_at_offset(offset).max_by_key(|t| t.kind().is_keyword())?;
     let doc = keyword_doc(tok.kind())?;
     let mut markdown = doc.markdown();
-    if matches!(tok.kind(), SyntaxKind::SELF_KW | SyntaxKind::PARENT_KW)
-        && let Some(target) = name_hover(sema, offset)
-    {
-        markdown.push_str("\n\n---\n\nRefers to:\n\n");
-        markdown.push_str(&target.markdown);
+    match tok.kind() {
+        SyntaxKind::PARENT_KW => {
+            if let Some(target) = name_hover(sema, offset) {
+                let mut head = format!("`Parent` is the parent script:\n\n{}", target.markdown);
+                if let Some(called) = parent_member(sema, tok) {
+                    head.push_str(&format!("\n\nCalls:\n\n{called}"));
+                }
+                markdown = format!("{head}\n\n---\n\n{markdown}");
+            }
+        }
+        SyntaxKind::SELF_KW => {
+            if let Some(target) = name_hover(sema, offset) {
+                markdown.push_str("\n\n---\n\nRefers to:\n\n");
+                markdown.push_str(&target.markdown);
+            }
+        }
+        _ => {}
     }
     Some(HoverResult { range: tok.text_range(), markdown })
+}
+
+/// For `Parent.Name(...)`, the declaration of `Name` in the parent scripts.
+fn parent_member(sema: &Sema<'_>, parent: papyrus_parser::SyntaxToken<'_>) -> Option<String> {
+    use papyrus_parser::ast::{self, AstNode};
+    let field = parent.parent()?.ancestors().find_map(ast::FieldExpr::cast)?;
+    let receiver = field.receiver()?;
+    if !receiver.syntax().text_range().contains_range(parent.text_range()) {
+        return None;
+    }
+    let def = sema.resolve_name_ref(field.name_ref()?)?;
+    let info = def_info(sema, def);
+    let mut out = format!("```papyrus\n{}\n```", info.signature);
+    if let Some(container) = info.container {
+        out.push_str(&format!("\n*{container}*"));
+    }
+    Some(out)
 }
 
 fn name_hover(sema: &Sema<'_>, offset: TextSize) -> Option<HoverResult> {

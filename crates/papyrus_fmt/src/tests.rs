@@ -11,11 +11,10 @@ fn check(input: &str, expect: Expect) {
 }
 
 #[test]
-fn simple_fixture() {
-    let root =
-        Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(2).unwrap().join("tests/simple");
-    let input = std::fs::read_to_string(root.join("test.psc")).unwrap();
-    let expected = std::fs::read_to_string(root.join("expected_formatted.psc")).unwrap();
+fn fmt_fixture() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(2).unwrap().join("tests/fmt");
+    let input = std::fs::read_to_string(root.join("input.psc")).unwrap();
+    let expected = std::fs::read_to_string(root.join("expected.psc")).unwrap();
     // The fixtures only differ by the script name.
     let out = format(&input, &FormatOptions::default()).unwrap();
     assert_eq!(out.replace("ScriptName Test ", "ScriptName expected_formatted "), expected);
@@ -255,7 +254,7 @@ fn corpus_formats_safely_and_idempotently() {
         .ancestors()
         .nth(2)
         .unwrap()
-        .join("tests/fixtures/papyrus-compiler-test-sources");
+        .join("tests/corpus");
     let mut files = Vec::new();
     collect_psc(&root, &mut files);
     if files.len() < 100 {

@@ -22,7 +22,7 @@ fn default_output() -> PathBuf {
     let manifest =
         cwd.ancestors().map(|d| d.join(papyrus_project::MANIFEST_NAME)).find(|p| p.is_file());
     let project = manifest.and_then(|manifest| {
-        papyrus_project::load(&manifest, &papyrus_project::Variables::new(Default::default())).ok()
+        papyrus_project::load(&manifest, &papyrus_project::Variables::for_command_line(&cwd)).ok()
     });
     match project {
         Some(p) => p.output.join("decompile"),

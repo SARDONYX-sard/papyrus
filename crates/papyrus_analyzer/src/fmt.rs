@@ -149,7 +149,7 @@ pub(crate) fn names(ws: &Workspace, file: FileId) -> papyrus_fmt::Names {
 /// `papyrus.toml` of the current directory, else the game scripts.
 pub(crate) fn workspace(scripts: &[PathBuf]) -> Workspace {
     let cwd = std::env::current_dir().unwrap_or_default();
-    let vars = papyrus_project::Variables::new(Default::default());
+    let vars = papyrus_project::Variables::for_command_line(&cwd);
     let manifest =
         cwd.ancestors().map(|d| d.join(papyrus_project::MANIFEST_NAME)).find(|p| p.is_file());
     let (imports, flags) = match &manifest {

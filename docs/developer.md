@@ -45,8 +45,17 @@ One file per feature, plus one line in a list:
 
 Tests (`cargo test`):
 
-- every script of `tests/fixtures/papyrus-compiler-test-sources` parses without diagnostics;
+- every script of `tests/corpus` parses without diagnostics;
 - the compiler matches the official one (`pexdiff --loose`), the decompiler round-trips.
+
+`tests/`:
+
+| Path | What | Who changes it |
+| --- | --- | --- |
+| `tests/corpus` | scripts compiled by the official compiler (git submodule) | read-only |
+| `tests/fmt` | `input.psc` → `expected.psc`, the formatter fixture | the tests |
+| `tests/playground` | a project (`papyrus.toml`, `src/`) to try the extension and the CLI on; samples of attributes, `Parent`, compiler features | anyone, any time — no test reads it |
+| `tests/playground/src/Scratch.psc` | an empty script to play with | free to edit |
 
 ## Building the extension
 

@@ -68,6 +68,19 @@ fn attributes_keep_the_grammar_colors() {
 }
 
 #[test]
+fn hover_parent_tells_the_script_and_function() {
+    let src = "ScriptName T extends Actor\nEvent OnDeath(Actor akKiller)\n    Par$0ent.OnDeath(akKiller)\nEndEvent\n";
+    let (ws, file, offset) = workspace(&[("Form.psc", FORM), ("Actor.psc", ACTOR), ("T.psc", src)]);
+    let md = hover(&ws, file, offset).unwrap().markdown;
+    assert!(md.starts_with("`Parent` is the parent script:"), "{md}");
+    assert!(
+        md.contains("ScriptName Actor")
+            && md.contains("Calls:\n\n```papyrus\nEvent OnDeath(Actor akKiller)"),
+        "{md}"
+    );
+}
+
+#[test]
 fn name_spellings_follow_definitions() {
     let (ws, file, _) = workspace(&[
         ("Form.psc", FORM),
@@ -851,7 +864,7 @@ fn corpus_has_no_semantic_diagnostics() {
         .ancestors()
         .nth(2)
         .unwrap()
-        .join("tests/fixtures/papyrus-compiler-test-sources");
+        .join("tests/corpus");
     let deps = root.join("psc_deps");
     let mut dep_files = Vec::new();
     collect_psc(&deps, &mut dep_files);

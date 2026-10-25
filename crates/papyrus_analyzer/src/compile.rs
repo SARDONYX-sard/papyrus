@@ -22,7 +22,7 @@ pub(crate) fn run(args: &[String]) -> i32 {
         );
         return 2;
     };
-    let vars = papyrus_project::Variables::new(Default::default());
+    let vars = papyrus_project::Variables::for_command_line(&cwd);
     let project = match papyrus_project::load(&manifest, &vars) {
         Ok(p) => p,
         Err(errors) => {
