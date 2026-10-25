@@ -165,8 +165,8 @@ Tests (`cargo test`):
 
 ## Packaging
 
-- `node dist.js` — copies the server next to the extension.
-- `node dist.js --vsix --target <triple>` — builds `papyrus-analyzer-<platform>.vsix` (used by CI).
+- `node dist.cjs` — copies the server next to the extension.
+- `node dist.cjs --vsix --target <triple>` — builds `papyrus-analyzer-<platform>.vsix` (used by CI).
 
 ## Todo
 

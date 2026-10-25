@@ -64,9 +64,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Same packaging as the release, see dist.js.
+      # Same packaging as the release, see dist.cjs.
       - name: Package VSIX
-        run: node dist.js --vsix --target ${{ matrix.job.target }} --binary ./build/${{ env.APP_NAME }}${{ runner.os == 'Windows' && '.exe' || '' }}
+        run: node dist.cjs --vsix --target ${{ matrix.job.target }} --binary ./build/${{ env.APP_NAME }}${{ runner.os == 'Windows' && '.exe' || '' }}
 
       - name: Upload VSIX
         uses: actions/upload-artifact@v4.6.2

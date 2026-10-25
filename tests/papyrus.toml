@@ -1,3 +1,4 @@
+"$schema" = "../schemas/papyrus.schema.json"
 [package]
 name = "MyMod"
 version = "0.1.0"
@@ -62,7 +63,7 @@ final-newline = true
 # (imports are appended). Each member sees only its sources, its
 # dependencies and its imports.
 # [workspace]
-# members = ["${workspaceFolder}/tests/fixtures/papyrus-compiler-test-sources/*"] # subdirectories with a papyrus.toml, or paths
+# members = [] # subdirectories with a papyrus.toml, or paths
 # exclude = []
 # [workspace.var]
 # [workspace.build]             # imports, flags, optimize, release, final, quiet

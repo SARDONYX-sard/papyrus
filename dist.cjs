@@ -1,7 +1,7 @@
 // Copies the language server next to the compiled extension, and optionally
 // packages a platform specific VSIX.
 //
-// usage: node dist.js [--vsix] [--target <rust triple>] [--profile <name>] [--binary <path>]
+// usage: node dist.cjs [--vsix] [--target <rust triple>] [--profile <name>] [--binary <path>]
 //
 //   --target   the Rust target the server was built for, e.g. x86_64-pc-windows-msvc
 //              (default: the host build in target/<profile>/)

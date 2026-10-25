@@ -222,8 +222,10 @@ impl Server {
     /// editor when open, and publishes their problems.
     pub(crate) fn load_project(&mut self) {
         // A member of a workspace loads the whole workspace.
-        let found =
-            self.manifest_path().map(|m| papyrus_project::find_workspace_root(&m).unwrap_or(m));
+        let vars = self.vars();
+        let found = self
+            .manifest_path()
+            .map(|m| papyrus_project::find_workspace_root(&m, &vars).unwrap_or(m));
         if found != self.manifest {
             self.manifest = found.clone();
             self.refresh_code_lenses();
@@ -363,7 +365,8 @@ impl Server {
             // Validate live, with the settings of the workspace; the projects
             // themselves are reloaded on save.
             let manifest = path.with_file_name(papyrus_project::MANIFEST_NAME);
-            let root = papyrus_project::find_workspace_root(&manifest).unwrap_or(manifest);
+            let root =
+                papyrus_project::find_workspace_root(&manifest, &self.vars()).unwrap_or(manifest);
             let result =
                 papyrus_project::load_workspace_with(&root, &self.vars(), &|p| self.doc_or_disk(p));
             self.publish_manifest_problems(&root, result.as_ref().map_err(Clone::clone));
@@ -528,8 +531,8 @@ impl Server {
         }
     }
 
-    /// The output directories of each project (each workspace folder without
-    /// manifest), for `papyrus/status`.
+    /// The output directories and compiler of each project (each workspace
+    /// folder without manifest), for `papyrus/status`.
     pub(crate) fn build_dirs(&self) -> Vec<BuildDirs> {
         if !self.members.is_empty() {
             return self
@@ -539,6 +542,7 @@ impl Server {
                     root: p.root.display().to_string(),
                     compile: p.output.display().to_string(),
                     decompile: p.output.join("decompile").display().to_string(),
+                    compiler: p.compiler.as_ref().map(|c| c.display().to_string()),
                 })
                 .collect();
         }
@@ -550,6 +554,7 @@ impl Server {
                     root: root.display().to_string(),
                     compile: build.join("compile").display().to_string(),
                     decompile: build.join("decompile").display().to_string(),
+                    compiler: None,
                 }
             })
             .collect()

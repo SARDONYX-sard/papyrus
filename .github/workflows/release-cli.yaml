@@ -59,7 +59,7 @@ jobs:
       # The server binary was moved to ./build by the build action. The
       # extension needs its production dependencies, so they are packaged.
       - name: Package VSIX
-        run: node dist.js --vsix --target ${{ matrix.job.target }} --binary ./build/${{ env.APP_NAME }}${{ runner.os == 'Windows' && '.exe' || '' }}
+        run: node dist.cjs --vsix --target ${{ matrix.job.target }} --binary ./build/${{ env.APP_NAME }}${{ runner.os == 'Windows' && '.exe' || '' }}
 
       - name: Attach VSIX to GitHub Release
         uses: ncipollo/release-action@v1.21.0

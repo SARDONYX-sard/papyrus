@@ -23,6 +23,10 @@
 //! Their sources (and theirs, transitively) are imported after the member's
 //! own sources, before its imports: like for the compiler, a member sees its
 //! sources, its dependencies and its imports, nothing else.
+//!
+//! `members`, `exclude` and every path of the workspace may use the
+//! variables of the root: `[var]`, `[workspace.var]` and its
+//! `papyrus.local.toml`.
 
 use std::{
     collections::BTreeMap,
@@ -43,7 +47,7 @@ pub(crate) struct RawWorkspace {
     #[serde(default)]
     members: Vec<Spanned<String>>,
     #[serde(default)]
-    exclude: Vec<String>,
+    exclude: Vec<Spanned<String>>,
     #[serde(default)]
     var: BTreeMap<String, String>,
     #[serde(default)]
@@ -149,7 +153,8 @@ pub fn load_workspace_with(
         })
     };
     let read_local = |path: &Path| read_file(&path.with_file_name(crate::LOCAL_MANIFEST_NAME));
-    let root = find_workspace_root(manifest_path).unwrap_or_else(|| manifest_path.to_path_buf());
+    let root =
+        find_workspace_root(manifest_path, vars).unwrap_or_else(|| manifest_path.to_path_buf());
     let text = read(&root)?;
     let raw: crate::RawManifest = toml::from_str(&text)
         .map_err(|e| vec![ManifestError::new(e.message().to_owned(), e.span()).in_file(&root)])?;
@@ -173,15 +178,24 @@ pub fn load_workspace_with(
             Some(&inherited),
         )?);
     }
-    let excluded: Vec<PathBuf> = ws.exclude.iter().map(|e| resolve_path(&dir, e)).collect();
+    let ws_vars = inherited.vars(vars);
     let mut errors = Vec::new();
-    for pattern in &ws.members {
+    let mut expand = |value: &Spanned<String>| {
+        let span = Some(value.span()).filter(|r| !r.is_empty());
+        ws_vars
+            .expand(value.get_ref(), &mut BTreeMap::new())
+            .map_err(|message| errors.push(ManifestError::new(message, span).in_file(&root)))
+            .ok()
+    };
+    let excluded: Vec<PathBuf> =
+        ws.exclude.iter().filter_map(&mut expand).map(|e| resolve_path(&dir, &e)).collect();
+    let patterns: Vec<_> = ws.members.iter().filter_map(|p| Some((p, expand(p)?))).collect();
+    for (pattern, expanded) in patterns {
         let span = Some(pattern.span()).filter(|r| !r.is_empty());
-        let dirs = expand_member(&dir, pattern.get_ref());
+        let dirs = expand_member(&dir, &expanded);
         if dirs.is_empty() {
             errors.push(
-                ManifestError::new(format!("no member matches `{}`", pattern.get_ref()), span)
-                    .in_file(&root),
+                ManifestError::new(format!("no member matches `{expanded}`"), span).in_file(&root),
             );
         }
         for member in dirs.into_iter().filter(|d| !excluded.contains(d)) {
@@ -236,6 +250,17 @@ fn inherited(
     vars.manifest = var.clone();
     vars.local = local.clone();
     let mut errors = Vec::new();
+    let args = ws
+        .compiler
+        .args
+        .iter()
+        .map(|a| {
+            vars.expand(a, &mut BTreeMap::new()).unwrap_or_else(|message| {
+                errors.push(ManifestError::new(message, None));
+                String::new()
+            })
+        })
+        .collect();
     let mut path = |value: &Spanned<String>| {
         let span = Some(value.span()).filter(|r| !r.is_empty());
         match vars.expand(value.get_ref(), &mut BTreeMap::new()) {
@@ -260,7 +285,7 @@ fn inherited(
         var,
         local,
         compiler,
-        args: ws.compiler.args.clone(),
+        args,
         imports,
         flags,
         optimize: ws.build.optimize,
@@ -272,8 +297,19 @@ fn inherited(
     })
 }
 
-/// The member directories of a pattern: a path, or a path ending with `*`
-/// for every subdirectory with a manifest.
+impl Inherited {
+    /// The variables of the workspace settings: `vars` with `[var]` and
+    /// `[workspace.var]` of the root and its `papyrus.local.toml`.
+    fn vars(&self, vars: &Variables) -> Variables {
+        let mut vars = vars.clone();
+        vars.manifest = self.var.clone();
+        vars.local = self.local.clone();
+        vars
+    }
+}
+
+/// The member directories of a pattern, with variables expanded: a path, or
+/// a path ending with `*` for every subdirectory with a manifest.
 fn expand_member(dir: &Path, pattern: &str) -> Vec<PathBuf> {
     let pattern = pattern.trim_end_matches(['/', '\\']);
     match pattern.strip_suffix('*') {
@@ -298,7 +334,8 @@ fn expand_member(dir: &Path, pattern: &str) -> Vec<PathBuf> {
 
 /// The manifest of the workspace listing `manifest_path` as a member: the
 /// nearest ancestor manifest with `[workspace]` whose members include it.
-pub fn find_workspace_root(manifest_path: &Path) -> Option<PathBuf> {
+/// `vars` are the editor and process variables, for the member patterns.
+pub fn find_workspace_root(manifest_path: &Path, vars: &Variables) -> Option<PathBuf> {
     let member = manifest_path.parent()?;
     let text = std::fs::read_to_string(manifest_path).ok()?;
     if text.parse::<toml::Table>().is_ok_and(|t| t.contains_key("workspace")) {
@@ -309,7 +346,18 @@ pub fn find_workspace_root(manifest_path: &Path) -> Option<PathBuf> {
         let Ok(text) = std::fs::read_to_string(&candidate) else { continue };
         let Ok(raw) = toml::from_str::<crate::RawManifest>(&text) else { continue };
         let Some(ws) = raw.workspace else { continue };
-        let members = ws.members.iter().flat_map(|m| expand_member(dir, m.get_ref()));
+        let mut var = raw.var;
+        var.extend(ws.var);
+        let local = crate::read_local(&candidate)
+            .and_then(|t| toml::from_str::<RawLocal>(&t).ok())
+            .map(|l| l.var)
+            .unwrap_or_default();
+        let vars = Inherited { var, local, ..Default::default() }.vars(vars);
+        let members = ws
+            .members
+            .iter()
+            .filter_map(|m| vars.expand(m.get_ref(), &mut BTreeMap::new()).ok())
+            .flat_map(|m| expand_member(dir, &m));
         if members.into_iter().any(|m| m == member) {
             return Some(candidate);
         }

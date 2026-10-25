@@ -5,6 +5,10 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "The JSON schema of this file, for editors (e.g. \"file://schemas/papyrus.schema.json\"). Ignored by papyrus_analyzer."
+    },
     "package": {
       "type": "object",
       "additionalProperties": false,

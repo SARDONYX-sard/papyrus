@@ -19,8 +19,5 @@
     "ungrammar",
     "xflags",
     "xtask"
-  ],
-  "evenBetterToml.schema.associations": {
-    "^.*papyrus\\.toml$": "schemas/papyrus.schema.json"
-  }
+  ]
 }

@@ -15,6 +15,9 @@ import { state } from "./state";
  * - decompile: the `.pex` files of the workspace folders; a click decompiles
  *   one and opens the result.
  *
+ * In compile mode, a row below the mode shows the compiler: built-in, or
+ * `[compiler] path` of papyrus.toml.
+ *
  * Folders have a button running the action on everything below them. Each
  * script shows the result of its last run. Outputs keep the directory
  * structure: `[build] output` of papyrus.toml (`decompile` below it), else
@@ -44,7 +47,12 @@ interface ModeNode {
   kind: "mode";
 }
 
-type Node = ModeNode | FolderNode | FileNode;
+/** In compile mode, the second row: the compiler used, built-in or `[compiler] path`. */
+interface CompilerNode {
+  kind: "compiler";
+}
+
+type Node = ModeNode | CompilerNode | FolderNode | FileNode;
 
 /** Path comparison key; Windows paths ignore case. */
 function key(p: string): string {
@@ -152,7 +160,8 @@ class ScriptsProvider implements vscode.TreeDataProvider<Node> {
       if (!this.loaded) {
         await this.load();
       }
-      return [{ kind: "mode" }, ...this.roots];
+      const header: Node[] = this.mode === "compile" ? [{ kind: "mode" }, { kind: "compiler" }] : [{ kind: "mode" }];
+      return [...header, ...this.roots];
     }
     return node.kind === "folder" ? node.children : [];
   }
@@ -175,6 +184,9 @@ class ScriptsProvider implements vscode.TreeDataProvider<Node> {
         title: "Switch mode",
       };
       return item;
+    }
+    if (node.kind === "compiler") {
+      return compilerItem();
     }
     if (node.kind === "folder") {
       // Collapsed: a workspace may hold thousands of scripts.
@@ -205,6 +217,28 @@ class ScriptsProvider implements vscode.TreeDataProvider<Node> {
     };
     return item;
   }
+}
+
+/** The compiler row: the one of every project, or `mixed` when they differ. */
+function compilerItem(): vscode.TreeItem {
+  const builtin = "built-in";
+  const compilers = [...new Set(state.buildDirs.map((b) => b.compiler ?? builtin))];
+  const only = compilers.length === 1 ? compilers[0] : undefined;
+  const label = compilers.length === 0 ? builtin : only === undefined ? "mixed" : only === builtin ? builtin : path.basename(only);
+  const item = new vscode.TreeItem(`Compiler: ${label}`);
+  item.contextValue = "papyrusCompiler";
+  item.iconPath = new vscode.ThemeIcon(only === builtin || compilers.length === 0 ? "package" : "tools");
+  if (only !== undefined && only !== builtin) {
+    item.description = path.dirname(only);
+  } else if (only === builtin || compilers.length === 0) {
+    item.description = state.hasManifest ? "no [compiler] path" : "no papyrus.toml";
+  }
+  const lines = state.buildDirs.map((b) => `${b.root}: ${b.compiler ?? builtin}`);
+  item.tooltip =
+    lines.length > 0
+      ? `${lines.join("\n")}\n\nSet [compiler] path in papyrus.toml to use PapyrusCompiler.exe.`
+      : "The built-in compiler of papyrus_analyzer.";
+  return item;
 }
 
 function insert(root: FolderNode, file: vscode.Uri): FileNode {
@@ -239,6 +273,7 @@ function sort(folder: FolderNode): void {
 function files(node: Node): vscode.Uri[] {
   switch (node.kind) {
     case "mode":
+    case "compiler":
       return [];
     case "file":
       return [node.uri];

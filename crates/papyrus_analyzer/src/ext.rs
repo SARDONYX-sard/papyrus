@@ -220,6 +220,8 @@ pub(crate) struct BuildDirs {
     pub(crate) compile: String,
     /// The decompiled `.psc` files.
     pub(crate) decompile: String,
+    /// `[compiler] path`, `None` for the built-in compiler.
+    pub(crate) compiler: Option<String>,
 }
 
 /// The progress of the check of the closed scripts, see [`StatusResult`].

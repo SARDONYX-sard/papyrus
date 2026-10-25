@@ -25,6 +25,8 @@ export interface BuildDirs {
   root: string;
   compile: string;
   decompile: string;
+  /** `[compiler] path`; absent or `null` for the built-in compiler. */
+  compiler?: string | null;
 }
 
 /** One compiler invocation of `papyrus/compileCommands`. */

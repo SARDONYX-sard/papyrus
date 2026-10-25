@@ -419,11 +419,11 @@
   "scripts": {
     "compile": "vite build --config extension/vite.config.ts",
     "build:server": "cargo build --release",
-    "release": "npm run compile && npm run build:server && node ./dist.js",
-    "package": "npm run build:server && node ./dist.js --vsix",
+    "release": "npm run compile && npm run build:server && node ./dist.cjs",
+    "package": "npm run build:server && node ./dist.cjs --vsix",
     "check": "tsc -p ./extension",
     "compile:debug": "vite build --config extension/vite.config.ts --mode development",
-    "debug": "npm run compile:debug && cargo build && node ./dist.js --profile debug",
+    "debug": "npm run compile:debug && cargo build && node ./dist.cjs --profile debug",
     "grammar": "node syntaxes/generate.mjs"
   },
   "devDependencies": {

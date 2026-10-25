@@ -815,15 +815,12 @@ impl Server {
     }
 
     /// Whether `file` is checked when closed: a script of the sources of the
-    /// projects of `papyrus.toml`, or of the workspace folders without
-    /// manifest, outside of the build directories.
+    /// projects of `papyrus.toml`, outside of the build directories. Without
+    /// projects (limited mode), only open files are checked.
     fn is_checked(&self, file: FileId, build_dirs: &[PathBuf]) -> bool {
         let data = self.ws.file(file);
         if data.origin != Origin::Workspace || build_dirs.iter().any(|d| data.path.starts_with(d)) {
             return false;
-        }
-        if self.members.is_empty() {
-            return self.roots.iter().any(|r| data.path.starts_with(r));
         }
         self.members.iter().flat_map(|p| &p.sources).any(|s| data.path.starts_with(s))
     }

@@ -97,6 +97,9 @@ impl fmt::Display for ManifestError {
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 struct RawManifest {
+    /// The JSON schema of the file, for editors; ignored.
+    #[serde(default, rename = "$schema")]
+    _schema: Option<String>,
     #[serde(default)]
     package: RawPackage,
     #[serde(default)]
@@ -487,6 +490,9 @@ pub const LOCAL_MANIFEST_NAME: &str = "papyrus.local.toml";
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawLocal {
+    /// The JSON schema of the file, for editors; ignored.
+    #[serde(default, rename = "$schema")]
+    _schema: Option<String>,
     #[serde(default)]
     var: BTreeMap<String, String>,
 }
@@ -1159,6 +1165,9 @@ mod tests {
         assert!(errors[0].message.contains("`MISSING`"));
         assert_eq!(&text[errors[0].span.clone().unwrap()], "\"${MISSING}/x\"");
 
+        // `$schema` is for editors.
+        parse_str("\"$schema\" = \"file://schemas/papyrus.schema.json\"\n").unwrap();
+
         let errors = parse_str("[build]\nsource = []\n").unwrap_err();
         assert!(errors[0].message.contains("unknown field `source`"), "{}", errors[0].message);
         assert!(errors[0].span.is_some());
@@ -1212,7 +1221,7 @@ mod tests {
         let w = |p: &str, text: &str| std::fs::write(dir.join(p), text).unwrap();
         w(
             "papyrus.toml",
-            "[workspace]\nmembers = [\"mods/*\"]\nexclude = [\"mods/Old\"]\n[workspace.var]\nGAME = \"game\"\n[workspace.build]\nimports = [\"${GAME}\"]\nflags = \"${GAME}/f.flg\"\noptimize = false\n[workspace.lints]\nall = \"deny\"\n[workspace.format]\nindent-size = 2\n",
+            "[var]\nMODS = \"mods\"\n[workspace]\nmembers = [\"${MODS}/*\"]\nexclude = [\"${MODS}/Old\"]\n[workspace.var]\nGAME = \"game\"\n[workspace.build]\nimports = [\"${GAME}\"]\nflags = \"${GAME}/f.flg\"\noptimize = false\n[workspace.lints]\nall = \"deny\"\n[workspace.format]\nindent-size = 2\n",
         );
         w("mods/Lib/papyrus.toml", "[package]\nname = \"Lib\"\n");
         w(
