@@ -16,15 +16,15 @@ version = "0.1.0"
 SKYRIM_DIR = "${game:SkyrimSE}"
 
 [compiler]
-path = "${SKYRIM_DIR}/Papyrus Compiler/PapyrusCompiler.exe"
+# path = "${SKYRIM_DIR}/Papyrus Compiler/PapyrusCompiler.exe"
 # Extra arguments passed as is.
 args = []
 
 [build]
 # Directories of the scripts to compile, searched recursively (relative to this file).
-sources = ["."]
+sources = ["./simple"]
 # Where the compiled `.pex` files go, keeping the directory structure of `sources`.
-output = "output"
+output = "${workspaceFolder}/target/papyrus/output"
 # Other script sources, in lookup order (after `sources`).
 imports = ["${SKYRIM_DIR}/Data/Scripts/Source"]
 # The flags file (`Hidden`, `Conditional`, ...).
@@ -34,15 +34,37 @@ release = false
 final = false
 quiet = true
 
+# Projects whose sources this one uses (transitively), imported after `sources`.
+[dependencies]
+# MCMHelper = { path = "../MCMHelper" }
+
+# Lint levels: "allow", "warn" or "deny", by lint (`papyrus_analyzer lint --list`),
+# by group (correctness, suspicious, complexity, style, pedantic) or "all".
+[lints]
+complexity = "allow"
+unused-local = "deny"
+
 # Formatter settings. Unset values come from .editorconfig, then from the editor.
 [format]
-# indent-style = "space"        # space or tab
-# indent-size = 4
-# keyword-case = "canonical"    # canonical, preserve, PascalCase, camelCase, lowercase, UPPERCASE
+indent-style = "space"        # space or tab
+indent-size = 4
+keyword-case = "canonical"    # canonical, preserve, PascalCase, camelCase, lowercase, UPPERCASE
 # max-blank-lines = 1
-# newline = "auto"              # auto, lf, crlf
-# final-newline = true
+newline = "lf"              # auto, lf, crlf
+final-newline = true
 #
 # Spelling of single keywords, winning over keyword-case.
 # [format.keywords]
 # as = "As"
+
+# Several projects in one folder, like Cargo workspaces: in the papyrus.toml of
+# the parent folder. Members inherit these settings; their own values win
+# (imports are appended). Each member sees only its sources, its
+# dependencies and its imports.
+# [workspace]
+# members = ["${workspaceFolder}/tests/fixtures/papyrus-compiler-test-sources/*"] # subdirectories with a papyrus.toml, or paths
+# exclude = []
+# [workspace.var]
+# [workspace.build]             # imports, flags, optimize, release, final, quiet
+# [workspace.lints]
+# [workspace.format]
