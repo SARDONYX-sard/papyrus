@@ -53,6 +53,26 @@
         "path": "./syntaxes/papyrus-flags.tmLanguage.json",
         "language": "papyrus-flags",
         "scopeName": "source.papyrus-flags"
+      },
+      {
+        "scopeName": "markdown.papyrus.codeblock",
+        "path": "./syntaxes/markdown-papyrus.injection.json",
+        "injectTo": [
+          "text.html.markdown"
+        ],
+        "embeddedLanguages": {
+          "meta.embedded.block.papyrus": "papyrus"
+        }
+      },
+      {
+        "scopeName": "markdown.papyrus-flags.codeblock",
+        "path": "./syntaxes/markdown-papyrus-flags.injection.json",
+        "injectTo": [
+          "text.html.markdown"
+        ],
+        "embeddedLanguages": {
+          "meta.embedded.block.papyrus-flags": "papyrus-flags"
+        }
       }
     ],
     "commands": [
@@ -155,7 +175,8 @@
       "papyrus": [
         {
           "id": "papyrus.scripts",
-          "name": "Scripts"
+          "name": "Scripts",
+          "icon": "resources/papyrus.svg"
         }
       ]
     },

@@ -1,0 +1,14 @@
+{
+  "scopeName": "markdown.papyrus-flags.codeblock",
+  "injectionSelector": "L:text.html.markdown",
+  "patterns": [
+    {
+      "begin": "(^|\\G)(\\s*)(`{3,}|~{3,})\\s*(?i:flg|papyrus-flags)(\\s+[^`~]*)?$",
+      "beginCaptures": { "3": { "name": "punctuation.definition.markdown" } },
+      "end": "(^|\\G)(\\s*)(`{3,}|~{3,})\\s*$",
+      "endCaptures": { "3": { "name": "punctuation.definition.markdown" } },
+      "contentName": "meta.embedded.block.papyrus-flags",
+      "patterns": [{ "include": "source.papyrus-flags" }]
+    }
+  ]
+}

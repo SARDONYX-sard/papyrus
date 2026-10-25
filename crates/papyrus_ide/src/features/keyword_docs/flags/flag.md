@@ -3,7 +3,7 @@ on. Without `{ }`, the flag is allowed everywhere.
 
 # Examples
 
-```papyrus
+```papyrus-flags
 // Hides the script or property from the Creation Kit.
 Flag Hidden 0
 {
