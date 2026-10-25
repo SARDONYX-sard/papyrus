@@ -53,7 +53,7 @@ keyword-case = "canonical"    # canonical, preserve, PascalCase, camelCase, lowe
 # max-blank-lines = 1
 newline = "lf"              # auto, lf, crlf
 final-newline = true
-#
+
 # Spelling of single keywords, winning over keyword-case.
 # [format.keywords]
 # as = "As"

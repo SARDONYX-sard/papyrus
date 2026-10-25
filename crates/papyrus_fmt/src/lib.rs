@@ -8,7 +8,9 @@
 //!   `State` and full `Property` blocks;
 //! - tokens are separated by one space, except around `.`, `,`, brackets,
 //!   calls and unary operators;
-//! - keywords get their canonical spelling (`endfunction` → `EndFunction`);
+//! - keywords get their canonical spelling (`endfunction` → `EndFunction`),
+//!   and names the spelling of their definition (`actor` → `Actor`,
+//!   `getvalue()` → `GetValue()`, see [`NameCases`] and [`Names`]);
 //! - runs of blank lines are collapsed, and blank lines at the start or the
 //!   end of a block are removed;
 //! - trailing whitespace is removed and the file ends with one line break.
@@ -37,11 +39,13 @@ pub enum Indent {
     Spaces(u8),
 }
 
-/// The spelling of keywords, named like the `rename_all` cases of serde.
+/// The spelling of keywords and of names, named like the `rename_all` cases
+/// of serde. Names start from their definition, see [`NameCases`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum KeywordCase {
-    /// `PascalCase`, except the operator-like `as` and `extends`, which most
-    /// scripts write in lowercase: `ScriptName Foo extends Quest`.
+pub enum Case {
+    /// Keywords: `PascalCase`, except the operator-like `as` and `extends`,
+    /// which most scripts write in lowercase: `ScriptName Foo extends Quest`.
+    /// Names: as defined.
     Canonical,
     /// As written.
     Preserve,
@@ -55,27 +59,27 @@ pub enum KeywordCase {
     Uppercase,
 }
 
-impl KeywordCase {
+impl Case {
     /// The accepted names, for configuration files.
     pub const NAMES: [&'static str; 6] =
         ["canonical", "preserve", "PascalCase", "camelCase", "lowercase", "UPPERCASE"];
 }
 
-impl std::str::FromStr for KeywordCase {
+impl std::str::FromStr for Case {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(match s.to_ascii_lowercase().replace(['_', '-'], "").as_str() {
-            "canonical" => KeywordCase::Canonical,
-            "preserve" => KeywordCase::Preserve,
-            "pascalcase" => KeywordCase::PascalCase,
-            "camelcase" => KeywordCase::CamelCase,
-            "lowercase" => KeywordCase::Lowercase,
-            "uppercase" => KeywordCase::Uppercase,
+            "canonical" => Case::Canonical,
+            "preserve" => Case::Preserve,
+            "pascalcase" => Case::PascalCase,
+            "camelcase" => Case::CamelCase,
+            "lowercase" => Case::Lowercase,
+            "uppercase" => Case::Uppercase,
             _ => {
                 return Err(format!(
-                    "unknown keyword case `{s}`, expected one of {}",
-                    KeywordCase::NAMES.join(", ")
+                    "unknown case `{s}`, expected one of {}",
+                    Case::NAMES.join(", ")
                 ));
             }
         })
@@ -99,7 +103,7 @@ pub struct FormatOptions {
     /// Indentation of nested lines.
     pub indent: Indent,
     /// Spelling of keywords.
-    pub keyword_case: KeywordCase,
+    pub keyword_case: Case,
     /// Spelling of single keywords, winning over `keyword_case`, keyed by the
     /// lowercase keyword: `{"as": "As"}`. Spellings that are not the keyword
     /// (ignoring case) are ignored.
@@ -110,17 +114,77 @@ pub struct FormatOptions {
     pub newline: Newline,
     /// End the file with a line break.
     pub final_newline: bool,
+    /// Spelling of the names, by kind. `Canonical` is the spelling of the
+    /// definition, which `PascalCase` and `camelCase` start from too.
+    pub name_cases: NameCases,
+    /// The definitions of the names of the script: the formatter cannot know
+    /// them from the script alone. Names without one are kept as written.
+    pub names: std::sync::Arc<Names>,
+}
+
+/// The spelling of each kind of name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NameCases {
+    /// Scripts: types, `extends`, `Import`, receivers like `Debug.Trace`.
+    pub scripts: Case,
+    /// Functions and events.
+    pub functions: Case,
+    /// Properties.
+    pub properties: Case,
+    /// Local variables, parameters and script variables.
+    pub variables: Case,
+    /// User flags such as `Hidden`.
+    pub flags: Case,
+}
+
+impl Default for NameCases {
+    fn default() -> Self {
+        let c = Case::Canonical;
+        NameCases { scripts: c, functions: c, properties: c, variables: c, flags: c }
+    }
+}
+
+/// The kind of a name, see [`NameCases`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NameKind {
+    /// A script.
+    Script,
+    /// A function or an event.
+    Function,
+    /// A property.
+    Property,
+    /// A local variable, a parameter or a script variable.
+    Variable,
+    /// A user flag.
+    Flag,
+}
+
+/// The definitions of the identifiers of one script, by start offset.
+/// Papyrus ignores case: `actor`, `getvalue()` work, and are written like
+/// their definition: `Actor`, `GetValue()`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Names {
+    defs: std::collections::BTreeMap<u32, (NameKind, String)>,
+}
+
+impl Names {
+    /// The identifier starting at `offset` is a `kind` defined as `spelling`.
+    pub fn insert(&mut self, offset: u32, kind: NameKind, spelling: String) {
+        self.defs.insert(offset, (kind, spelling));
+    }
 }
 
 impl Default for FormatOptions {
     fn default() -> Self {
         FormatOptions {
             indent: Indent::Spaces(4),
-            keyword_case: KeywordCase::Canonical,
+            keyword_case: Case::Canonical,
             keyword_overrides: Default::default(),
             max_blank_lines: 1,
             newline: Newline::Auto,
             final_newline: true,
+            name_cases: NameCases::default(),
+            names: Default::default(),
         }
     }
 }
@@ -136,21 +200,60 @@ impl FormatOptions {
         }
         let Some(pascal) = pascal_keyword(kind) else { return Cow::Borrowed(text) };
         match self.keyword_case {
-            KeywordCase::Preserve => Cow::Borrowed(text),
-            KeywordCase::Canonical => match kind {
+            Case::Preserve => Cow::Borrowed(text),
+            Case::Canonical => match kind {
                 SyntaxKind::AS_KW | SyntaxKind::EXTENDS_KW => {
                     Cow::Owned(pascal.to_ascii_lowercase())
                 }
                 _ => Cow::Borrowed(pascal),
             },
-            KeywordCase::PascalCase => Cow::Borrowed(pascal),
-            KeywordCase::CamelCase => {
+            Case::PascalCase => Cow::Borrowed(pascal),
+            Case::CamelCase => {
                 let mut out = pascal.to_owned();
                 out[..1].make_ascii_lowercase();
                 Cow::Owned(out)
             }
-            KeywordCase::Lowercase => Cow::Owned(pascal.to_ascii_lowercase()),
-            KeywordCase::Uppercase => Cow::Owned(pascal.to_ascii_uppercase()),
+            Case::Lowercase => Cow::Owned(pascal.to_ascii_lowercase()),
+            Case::Uppercase => Cow::Owned(pascal.to_ascii_uppercase()),
+        }
+    }
+
+    /// The spelling of an identifier, from its definition; identifiers
+    /// without known definition are kept.
+    fn name_spelling<'t>(&'t self, tok: SyntaxToken<'t>) -> std::borrow::Cow<'t, str> {
+        use std::borrow::Cow;
+        let text = tok.text();
+        let Some((kind, defined)) = self.names.defs.get(&u32::from(tok.text_range().start()))
+        else {
+            return Cow::Borrowed(text);
+        };
+        // A stale definition (e.g. computed for another text) is ignored.
+        if !defined.eq_ignore_ascii_case(text) {
+            return Cow::Borrowed(text);
+        }
+        let case = match kind {
+            NameKind::Script => self.name_cases.scripts,
+            NameKind::Function => self.name_cases.functions,
+            NameKind::Property => self.name_cases.properties,
+            NameKind::Variable => self.name_cases.variables,
+            NameKind::Flag => self.name_cases.flags,
+        };
+        let first = |upper: bool| {
+            let mut out = defined.clone();
+            if upper {
+                out[..1].make_ascii_uppercase();
+            } else {
+                out[..1].make_ascii_lowercase();
+            }
+            Cow::Owned(out)
+        };
+        match case {
+            Case::Preserve => Cow::Borrowed(text),
+            Case::Canonical => Cow::Borrowed(defined),
+            Case::PascalCase => first(true),
+            Case::CamelCase => first(false),
+            Case::Lowercase => Cow::Owned(defined.to_ascii_lowercase()),
+            Case::Uppercase => Cow::Owned(defined.to_ascii_uppercase()),
         }
     }
 }
@@ -389,6 +492,7 @@ fn write_line(out: &mut String, line: &Line<'_>, level: usize, options: &FormatO
             // The token includes the line break, which the caller adds back.
             SyntaxKind::LINE_CONTINUATION => out.push('\\'),
             _ if kind.is_keyword() => out.push_str(&options.keyword_spelling(kind, tok.text())),
+            SyntaxKind::IDENT => out.push_str(&options.name_spelling(*tok)),
             _ => out.push_str(tok.text()),
         }
         prev = Some(*tok);
@@ -458,7 +562,7 @@ pub fn pascal_keyword(kind: SyntaxKind) -> Option<&'static str> {
 }
 
 /// Checks that `formatted` parses and has the same significant tokens and
-/// comments as `original` (keywords compared ignoring case).
+/// comments as `original` (keywords and names compared ignoring case).
 fn verify(original: &str, formatted: &str) -> Result<(), FormatError> {
     let after = papyrus_parser::parse(formatted);
     if let Some(e) = after.errors().first() {
@@ -474,8 +578,11 @@ fn verify(original: &str, formatted: &str) -> Result<(), FormatError> {
                 )
             })
             .map(|(k, t)| {
-                let text =
-                    if k.is_keyword() { t.text.to_ascii_lowercase() } else { t.text.to_owned() };
+                let text = if k.is_keyword() || k == SyntaxKind::IDENT {
+                    t.text.to_ascii_lowercase()
+                } else {
+                    t.text.to_owned()
+                };
                 (k, text)
             })
             .collect()

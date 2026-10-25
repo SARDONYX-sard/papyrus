@@ -6,6 +6,7 @@ pub(crate) mod folding;
 pub(crate) mod hover;
 pub(crate) mod inlay_hints;
 pub(crate) mod keyword_docs;
+pub(crate) mod name_spellings;
 pub(crate) mod navigation;
 pub(crate) mod overrides;
 pub(crate) mod rename;

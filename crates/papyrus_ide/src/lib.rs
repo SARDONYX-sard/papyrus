@@ -36,6 +36,7 @@ pub use crate::{
         folding::{Fold, FoldKind, folding_ranges},
         hover::{HoverResult, flag_file_hover, hover},
         inlay_hints::{InlayHint, inlay_hints},
+        name_spellings::{NameKind, NameSpelling, name_spellings},
         navigation::{
             Highlight, NavFile, NavTarget, flag_references, goto_declaration, goto_definition,
             highlight, references,

@@ -180,6 +180,11 @@
             "UPPERCASE"
           ]
         },
+        "script-case": { "$ref": "#/definitions/nameCase", "description": "Spelling of script names: types, extends, Import, receivers like Debug.Trace. canonical is the ScriptName of the script (actor -> Actor)." },
+        "function-case": { "$ref": "#/definitions/nameCase", "description": "Spelling of functions and events. canonical is their declaration, or the one of the parent function they override (getvalue() -> GetValue())." },
+        "property-case": { "$ref": "#/definitions/nameCase", "description": "Spelling of properties. canonical is their declaration." },
+        "variable-case": { "$ref": "#/definitions/nameCase", "description": "Spelling of local variables, parameters and script variables. canonical is their declaration." },
+        "flag-case": { "$ref": "#/definitions/nameCase", "description": "Spelling of user flags. canonical is the flags file (hidden -> Hidden)." },
         "keywords": {
           "description": "Spelling of single keywords, e.g. { as = \"As\" }. Only the case may change.",
           "type": "object",
@@ -255,6 +260,14 @@
           "path": { "type": "string", "description": "The directory of the project (with a papyrus.toml)." }
         }
       }
+    }
+  },
+  "definitions": {
+    "nameCase": {
+      "default": "canonical",
+      "type": "string",
+      "enum": ["canonical", "preserve", "PascalCase", "camelCase", "lowercase", "UPPERCASE"],
+      "markdownDescription": "`canonical`: as defined. `preserve`: as written. The other cases start from the definition. Names without known definition are kept."
     }
   }
 }

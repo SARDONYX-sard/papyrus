@@ -56,7 +56,7 @@ pub struct Overridden {
 
 /// A function or event outside of states (states replace functions of the
 /// same script, which is not an override of a parent).
-fn is_overridable(m: &Member) -> bool {
+pub(crate) fn is_overridable(m: &Member) -> bool {
     m.is_callable() && m.property.is_none() && m.state.is_none()
 }
 

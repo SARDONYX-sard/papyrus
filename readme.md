@@ -93,6 +93,12 @@ unused-local = { level = "deny" }   # "level" | { level = "level" }
 indent-style = "space"          # "space" | "tab"
 indent-size = 4                 # 1..=16
 keyword-case = "canonical"      # "canonical" | "preserve" | "PascalCase" | "camelCase" | "lowercase" | "UPPERCASE"
+# Names: same values; "canonical" = as defined, the other cases start from the definition
+script-case = "canonical"       # actor → Actor (its ScriptName)
+function-case = "canonical"     # getvalue() → GetValue(), event oninit() → the overridden OnInit
+property-case = "canonical"
+variable-case = "canonical"     # locals, parameters, script variables
+flag-case = "canonical"         # hidden → Hidden (the flags file)
 max-blank-lines = 1
 newline = "auto"                # "auto" | "lf" | "crlf"
 final-newline = true            # true | false

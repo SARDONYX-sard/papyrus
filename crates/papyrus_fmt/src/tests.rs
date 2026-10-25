@@ -99,7 +99,7 @@ fn properties_and_tabs() {
 
 #[test]
 fn keeps_crlf_and_keyword_case_option() {
-    let options = FormatOptions { keyword_case: KeywordCase::Preserve, ..FormatOptions::default() };
+    let options = FormatOptions { keyword_case: Case::Preserve, ..FormatOptions::default() };
     let out = format("scriptname A\r\nfunction F()\r\nreturn\r\nendfunction", &options).unwrap();
     assert_eq!(out, "scriptname A\r\nfunction F()\r\n    return\r\nendfunction\r\n");
 }
@@ -107,34 +107,72 @@ fn keeps_crlf_and_keyword_case_option() {
 #[test]
 fn keyword_cases_and_overrides() {
     let src = "scriptname A extends Quest\nfunction F()\nx = y as Actor\nendfunction\n";
-    let with = |case: KeywordCase| {
+    let with = |case: Case| {
         format(src, &FormatOptions { keyword_case: case, ..FormatOptions::default() }).unwrap()
     };
     assert!(
-        with(KeywordCase::Canonical).starts_with(
+        with(Case::Canonical).starts_with(
             "ScriptName A extends Quest\nFunction F()\n    x = y as Actor\nEndFunction"
         )
     );
     assert!(
-        with(KeywordCase::PascalCase).contains("ScriptName A Extends Quest")
-            && with(KeywordCase::PascalCase).contains("y As Actor")
+        with(Case::PascalCase).contains("ScriptName A Extends Quest")
+            && with(Case::PascalCase).contains("y As Actor")
     );
     assert!(
-        with(KeywordCase::CamelCase).contains("scriptName A extends")
-            && with(KeywordCase::CamelCase).contains("endFunction")
+        with(Case::CamelCase).contains("scriptName A extends")
+            && with(Case::CamelCase).contains("endFunction")
     );
-    assert!(with(KeywordCase::Lowercase).contains("endfunction"));
-    assert!(with(KeywordCase::Uppercase).contains("SCRIPTNAME A EXTENDS"));
-    assert!(with(KeywordCase::Preserve).contains("scriptname A extends"));
+    assert!(with(Case::Lowercase).contains("endfunction"));
+    assert!(with(Case::Uppercase).contains("SCRIPTNAME A EXTENDS"));
+    assert!(with(Case::Preserve).contains("scriptname A extends"));
 
     let mut options = FormatOptions::default();
     options.keyword_overrides.insert("as".to_owned(), "AS".to_owned());
     options.keyword_overrides.insert("if".to_owned(), "nope".to_owned());
     assert!(format(src, &options).unwrap().contains("y AS Actor"));
 
-    assert_eq!("camelCase".parse::<KeywordCase>(), Ok(KeywordCase::CamelCase));
-    assert_eq!("UPPER_CASE".parse::<KeywordCase>(), Ok(KeywordCase::Uppercase));
-    assert!("kebab".parse::<KeywordCase>().is_err());
+    assert_eq!("camelCase".parse::<Case>(), Ok(Case::CamelCase));
+    assert_eq!("UPPER_CASE".parse::<Case>(), Ok(Case::Uppercase));
+    assert!("kebab".parse::<Case>().is_err());
+}
+
+#[test]
+fn names_follow_their_definition() {
+    let src = "scriptname foo extends quest hidden\nactor property a auto\nfunction f(objectreference r)\ndebug.trace(\"actor\")\nendfunction\n";
+    // What the language server resolves, by start offset.
+    let defs = [
+        ("quest", NameKind::Script, "Quest"),
+        ("hidden", NameKind::Flag, "Hidden"),
+        ("actor property", NameKind::Script, "Actor"),
+        ("objectreference", NameKind::Script, "ObjectReference"),
+        ("debug", NameKind::Script, "Debug"),
+        ("trace", NameKind::Function, "Trace"),
+        ("r)", NameKind::Variable, "R"),
+    ];
+    let mut names = Names::default();
+    for (at, kind, spelling) in defs {
+        names.insert(src.find(at).unwrap() as u32, kind, spelling.to_owned());
+    }
+    let options = FormatOptions { names: names.into(), ..FormatOptions::default() };
+    assert_eq!(
+        format(src, &options).unwrap(),
+        "ScriptName foo extends Quest Hidden\nActor Property a Auto\nFunction f(ObjectReference R)\n    Debug.Trace(\"actor\")\nEndFunction\n"
+    );
+    // Each kind has its case; `Canonical` is the definition.
+    let with = |name_cases| {
+        let options = FormatOptions { name_cases, ..options.clone() };
+        format(src, &options).unwrap()
+    };
+    let out = with(NameCases {
+        scripts: Case::Preserve,
+        functions: Case::CamelCase,
+        flags: Case::Uppercase,
+        variables: Case::Preserve,
+        ..NameCases::default()
+    });
+    assert!(out.starts_with("ScriptName foo extends quest HIDDEN"), "{out}");
+    assert!(out.contains("debug.trace(") && out.contains("(objectreference r)"), "{out}");
 }
 
 #[test]

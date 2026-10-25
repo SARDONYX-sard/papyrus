@@ -25,6 +25,38 @@ fn workspace(files: &[(&str, &str)]) -> (Workspace, FileId, TextSize) {
     (ws, file, offset)
 }
 
+#[test]
+fn name_spellings_follow_definitions() {
+    let (ws, file, _) = workspace(&[
+        ("Form.psc", FORM),
+        ("Actor.psc", ACTOR),
+        ("Debug.psc", DEBUG),
+        (
+            "Foo.psc",
+            "$0scriptname foo extends actor hidden\nint myValue\nevent ondeath(actor killer)\nmyvalue = getformid()\ndebug.trace(\"x\")\nendevent\n",
+        ),
+    ]);
+    let text = ws.text(file).unwrap();
+    let got: Vec<(String, NameKind, String)> = name_spellings(&ws, file)
+        .into_iter()
+        .map(|n| (text[n.range].to_owned(), n.kind, n.spelling))
+        .collect();
+    let has = |written: &str, kind, spelling: &str| {
+        assert!(
+            got.iter().any(|g| g.0 == written && g.1 == kind && g.2 == spelling),
+            "{written}: {got:?}"
+        );
+    };
+    has("actor", NameKind::Script, "Actor");
+    has("hidden", NameKind::Flag, "Hidden");
+    // An event overriding one of a parent script takes its spelling.
+    has("ondeath", NameKind::Function, "OnDeath");
+    has("myvalue", NameKind::Variable, "myValue");
+    has("getformid", NameKind::Function, "GetFormID");
+    has("debug", NameKind::Script, "Debug");
+    has("trace", NameKind::Function, "Trace");
+}
+
 fn script_of(file: NavFile) -> FileId {
     match file {
         NavFile::Script(f) => f,

@@ -131,6 +131,16 @@ struct RawFormat {
     keyword_case: Option<Spanned<String>>,
     #[serde(default)]
     keywords: BTreeMap<String, Spanned<String>>,
+    #[serde(alias = "script_case")]
+    script_case: Option<Spanned<String>>,
+    #[serde(alias = "function_case")]
+    function_case: Option<Spanned<String>>,
+    #[serde(alias = "property_case")]
+    property_case: Option<Spanned<String>>,
+    #[serde(alias = "variable_case")]
+    variable_case: Option<Spanned<String>>,
+    #[serde(alias = "flag_case")]
+    flag_case: Option<Spanned<String>>,
     #[serde(alias = "max_blank_lines")]
     max_blank_lines: Option<usize>,
     newline: Option<Spanned<String>>,
@@ -146,10 +156,14 @@ pub struct FormatSettings {
     pub use_tabs: Option<bool>,
     /// `indent-size`: spaces per level.
     pub indent_size: Option<u8>,
-    /// `keyword-case`, see [`papyrus_fmt::KeywordCase::NAMES`].
-    pub keyword_case: Option<papyrus_fmt::KeywordCase>,
+    /// `keyword-case`, see [`papyrus_fmt::Case::NAMES`].
+    pub keyword_case: Option<papyrus_fmt::Case>,
     /// `[format.keywords]`: spelling of single keywords, e.g. `as = "As"`.
     pub keywords: BTreeMap<String, String>,
+    /// `script-case`, `function-case`, `property-case`, `variable-case` and
+    /// `flag-case`, in this order: the spelling of names, `canonical` being
+    /// the one of their definition. See [`papyrus_fmt::NameCases`].
+    pub name_cases: [Option<papyrus_fmt::Case>; 5],
     /// `max-blank-lines`
     pub max_blank_lines: Option<usize>,
     /// `newline`: `"auto"`, `"lf"` or `"crlf"`.
@@ -166,6 +180,9 @@ impl FormatSettings {
         self.indent_size = other.indent_size.or(self.indent_size);
         self.keyword_case = other.keyword_case.or(self.keyword_case);
         self.keywords.extend(other.keywords);
+        for (mine, theirs) in self.name_cases.iter_mut().zip(other.name_cases) {
+            *mine = theirs.or(*mine);
+        }
         self.max_blank_lines = other.max_blank_lines.or(self.max_blank_lines);
         self.newline = other.newline.or(self.newline);
         self.final_newline = other.final_newline.or(self.final_newline);
@@ -194,6 +211,14 @@ impl FormatSettings {
             options.keyword_case = case;
         }
         options.keyword_overrides.extend(self.keywords.iter().map(|(k, v)| (k.clone(), v.clone())));
+        let n = &mut options.name_cases;
+        let targets =
+            [&mut n.scripts, &mut n.functions, &mut n.properties, &mut n.variables, &mut n.flags];
+        for (target, case) in targets.into_iter().zip(self.name_cases) {
+            if let Some(case) = case {
+                *target = case;
+            }
+        }
         if let Some(n) = self.max_blank_lines {
             options.max_blank_lines = n;
         }
@@ -291,6 +316,21 @@ fn format_settings(raw: &RawFormat, errors: &mut Vec<ManifestError>) -> FormatSe
         match case.get_ref().parse() {
             Ok(c) => out.keyword_case = Some(c),
             Err(e) => errors.push(ManifestError::new(e, span(case.span()))),
+        }
+    }
+    let name_cases = [
+        &raw.script_case,
+        &raw.function_case,
+        &raw.property_case,
+        &raw.variable_case,
+        &raw.flag_case,
+    ];
+    for (out, case) in out.name_cases.iter_mut().zip(name_cases) {
+        if let Some(case) = case {
+            match case.get_ref().parse() {
+                Ok(c) => *out = Some(c),
+                Err(e) => errors.push(ManifestError::new(e, span(case.span()))),
+            }
         }
     }
     for (keyword, spelling) in &raw.keywords {
@@ -1021,6 +1061,13 @@ quiet = true
 # indent-style = "space"        # space or tab
 # indent-size = 4
 # keyword-case = "canonical"    # canonical, preserve, PascalCase, camelCase, lowercase, UPPERCASE
+# Names take the same values; canonical is the spelling of their definition
+# (actor -> Actor, getvalue() -> GetValue()), which the other cases start from.
+# script-case = "canonical"     # types, extends, Import, receivers like Debug.Trace
+# function-case = "canonical"   # functions and events
+# property-case = "canonical"
+# variable-case = "canonical"   # locals, parameters and script variables
+# flag-case = "canonical"       # Hidden, Conditional, ...
 # max-blank-lines = 1
 # newline = "auto"              # auto, lf, crlf
 # final-newline = true
@@ -1136,13 +1183,15 @@ mod tests {
     #[test]
     fn format_table() {
         let p = parse_str(
-            "[format]\nindent_style = \"tab\"\nkeyword-case = \"camelCase\"\nnewline = \"crlf\"\n[format.keywords]\nas = \"As\"\n",
+            "[format]\nindent_style = \"tab\"\nkeyword-case = \"camelCase\"\nfunction-case = \"preserve\"\nnewline = \"crlf\"\n[format.keywords]\nas = \"As\"\n",
         )
         .unwrap();
         let mut options = papyrus_fmt::FormatOptions::default();
         p.format.apply(&mut options);
         assert_eq!(options.indent, papyrus_fmt::Indent::Tabs);
-        assert_eq!(options.keyword_case, papyrus_fmt::KeywordCase::CamelCase);
+        assert_eq!(options.keyword_case, papyrus_fmt::Case::CamelCase);
+        assert_eq!(options.name_cases.functions, papyrus_fmt::Case::Preserve);
+        assert_eq!(options.name_cases.scripts, papyrus_fmt::Case::Canonical);
         assert_eq!(options.newline, papyrus_fmt::Newline::CrLf);
         assert_eq!(options.keyword_overrides["as"], "As");
 
