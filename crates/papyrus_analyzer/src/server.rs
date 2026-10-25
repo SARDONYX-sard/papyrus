@@ -883,7 +883,15 @@ impl Server {
             return;
         }
         self.checked_job.insert(file, job);
-        self.published.insert(path.clone());
+        // Most scripts have no problem: telling the editor so, file by file,
+        // would flood it. Only files showing problems need an update.
+        if diagnostics.is_empty() {
+            if !self.published.remove(&path) {
+                return;
+            }
+        } else {
+            self.published.insert(path.clone());
+        }
         self.notify::<notification::PublishDiagnostics>(PublishDiagnosticsParams {
             uri: conv::path_to_uri(&path),
             diagnostics,
