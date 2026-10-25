@@ -481,7 +481,8 @@ impl Server {
                 // The editor contents are authoritative.
                 continue;
             }
-            changed.extend(existing.and_then(|f| self.ws.file(f).index.name).map(|n| n.to_string()));
+            changed
+                .extend(existing.and_then(|f| self.ws.file(f).index.name).map(|n| n.to_string()));
             match papyrus_ide::read_file(&path) {
                 Some(text) => {
                     let origin = self.origin_of(&path);
@@ -869,7 +870,8 @@ impl Server {
         };
         if let Some(p) = self.checking.as_mut().filter(|p| p.job == job) {
             p.done += 1;
-            p.current = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            p.current =
+                path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         }
         let Some(diagnostics) = diagnostics else { return };
         // Results of a job older than the last one shown for the file are

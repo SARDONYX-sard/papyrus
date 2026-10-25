@@ -499,6 +499,25 @@ fn snippets_by_context() {
     assert!(!has("ScriptName T\nFunction F(Int x)\n    x = wh$0\nEndFunction\n", "while"));
 }
 
+#[test]
+fn rename_only_workspace_scripts() {
+    let mut ws = Workspace::new();
+    let lib = "ScriptName Lib\nFunction Hit() Global\nEndFunction\n";
+    ws.set_disk_index(PathBuf::from("/game/Lib.psc"), index_text(lib), Origin::Import(0));
+    let base = "ScriptName Base\nFunction Run()\nEndFunction\n";
+    ws.set_disk_index(PathBuf::from("/game/Base.psc"), index_text(base), Origin::Import(0));
+    let src = "ScriptName User extends Base\nFunction Run()\n  Lib.H$0it()\nEndFunction\n";
+    let offset = TextSize::new(src.find("$0").unwrap() as u32);
+    let file =
+        ws.set_open(PathBuf::from("/ws/User.psc"), Arc::from(src.replace("$0", "").as_str()), 0);
+    let err = crate::rename(&ws, file, offset, "Strike").unwrap_err();
+    assert!(err.contains("imported script"), "{err}");
+    // An override of a function of an imported script.
+    let run = TextSize::new(src.find("Run").unwrap() as u32);
+    let err = crate::rename(&ws, file, run, "Go").unwrap_err();
+    assert!(err.contains("imported script"), "{err}");
+}
+
 /// Rules found by comparing with the official compiler.
 #[test]
 fn compiler_rules() {

@@ -19,7 +19,7 @@ use super::{
     overrides, with_sema,
 };
 use crate::{
-    FileId, Workspace,
+    FileId, Origin, Workspace,
     index::{Flags, MemberKind},
     sema::{Def, LocalKind, Sema},
 };
@@ -69,7 +69,10 @@ pub fn rename(
 
     let mut edit = RenameEdit::default();
     for (d, name) in defs {
-        edit.ranges.extend(find_references(ws, d, name, true));
+        // Uses in imported scripts stay as they are: those files are not ours.
+        edit.ranges.extend(find_references(ws, d, name, true).into_iter().filter(
+            |(f, _)| matches!(f, NavFile::Script(f) if ws.file(*f).origin == Origin::Workspace),
+        ));
     }
     edit.ranges.sort_by_key(|&(f, r)| (f, r.start()));
     edit.ranges.dedup();
@@ -103,27 +106,48 @@ fn check_name(name: &str) -> Result<(), String> {
 
 fn check_renamable(sema: &Sema<'_>, def: Def) -> Result<(), String> {
     match def {
-        Def::Builtin(..) => Err("built-in names cannot be renamed".to_owned()),
-        Def::LanguageFlag(_) => Err("keywords cannot be renamed".to_owned()),
-        Def::Member { .. } => {
-            for d in family(sema, def) {
-                if let Def::Member { file, index } = d {
-                    let m = sema.member(file, index);
-                    if m.kind == MemberKind::Event && m.flags.contains(Flags::NATIVE) {
-                        return Err(format!(
-                            "`{}` is an event sent by the game (declared by `{}`)",
-                            m.name,
-                            sema.ws.file(file).index.name_str()
-                        ));
-                    }
-                }
-            }
-            Ok(())
-        }
-        _ => Ok(()),
+        Def::Builtin(..) => return Err("built-in names cannot be renamed".to_owned()),
+        Def::LanguageFlag(_) => return Err("keywords cannot be renamed".to_owned()),
+        // The flags file belongs to the game or the compiler.
+        Def::Flag(_) => return Err("flags of the flags file cannot be renamed".to_owned()),
+        _ => {}
     }
+    // Only the scripts of the workspace may change: names declared by
+    // imported scripts (the game, other mods) are not ours.
+    for d in family(sema, def) {
+        let Some(file) = declaring_file(d) else { continue };
+        let data = sema.ws.file(file);
+        if data.origin != Origin::Workspace {
+            return Err(format!(
+                "`{}` is declared by `{}`, an imported script; only the scripts of the workspace can be renamed",
+                def_name(sema, d).map_or_else(String::new, |n| n.to_string()),
+                data.path.display()
+            ));
+        }
+        if let Def::Member { file, index } = d {
+            let m = sema.member(file, index);
+            if m.kind == MemberKind::Event && m.flags.contains(Flags::NATIVE) {
+                return Err(format!(
+                    "`{}` is an event sent by the game (declared by `{}`)",
+                    m.name,
+                    sema.ws.file(file).index.name_str()
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
+/// The file declaring a definition.
+fn declaring_file(def: Def) -> Option<FileId> {
+    match def {
+        Def::Local { file, .. }
+        | Def::Member { file, .. }
+        | Def::Param { file, .. }
+        | Def::Script { file } => Some(file),
+        Def::Builtin(..) | Def::Flag(_) | Def::LanguageFlag(_) => None,
+    }
+}
 /// `def` and, for functions and events, the declarations it overrides and
 /// those overriding it.
 fn family(sema: &Sema<'_>, def: Def) -> Vec<Def> {
