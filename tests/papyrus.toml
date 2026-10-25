@@ -25,7 +25,7 @@ args = []
 # Directories of the scripts to compile, searched recursively (relative to this file).
 sources = ["./simple", "./compiler"]
 # Where the compiled `.pex` files go, keeping the directory structure of `sources`.
-output = "${workspaceFolder}/target/papyrus/output"
+output = "${workspaceFolder}/target/papyrus"
 # Other script sources, in lookup order (after `sources`).
 imports = ["${SKYRIM_DIR}/Data/Scripts/Source"]
 # The flags file (`Hidden`, `Conditional`, ...).
