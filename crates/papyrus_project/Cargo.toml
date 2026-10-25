@@ -13,6 +13,7 @@ doctest = false
 [dependencies]
 papyrus_fmt.workspace = true
 papyrus_lexer.workspace = true
+papyrus_lint.workspace = true
 serde = { version = "1", features = ["derive"] }
 toml.workspace = true
 skyrim_data_dir.workspace = true

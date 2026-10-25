@@ -106,6 +106,44 @@
         }
       }
     },
+    "lints": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Lint levels, as in clippy: by lint (`papyrus_analyzer lint --list`), by group or `all`. A lint wins over its group, which wins over `all`.",
+      "definitions": {
+        "level": {
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": ["allow", "warn", "deny"]
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["level"],
+              "properties": {
+                "level": {
+                  "type": "string",
+                  "enum": ["allow", "warn", "deny"]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "properties": {
+        "all": { "$ref": "#/properties/lints/definitions/level", "description": "Every lint." },
+        "warnings": { "$ref": "#/properties/lints/definitions/level", "description": "deny: every warning is an error (like -D warnings)." },
+        "correctness": { "$ref": "#/properties/lints/definitions/level", "description": "Code that is wrong (default: deny)." },
+        "suspicious": { "$ref": "#/properties/lints/definitions/level", "description": "Code that is probably wrong or useless (default: warn)." },
+        "complexity": { "$ref": "#/properties/lints/definitions/level", "description": "Code that could be simpler (default: warn)." },
+        "style": { "$ref": "#/properties/lints/definitions/level", "description": "Code that does not follow conventions (default: warn)." },
+        "pedantic": { "$ref": "#/properties/lints/definitions/level", "description": "Lints that are often too strict (default: allow)." },
+        "unused-local": { "$ref": "#/properties/lints/definitions/level", "description": "suspicious: a local variable whose value is never read." },
+        "unreachable-code": { "$ref": "#/properties/lints/definitions/level", "description": "suspicious: statements after a Return." },
+        "bool-literal-comparison": { "$ref": "#/properties/lints/definitions/level", "description": "complexity: a comparison with True or False." }
+      }
+    },
     "format": {
       "type": "object",
       "additionalProperties": false,

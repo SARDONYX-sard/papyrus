@@ -188,6 +188,9 @@ impl Server {
         use lsp_types::request::*;
         match method {
             HoverRequest::METHOD => handle::<HoverRequest>(self, params, Server::hover),
+            request::CodeActionRequest::METHOD => {
+                handle::<request::CodeActionRequest>(self, params, Server::code_actions)
+            }
             request::GotoDeclaration::METHOD => {
                 handle::<request::GotoDeclaration>(self, params, Server::goto_declaration)
             }
@@ -618,6 +621,7 @@ impl Server {
         let diagnostics = papyrus_ide::diagnostics(&self.ws, file)
             .into_iter()
             .filter(|d| self.config.semantic_diagnostics || !d.needs_workspace())
+            .chain(papyrus_lint::lint(&self.ws, file, &self.lint_config()))
             .map(|d| lsp_types::Diagnostic {
                 range: lines.range(d.range),
                 severity: Some(match d.severity {

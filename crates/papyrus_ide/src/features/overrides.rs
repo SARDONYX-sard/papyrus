@@ -94,8 +94,10 @@ fn base_of(sema: &Sema<'_>, script: Name, name: Name) -> Option<(Name, NavTarget
 /// The end of the first line of the declaration whose name is at `name`.
 fn header_end(sema: &Sema<'_>, name: TextRange) -> Option<TextSize> {
     let tok = sema.root.token_at_offset(name.start()).right_biased()?;
-    let decl: SyntaxNode<'_> =
-        tok.parent()?.ancestors().find(|n| matches!(n.kind(), SyntaxKind::FUNCTION | SyntaxKind::EVENT))?;
+    let decl: SyntaxNode<'_> = tok
+        .parent()?
+        .ancestors()
+        .find(|n| matches!(n.kind(), SyntaxKind::FUNCTION | SyntaxKind::EVENT))?;
     let mut end = None;
     let mut cur = decl.first_token();
     while let Some(t) = cur {
@@ -115,8 +117,11 @@ fn header_end(sema: &Sema<'_>, name: TextRange) -> Option<TextSize> {
 pub fn overridden(ws: &Workspace, file: FileId) -> Vec<Overridden> {
     let index = &ws.file(file).index;
     let Some(script) = index.name else { return Vec::new() };
-    let children: Vec<(FileId, &ScriptIndex)> =
-        ws.files().filter(|(f, data)| *f != file && extends(ws, &data.index, script)).map(|(f, d)| (f, &*d.index)).collect();
+    let children: Vec<(FileId, &ScriptIndex)> = ws
+        .files()
+        .filter(|(f, data)| *f != file && extends(ws, &data.index, script))
+        .map(|(f, d)| (f, &*d.index))
+        .collect();
     if children.is_empty() {
         return Vec::new();
     }

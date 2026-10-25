@@ -16,6 +16,7 @@ papyrus_compiler.workspace = true
 papyrus_decompiler.workspace = true
 papyrus_fmt.workspace = true
 papyrus_ide.workspace = true
+papyrus_lint.workspace = true
 papyrus_parser.workspace = true
 papyrus_pex.workspace = true
 papyrus_project.workspace = true
@@ -25,6 +26,7 @@ crossbeam-channel.workspace = true
 lsp-server = "0.8.0"
 lsp-types = "0.97"
 log = "0.4"
+rayon.workspace = true
 rustc-hash.workspace = true
 env_logger = "0.11"
 serde = { version = "1", features = ["derive"] }

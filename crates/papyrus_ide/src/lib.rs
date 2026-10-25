@@ -9,6 +9,7 @@
 //! the whole workspace can be indexed up front, while syntax trees only exist
 //! for open files or temporarily during a query.
 
+pub mod assists;
 mod db;
 mod features;
 pub mod flags;
@@ -37,7 +38,7 @@ pub use crate::{
             Highlight, NavFile, NavTarget, flag_references, goto_declaration, goto_definition,
             highlight, references,
         },
-        overrides::{Override, OverrideKind, Overridden, overridden, overrides},
+        overrides::{Overridden, Override, OverrideKind, overridden, overrides},
         semantic_tokens::{SemanticToken, TokenModifier, TokenType, semantic_tokens},
         signature_help::{SignatureHelp, signature_help},
         symbols::{

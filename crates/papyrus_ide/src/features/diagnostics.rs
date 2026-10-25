@@ -53,11 +53,13 @@ impl Diagnostic {
             || TYPE_CODES.contains(&self.code)
     }
 
-    fn error(range: TextRange, code: &'static str, message: impl Into<String>) -> Diagnostic {
+    /// An error.
+    pub fn error(range: TextRange, code: &'static str, message: impl Into<String>) -> Diagnostic {
         Diagnostic { range, severity: Severity::Error, message: message.into(), code }
     }
 
-    fn warning(range: TextRange, code: &'static str, message: impl Into<String>) -> Diagnostic {
+    /// A warning.
+    pub fn warning(range: TextRange, code: &'static str, message: impl Into<String>) -> Diagnostic {
         Diagnostic { range, severity: Severity::Warning, message: message.into(), code }
     }
 }

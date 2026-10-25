@@ -20,10 +20,13 @@ pub(crate) fn run(args: &[String]) -> i32 {
         collect(path, &mut scripts);
     }
 
+    // Files are independent: formatted in parallel, reported in order.
+    use rayon::prelude::*;
+    let results: Vec<_> = scripts.par_iter().map(|s| format_file(s, check)).collect();
     let mut failed = false;
     let mut changed = 0;
-    for script in &scripts {
-        match format_file(script, check) {
+    for (script, result) in scripts.iter().zip(results) {
+        match result {
             Ok(true) => {
                 changed += 1;
                 if check {

@@ -142,7 +142,7 @@ pub fn flag_references(
     find_references(ws, Def::Flag(i as u32), flags.defs[i].name, include_declaration)
 }
 
-fn find_references(
+pub(crate) fn find_references(
     ws: &Workspace,
     def: Def,
     name: Name,
@@ -217,7 +217,7 @@ fn is_declaration(ws: &Workspace, def: Def, file: FileId, range: TextRange) -> b
     }
 }
 
-fn def_name(sema: &Sema<'_>, def: Def) -> Option<Name> {
+pub(crate) fn def_name(sema: &Sema<'_>, def: Def) -> Option<Name> {
     Some(match def {
         Def::Local { name, .. } => name,
         Def::Member { file, index } => sema.member(file, index).name,

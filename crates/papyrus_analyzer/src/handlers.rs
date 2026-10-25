@@ -360,18 +360,21 @@ impl Server {
             }),
             data: None,
         };
-        let mut lenses = vec![lens("▶\u{fe0e} Compile", "papyrus.compile", Some(vec![uri.clone()]))];
+        let mut lenses =
+            vec![lens("▶\u{fe0e} Compile", "papyrus.compile", Some(vec![uri.clone()]))];
         // `overridden in N scripts` above functions child scripts replace;
         // the client turns the arguments into a references view.
         let mut cache = FxHashMap::default();
         for o in papyrus_ide::overridden(&self.ws, file) {
-            let locations: Vec<Location> = o
-                .by
-                .iter()
-                .filter_map(|t| self.nav_location(t.file, t.focus_range, &mut cache))
-                .collect();
+            let locations: Vec<Location> =
+                o.by.iter()
+                    .filter_map(|t| self.nav_location(t.file, t.focus_range, &mut cache))
+                    .collect();
             let position = lines.position(o.name_range.start());
-            let line = lsp_types::Range::new(Position::new(position.line, 0), Position::new(position.line, 0));
+            let line = lsp_types::Range::new(
+                Position::new(position.line, 0),
+                Position::new(position.line, 0),
+            );
             let title = match locations.len() {
                 1 => "overridden in 1 script".to_owned(),
                 n => format!("overridden in {n} scripts"),
@@ -517,8 +520,8 @@ impl Server {
         let range = lines.text_range(params.range);
         let mut out = Vec::new();
         if self.config.inlay_hints.parameter_names {
-            out.extend(papyrus_ide::inlay_hints(&self.ws, file, Some(range)).into_iter().map(|h| {
-                InlayHint {
+            out.extend(papyrus_ide::inlay_hints(&self.ws, file, Some(range)).into_iter().map(
+                |h| InlayHint {
                     position: lines.position(h.offset),
                     label: InlayHintLabel::String(h.label),
                     kind: Some(InlayHintKind::PARAMETER),
@@ -530,8 +533,8 @@ impl Server {
                     padding_left: None,
                     padding_right: Some(true),
                     data: None,
-                }
-            }));
+                },
+            ));
         }
         if self.config.inlay_hints.overrides {
             let mut cache = FxHashMap::default();
@@ -545,9 +548,10 @@ impl Server {
                     papyrus_ide::OverrideKind::Override => {
                         ("overrides ", format!("Replaces the function of `{}`", o.base_script))
                     }
-                    papyrus_ide::OverrideKind::EngineEvent => {
-                        ("event of ", format!("An event the game sends, declared by `{}`", o.base_script))
-                    }
+                    papyrus_ide::OverrideKind::EngineEvent => (
+                        "event of ",
+                        format!("An event the game sends, declared by `{}`", o.base_script),
+                    ),
                 };
                 out.push(InlayHint {
                     position: lines.position(o.hint_offset),
@@ -573,6 +577,66 @@ impl Server {
             }
         }
         Some(out)
+    }
+    /// Assists and lint fixes at the selection, as code actions. Quick fixes
+    /// carry the diagnostics they fix.
+    pub(crate) fn code_actions(
+        &mut self,
+        params: lsp_types::CodeActionParams,
+    ) -> Option<lsp_types::CodeActionResponse> {
+        use lsp_types::{CodeActionKind, CodeActionOrCommand, NumberOrString};
+
+        let file = self.file(&params.text_document.uri).ok()?;
+        let lines = Lines::of(&self.ws, file)?;
+        let range = lines.text_range(params.range);
+        let mut assists = papyrus_ide::assists::assists(&self.ws, file, range);
+        assists.extend(papyrus_lint::fixes(&self.ws, file, range, &self.lint_config()));
+        let only = params.context.only.unwrap_or_default();
+        let uri = params.text_document.uri;
+        let actions = assists
+            .into_iter()
+            .filter_map(|a| {
+                let kind = match a.kind {
+                    papyrus_ide::assists::AssistKind::QuickFix => CodeActionKind::QUICKFIX,
+                    papyrus_ide::assists::AssistKind::RefactorRewrite => {
+                        CodeActionKind::REFACTOR_REWRITE
+                    }
+                };
+                if !only.is_empty() && !only.iter().any(|o| kind.as_str().starts_with(o.as_str())) {
+                    return None;
+                }
+                let diagnostics: Vec<lsp_types::Diagnostic> = params
+                    .context
+                    .diagnostics
+                    .iter()
+                    .filter(|d| {
+                        a.fixes.is_some_and(|code| {
+                            d.code == Some(NumberOrString::String(code.to_owned()))
+                        })
+                    })
+                    .cloned()
+                    .collect();
+                let edits = a
+                    .edits
+                    .into_iter()
+                    .map(|e| TextEdit { range: lines.range(e.range), new_text: e.new_text })
+                    .collect();
+                #[allow(clippy::mutable_key_type)]
+                let changes = std::iter::once((uri.clone(), edits)).collect();
+                Some(CodeActionOrCommand::CodeAction(lsp_types::CodeAction {
+                    title: a.label,
+                    kind: Some(kind),
+                    is_preferred: Some(!diagnostics.is_empty()),
+                    diagnostics: (!diagnostics.is_empty()).then_some(diagnostics),
+                    edit: Some(lsp_types::WorkspaceEdit {
+                        changes: Some(changes),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }))
+            })
+            .collect();
+        Some(actions)
     }
     pub(crate) fn syntax_tree(&mut self, params: ext::SyntaxTreeParams) -> String {
         let Ok(file) = self.file(&params.text_document.uri) else { return String::new() };

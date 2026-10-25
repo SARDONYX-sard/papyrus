@@ -373,12 +373,18 @@ fn overrides_and_overridden() {
         .collect();
     assert_eq!(
         found,
-        [("Base".to_owned(), crate::OverrideKind::EngineEvent), ("Base".to_owned(), crate::OverrideKind::Override)]
+        [
+            ("Base".to_owned(), crate::OverrideKind::EngineEvent),
+            ("Base".to_owned(), crate::OverrideKind::Override)
+        ]
     );
     // The hint goes after the flags of the header line.
     let o = &crate::overrides(&ws, file)[1];
     let text = ws.text(file).unwrap();
-    assert_eq!(&text[..usize::from(o.hint_offset)].lines().last().unwrap(), &"Function Run() Global");
+    assert_eq!(
+        &text[..usize::from(o.hint_offset)].lines().last().unwrap(),
+        &"Function Run() Global"
+    );
 
     let base_file = ws.file_id(std::path::Path::new("/ws/Base.psc")).unwrap();
     let overridden = crate::overridden(&ws, base_file);

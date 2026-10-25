@@ -436,6 +436,15 @@ impl Server {
         crate::decompile::decompile_file(&path, params.assembly).map(|(_, text)| text)
     }
 
+    /// The lint levels: `[lints]` of `papyrus.toml`, which is read on its own
+    /// when the rest of the manifest does not load (e.g. undefined variables).
+    pub(crate) fn lint_config(&self) -> papyrus_lint::LintConfig {
+        match (&self.project, &self.manifest) {
+            (Some(p), _) => p.lints.clone(),
+            (None, Some(manifest)) => papyrus_project::load_lints(manifest).unwrap_or_default(),
+            (None, None) => papyrus_lint::LintConfig::default(),
+        }
+    }
     /// The output directories of each workspace folder, for `papyrus/status`.
     pub(crate) fn build_dirs(&self) -> Vec<BuildDirs> {
         self.roots

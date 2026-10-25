@@ -95,6 +95,8 @@ struct RawManifest {
     build: RawBuild,
     #[serde(default)]
     format: RawFormat,
+    #[serde(default)]
+    lints: BTreeMap<String, Spanned<toml::Value>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -171,6 +173,48 @@ impl FormatSettings {
             options.final_newline = final_newline;
         }
     }
+}
+
+/// The `[lints]` table: `name = "level"` or `name = { level = "level" }`, by
+/// lint, group or `all`, as in the `[lints]` of `Cargo.toml`.
+fn lint_settings(
+    raw: &BTreeMap<String, Spanned<toml::Value>>,
+    errors: &mut Vec<ManifestError>,
+) -> papyrus_lint::LintConfig {
+    let mut config = papyrus_lint::LintConfig::default();
+    for (name, value) in raw {
+        let span = Some(value.span()).filter(|r| !r.is_empty());
+        let level = match value.get_ref() {
+            toml::Value::String(s) => Some(s.as_str()),
+            toml::Value::Table(t) => t.get("level").and_then(toml::Value::as_str),
+            _ => None,
+        };
+        let Some(level) = level else {
+            errors.push(ManifestError::new(
+                format!("`{name}` must be a level (\"allow\", \"warn\", \"deny\") or {{ level = \"...\" }}"),
+                span,
+            ));
+            continue;
+        };
+        let result = level.parse().and_then(|level| config.set(name, level));
+        if let Err(e) = result {
+            errors.push(ManifestError::new(e, span));
+        }
+    }
+    config
+}
+
+/// Reads only the `[lints]` table of a manifest; like [`load_format`], it
+/// needs no variables.
+pub fn load_lints(manifest_path: &Path) -> Result<papyrus_lint::LintConfig, Vec<ManifestError>> {
+    let text = std::fs::read_to_string(manifest_path).map_err(|e| {
+        vec![ManifestError::new(format!("cannot read {}: {e}", manifest_path.display()), None)]
+    })?;
+    let raw: RawManifest = toml::from_str(&text)
+        .map_err(|e| vec![ManifestError::new(e.message().to_owned(), e.span())])?;
+    let mut errors = Vec::new();
+    let config = lint_settings(&raw.lints, &mut errors);
+    if errors.is_empty() { Ok(config) } else { Err(errors) }
 }
 
 fn format_settings(raw: &RawFormat, errors: &mut Vec<ManifestError>) -> FormatSettings {
@@ -341,6 +385,8 @@ pub struct Project {
     pub quiet: bool,
     /// `[format]`: formatter settings.
     pub format: FormatSettings,
+    /// `[lints]`: the levels of the lints.
+    pub lints: papyrus_lint::LintConfig,
     /// The variables used by the manifest, with their value and origin.
     pub variables: BTreeMap<String, (String, VarSource)>,
     /// Non-fatal problems, e.g. directories that do not exist.
@@ -512,6 +558,7 @@ pub fn parse(
     let flags = raw.build.flags.as_ref().map(|p| resolver.path(p));
     let extra_args = raw.compiler.args.iter().map(|a| resolver.expand(a, None)).collect();
     let format = format_settings(&raw.format, &mut resolver.errors);
+    let lints = lint_settings(&raw.lints, &mut resolver.errors);
 
     if !resolver.errors.is_empty() {
         return Err(resolver.errors);
@@ -564,6 +611,7 @@ pub fn parse(
         r#final: raw.build.r#final,
         quiet: raw.build.quiet,
         format,
+        lints,
         variables,
         warnings,
     })
@@ -679,6 +727,7 @@ impl Project {
             r#final: false,
             quiet: true,
             format: FormatSettings::default(),
+            lints: papyrus_lint::LintConfig::default(),
             variables: BTreeMap::new(),
             warnings: Vec::new(),
         }
@@ -869,6 +918,12 @@ release = false
 final = false
 quiet = true
 
+# Lint levels: "allow", "warn" or "deny", by lint (`papyrus_analyzer lint --list`),
+# by group (correctness, suspicious, complexity, style, pedantic) or "all".
+[lints]
+# complexity = "allow"
+# unused-local = "deny"
+
 # Formatter settings. Unset values come from .editorconfig, then from the editor.
 [format]
 # indent-style = "space"        # space or tab
@@ -1047,6 +1102,23 @@ mod tests {
         assert_eq!(s(&c.program), "pa");
         assert_eq!(c.args[..2], ["compile".to_owned(), "/m/X.psc".to_owned()]);
         assert!(c.args[2].starts_with("-import="));
+    }
+
+    #[test]
+    fn lint_levels() {
+        let p = parse_str(
+            "[lints]\nall = \"warn\"\ncomplexity = \"allow\"\nunused-local = { level = \"deny\" }\n",
+        )
+        .unwrap();
+        let level = |code| p.lints.level(papyrus_lint::find(code).unwrap());
+        assert_eq!(level("unused-local"), papyrus_lint::Level::Deny);
+        assert_eq!(level("bool-literal-comparison"), papyrus_lint::Level::Allow);
+        assert_eq!(level("unreachable-code"), papyrus_lint::Level::Warn);
+
+        let errors = parse_str("[lints]\nbogus = \"deny\"\nstyle = \"loud\"\n").unwrap_err();
+        let messages: Vec<&str> = errors.iter().map(|e| e.message.as_str()).collect();
+        assert_eq!(messages.len(), 2, "{messages:?}");
+        assert!(messages[0].contains("bogus") && messages[1].contains("loud"));
     }
 
     #[test]

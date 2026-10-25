@@ -11,6 +11,7 @@ mod disasm;
 mod ext;
 mod fmt;
 mod handlers;
+mod lint;
 mod project;
 mod server;
 
@@ -42,6 +43,9 @@ fn main() -> anyhow::Result<()> {
     }
     if args.first().is_some_and(|a| a == "disasm") {
         std::process::exit(disasm::run(&args[1..]));
+    }
+    if args.first().is_some_and(|a| a == "lint") {
+        std::process::exit(lint::run(&args[1..]));
     }
     if args.first().is_some_and(|a| a == "fmt") {
         let code = fmt::run(&args[1..]);
@@ -87,6 +91,15 @@ fn capabilities() -> ServerCapabilities {
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         definition_provider: Some(OneOf::Left(true)),
         declaration_provider: Some(lsp_types::DeclarationCapability::Simple(true)),
+        code_action_provider: Some(lsp_types::CodeActionProviderCapability::Options(
+            lsp_types::CodeActionOptions {
+                code_action_kinds: Some(vec![
+                    lsp_types::CodeActionKind::QUICKFIX,
+                    lsp_types::CodeActionKind::REFACTOR_REWRITE,
+                ]),
+                ..Default::default()
+            },
+        )),
         references_provider: Some(OneOf::Left(true)),
         document_highlight_provider: Some(OneOf::Left(true)),
         document_symbol_provider: Some(OneOf::Left(true)),
