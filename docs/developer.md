@@ -51,15 +51,15 @@ Tests (`cargo test`):
 ## Building the extension
 
 - `npm run debug` — debug server and extension, run before the `Run Papyrus Analyzer Extension` launch configuration (F5).
-- `npm run release` — release server and extension in `dist/`.
+- `npm run release` — release server and extension in `build/`.
 - `npm run package` — `build/papyrus-analyzer.vsix` for this machine.
 - `npm run check` — type checks the extension.
 - `npm run grammar` — regenerates the TextMate grammars of `syntaxes/`.
 
-`dist.cjs` does the packaging:
+`build.cjs` does the packaging; everything goes to `build/`:
 
-- `node dist.cjs` — copies the server next to the extension.
-- `node dist.cjs --vsix --target <triple>` — builds `build/papyrus-analyzer-<platform>.vsix`.
+- `node build.cjs` — copies the server next to the extension.
+- `node build.cjs --vsix --target <triple>` — builds `build/papyrus-analyzer-<platform>.vsix`.
 
 ## CI
 

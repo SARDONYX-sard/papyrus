@@ -5,6 +5,11 @@
   "version": "0.0.1",
   "publisher": "SARDONYX",
   "license": "MIT OR Apache-2.0",
+  "icon": "resources/icon.png",
+  "galleryBanner": {
+    "color": "#1e2533",
+    "theme": "dark"
+  },
   "type": "module",
   "repository": {
     "type": "git",
@@ -19,7 +24,7 @@
   "activationEvents": [
     "workspaceContains:**/*.psc"
   ],
-  "main": "dist/extension.js",
+  "main": "build/extension.js",
   "contributes": {
     "languages": [
       {
@@ -150,6 +155,12 @@
         "category": "Papyrus",
         "icon": "$(refresh)",
         "command": "papyrus.scripts.refresh"
+      },
+      {
+        "title": "Expand All",
+        "category": "Papyrus",
+        "icon": "$(expand-all)",
+        "command": "papyrus.scripts.expandAll"
       },
       {
         "title": "Run",
@@ -328,16 +339,6 @@
       ],
       "view/title": [
         {
-          "command": "papyrus.scripts.decompileMode",
-          "when": "view == papyrus.scripts && papyrus.scriptsMode != decompile",
-          "group": "navigation@1"
-        },
-        {
-          "command": "papyrus.scripts.compileMode",
-          "when": "view == papyrus.scripts && papyrus.scriptsMode == decompile",
-          "group": "navigation@1"
-        },
-        {
           "command": "papyrus.scripts.runAll",
           "when": "view == papyrus.scripts",
           "group": "navigation@2"
@@ -346,12 +347,17 @@
           "command": "papyrus.scripts.refresh",
           "when": "view == papyrus.scripts",
           "group": "navigation@3"
+        },
+        {
+          "command": "papyrus.scripts.expandAll",
+          "when": "view == papyrus.scripts",
+          "group": "navigation@4"
         }
       ],
       "view/item/context": [
         {
           "command": "papyrus.scripts.run",
-          "when": "view == papyrus.scripts && viewItem == papyrusFolder",
+          "when": "view == papyrus.scripts && viewItem =~ /^papyrus(File|Folder)$/",
           "group": "inline"
         },
         {
@@ -361,7 +367,7 @@
         },
         {
           "command": "papyrus.scripts.open",
-          "when": "view == papyrus.scripts && viewItem == papyrusFile",
+          "when": "view == papyrus.scripts && viewItem =~ /^papyrusFile(Other)?$/",
           "group": "1_run"
         }
       ]
@@ -420,11 +426,11 @@
   "scripts": {
     "compile": "vite build --config extension/vite.config.ts",
     "build:server": "cargo build --release",
-    "release": "npm run compile && npm run build:server && node ./dist.cjs",
-    "package": "npm run build:server && node ./dist.cjs --vsix",
+    "release": "npm run compile && npm run build:server && node ./build.cjs",
+    "package": "npm run build:server && node ./build.cjs --vsix",
     "check": "tsc -p ./extension",
     "compile:debug": "vite build --config extension/vite.config.ts --mode development",
-    "debug": "npm run compile:debug && cargo build && node ./dist.cjs --profile debug",
+    "debug": "npm run compile:debug && cargo build && node ./build.cjs --profile debug",
     "grammar": "node syntaxes/generate.mjs"
   },
   "devDependencies": {

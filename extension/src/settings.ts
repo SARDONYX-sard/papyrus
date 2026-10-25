@@ -30,7 +30,7 @@ export function serverPath(context: vscode.ExtensionContext): string {
     return expandPath(configured);
   }
   const exe = process.platform === "win32" ? "papyrus_analyzer.exe" : "papyrus_analyzer";
-  return context.asAbsolutePath(path.join("dist", exe));
+  return context.asAbsolutePath(path.join("build", exe));
 }
 
 /** Extra command line arguments of the server. */

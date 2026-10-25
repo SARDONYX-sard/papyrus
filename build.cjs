@@ -1,7 +1,7 @@
-// Copies the language server next to the compiled extension, and optionally
-// packages a platform specific VSIX.
+// Copies the language server next to the compiled extension in build/, and
+// optionally packages a platform specific VSIX.
 //
-// usage: node dist.cjs [--vsix] [--target <rust triple>] [--profile <name>] [--binary <path>]
+// usage: node build.cjs [--vsix] [--target <rust triple>] [--profile <name>] [--binary <path>]
 //
 //   --target   the Rust target the server was built for, e.g. x86_64-pc-windows-msvc
 //              (default: the host build in target/<profile>/)
@@ -38,13 +38,13 @@ const exe = windows ? "papyrus_analyzer.exe" : "papyrus_analyzer";
 const src =
   option("--binary") ?? path.join(__dirname, "target", ...(target ? [target] : []), profile, exe);
 
-const distDir = path.join(__dirname, "dist");
-fs.mkdirSync(distDir, { recursive: true });
+const buildDir = path.join(__dirname, "build");
+fs.mkdirSync(buildDir, { recursive: true });
 // Only one server binary per package: remove the one of another platform.
 for (const old of ["papyrus_analyzer", "papyrus_analyzer.exe"]) {
-  if (old !== exe) fs.rmSync(path.join(distDir, old), { force: true });
+  if (old !== exe) fs.rmSync(path.join(buildDir, old), { force: true });
 }
-const dst = path.join(distDir, exe);
+const dst = path.join(buildDir, exe);
 fs.copyFileSync(src, dst);
 if (!windows) fs.chmodSync(dst, 0o755);
 console.log(`copied ${src} -> ${dst}`);
@@ -58,9 +58,12 @@ if (vsix) {
   run("npm run compile");
   const platform = target ? PLATFORMS[target] : undefined;
   if (target && !platform) throw new Error(`no VS Code platform for target ${target}`);
-  fs.mkdirSync(path.join(__dirname, "build"), { recursive: true });
   const out = `build/papyrus-analyzer${platform ? `-${platform}` : ""}.vsix`;
-  // Vite bundles the dependencies into dist/extension.js.
-  run(`npx --yes @vscode/vsce package --no-dependencies ${platform ? `--target ${platform}` : ""} --out ${out}`);
+  // Vite bundles the dependencies into build/extension.js. vsce only looks for
+  // one `LICENSE[.md|.txt]` file; LICENSE-MIT and LICENSE-APACHE are packaged
+  // through .vscodeignore, so its check (and its y/N prompt) is skipped.
+  run(
+    `npx --yes @vscode/vsce package --no-dependencies --skip-license ${platform ? `--target ${platform}` : ""} --out ${out}`,
+  );
   console.log(`packaged ${out}`);
 }

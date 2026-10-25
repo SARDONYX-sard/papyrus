@@ -10,10 +10,10 @@
 !schemas/**
 !resources/**
 
-# The bundled extension (see extension/vite.config.ts) and the server binary (see dist.cjs).
-!dist/extension.js
-!dist/papyrus_analyzer
-!dist/papyrus_analyzer.exe
+# The bundled extension (see extension/vite.config.ts) and the server binary (see build.cjs).
+!build/extension.js
+!build/papyrus_analyzer
+!build/papyrus_analyzer.exe
 
 # The grammar generator.
 syntaxes/*.mjs

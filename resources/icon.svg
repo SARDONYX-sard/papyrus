@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <!-- The extension icon: a papyrus scroll of code under a magnifying glass.
+       resources/icon.png is rendered from this file (256x256). -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2b3445"/>
+      <stop offset="1" stop-color="#161b25"/>
+    </linearGradient>
+    <linearGradient id="paper" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f3e3b8"/>
+      <stop offset="1" stop-color="#d9bf86"/>
+    </linearGradient>
+    <linearGradient id="roll" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#c9a464"/>
+      <stop offset="1" stop-color="#9c7a3e"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="256" height="256" rx="48" fill="url(#bg)"/>
+
+  <!-- Scroll: sheet, top roll, bottom roll. -->
+  <rect x="62" y="52" width="122" height="150" fill="url(#paper)"/>
+  <rect x="50" y="38" width="146" height="26" rx="13" fill="url(#roll)"/>
+  <circle cx="63" cy="51" r="7" fill="#7d5f2c"/>
+  <rect x="50" y="190" width="146" height="26" rx="13" fill="url(#roll)"/>
+  <circle cx="183" cy="203" r="7" fill="#7d5f2c"/>
+
+  <!-- Code lines. -->
+  <g stroke-linecap="round" stroke-width="9">
+    <path d="M80 92h40" stroke="#8a4fbf"/>
+    <path d="M128 92h34" stroke="#5b4a32"/>
+    <path d="M92 118h56" stroke="#5b4a32"/>
+    <path d="M92 144h30" stroke="#2f7d6d"/>
+    <path d="M80 170h46" stroke="#8a4fbf"/>
+  </g>
+
+  <!-- Magnifying glass. -->
+  <g>
+    <path d="M196 196l30 30" stroke="#e8edf5" stroke-width="16" stroke-linecap="round"/>
+    <circle cx="170" cy="170" r="36" fill="#9fd4ff" fill-opacity="0.28" stroke="#e8edf5" stroke-width="10"/>
+    <path d="M154 170l11 11 21-23" fill="none" stroke="#5be08a" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

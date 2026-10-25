@@ -7,20 +7,23 @@ import { DecompileFilesRequest } from "./protocol";
 import { state } from "./state";
 
 /**
- * The Papyrus scripts view: the scripts of the workspace as a tree, in one of
- * two modes, switched from the title bar:
+ * The Papyrus scripts view: the `.psc` and `.pex` files of the workspace as
+ * one tree. The mode, switched by a click on the first row, chooses which of
+ * them the view acts on:
  *
  * - compile: the `.psc` sources (`[build] sources` of papyrus.toml, else the
- *   workspace folders); a click compiles a script;
- * - decompile: the `.pex` files of the workspace folders; a click decompiles
- *   one and opens the result.
+ *   workspace folders), outside of the build directories;
+ * - decompile: the `.pex` files.
  *
- * In compile mode, a row below the mode shows the compiler: built-in, or
- * `[compiler] path` of papyrus.toml.
+ * The other files stay visible, dimmed like ignored files, so that outputs
+ * show up next to their sources as they are written; files written since the
+ * last run get a dot. Below the mode, the compiler (compile mode) and the
+ * output directory of the mode.
  *
- * Folders have a button running the action on everything below them. Each
- * script shows the result of its last run. Outputs keep the directory
- * structure: `[build] output` of papyrus.toml (`decompile` below it), else
+ * A click opens a file; the ▶ button of a file or folder runs the
+ * action on it (everything below, for a folder). Each script shows the
+ * result of its last run. Outputs keep the directory structure:
+ * `[build] output` of papyrus.toml (`decompile` below it), else
  * `build/papyrus/compile` and `build/papyrus/decompile` of the workspace
  * folder.
  */
@@ -29,6 +32,8 @@ type Mode = "compile" | "decompile";
 type Status = "running" | "passed" | "failed";
 
 const MODE_KEY = "papyrus.scriptsView.mode";
+/** The scheme of the rows, so that their decorations stay in this view. */
+const SCHEME = "papyrus-scripts";
 
 interface FolderNode {
   kind: "folder";
@@ -47,12 +52,17 @@ interface ModeNode {
   kind: "mode";
 }
 
-/** In compile mode, the second row: the compiler used, built-in or `[compiler] path`. */
+/** In compile mode: the compiler used, built-in or `[compiler] path`. */
 interface CompilerNode {
   kind: "compiler";
 }
 
-type Node = ModeNode | CompilerNode | FolderNode | FileNode;
+/** Where the mode writes its files; a click reveals the directory. */
+interface OutputNode {
+  kind: "output";
+}
+
+type Node = ModeNode | CompilerNode | OutputNode | FolderNode | FileNode;
 
 /** Path comparison key; Windows paths ignore case. */
 function key(p: string): string {
@@ -65,16 +75,35 @@ function isBelow(file: string, dir: string): boolean {
   return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
 }
 
-class ScriptsProvider implements vscode.TreeDataProvider<Node> {
+function isWithin(file: string, dir: string): boolean {
+  return key(file) === key(dir) || isBelow(file, dir);
+}
+
+/** The row URI of a file: same path, own scheme. */
+function rowUri(uri: vscode.Uri): vscode.Uri {
+  return uri.with({ scheme: SCHEME });
+}
+
+class ScriptsProvider implements vscode.TreeDataProvider<Node>, vscode.FileDecorationProvider {
   private readonly changed = new vscode.EventEmitter<Node | undefined>();
   readonly onDidChangeTreeData = this.changed.event;
+  private readonly decorationsChanged = new vscode.EventEmitter<vscode.Uri | vscode.Uri[] | undefined>();
+  readonly onDidChangeFileDecorations = this.decorationsChanged.event;
   mode: Mode;
   private roots: Node[] = [];
   private loaded = false;
   private readonly statuses = new Map<string, Status>();
   private readonly errors = new Map<string, string>();
+  /** Files written since the last run started, by path key. */
+  private readonly fresh = new Set<string>();
   /** The file nodes by path key, to refresh one row when its status changes. */
   private nodes = new Map<string, FileNode>();
+  /**
+   * Part of the folder ids: VS Code keeps the expansion of known ids, so
+   * new ids are what applies `expanded` to every folder.
+   */
+  private generation = 0;
+  private expanded = false;
 
   constructor(private readonly memento: vscode.Memento) {
     this.mode = memento.get<Mode>(MODE_KEY, "compile");
@@ -83,12 +112,15 @@ class ScriptsProvider implements vscode.TreeDataProvider<Node> {
   async setMode(mode: Mode): Promise<void> {
     this.mode = mode;
     await this.memento.update(MODE_KEY, mode);
-    this.refresh();
+    // Same files, other targets.
+    this.changed.fire(undefined);
+    this.decorationsChanged.fire(undefined);
   }
 
   refresh(): void {
     this.loaded = false;
     this.changed.fire(undefined);
+    this.decorationsChanged.fire(undefined);
   }
 
   setStatus(file: string, status: Status, error?: string): void {
@@ -106,26 +138,81 @@ class ScriptsProvider implements vscode.TreeDataProvider<Node> {
     }
   }
 
-  /** The directories whose scripts are listed, and those to leave out. */
-  private dirs(): { include: string[]; exclude: string[] } {
-    const folders = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
-    const build = state.buildDirs.flatMap((b) => [b.compile, b.decompile]);
-    const defaults = folders.map((f) => path.join(f, "build", "papyrus"));
-    if (this.mode === "compile") {
-      // Decompiled scripts are not sources.
-      return { include: state.sources.length > 0 ? state.sources : folders, exclude: [...build, ...defaults] };
+  /** Expands every folder. Collapsing is the built-in button of the view. */
+  expandAll(): void {
+    this.generation += 1;
+    this.expanded = true;
+    this.changed.fire(undefined);
+  }
+
+  /** A file was written on disk. */
+  markFresh(uri: vscode.Uri): void {
+    this.fresh.add(key(uri.fsPath));
+    this.decorationsChanged.fire(rowUri(uri));
+  }
+
+  /** A run starts: earlier outputs are not new anymore. */
+  clearFresh(): void {
+    if (this.fresh.size > 0) {
+      this.fresh.clear();
+      this.decorationsChanged.fire(undefined);
     }
-    return { include: folders, exclude: [] };
+  }
+
+  /** The directories that get compiled or decompiled files. */
+  private buildDirs(): string[] {
+    const folders = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
+    return [
+      ...state.buildDirs.flatMap((b) => [b.compile, b.decompile]),
+      ...folders.map((f) => path.join(f, "build", "papyrus")),
+    ];
+  }
+
+  /** The output directories of the current mode. */
+  outputDirs(): string[] {
+    const dirs = state.buildDirs.map((b) => (this.mode === "compile" ? b.compile : b.decompile));
+    return [...new Map(dirs.map((d) => [key(d), d])).values()];
+  }
+
+  /** Whether the current mode acts on `file`. */
+  isTarget(file: string): boolean {
+    if (this.mode === "decompile") {
+      return file.toLowerCase().endsWith(".pex");
+    }
+    if (!file.toLowerCase().endsWith(".psc")) {
+      return false;
+    }
+    // Decompiled scripts are not sources.
+    if (this.buildDirs().some((dir) => isBelow(file, dir))) {
+      return false;
+    }
+    const folders = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
+    const sources = state.sources.length > 0 ? state.sources : folders;
+    return sources.some((dir) => isWithin(file, dir));
+  }
+
+  /** The workspace folders, plus the sources and outputs outside of them. */
+  private rootDirs(): string[] {
+    const roots: string[] = [];
+    const folders = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
+    const outputs = state.buildDirs.flatMap((b) => [b.compile, b.decompile]);
+    for (const dir of [...folders, ...state.sources, ...outputs]) {
+      if (!roots.some((r) => isWithin(dir, r))) {
+        roots.push(dir);
+      }
+    }
+    return roots;
   }
 
   private async load(): Promise<void> {
-    const { include, exclude } = this.dirs();
-    const pattern = this.mode === "compile" ? "**/*.psc" : "**/*.pex";
+    const include = this.rootDirs();
+    // Excludes are relative to each root: outputs below `target` (e.g.
+    // `${workspaceFolder}/target/...`) are found from their own root.
     const found = await Promise.all(
       include.map((dir) =>
         vscode.workspace.findFiles(
-          new vscode.RelativePattern(vscode.Uri.file(dir), pattern),
-          "**/{node_modules,target,.git}/**",
+          new vscode.RelativePattern(vscode.Uri.file(dir), "**/*.{psc,pex}"),
+          new vscode.RelativePattern(vscode.Uri.file(dir), "**/{node_modules,target,.git}/**"),
         ),
       ),
     );
@@ -139,10 +226,9 @@ class ScriptsProvider implements vscode.TreeDataProvider<Node> {
     found.forEach((files, i) => {
       for (const file of files) {
         const k = key(file.fsPath);
-        if (nodes.has(k) || exclude.some((dir) => isBelow(file.fsPath, dir))) {
-          continue;
+        if (!nodes.has(k)) {
+          nodes.set(k, insert(roots[i], file));
         }
-        nodes.set(k, insert(roots[i], file));
       }
     });
     this.nodes = nodes;
@@ -160,10 +246,53 @@ class ScriptsProvider implements vscode.TreeDataProvider<Node> {
       if (!this.loaded) {
         await this.load();
       }
-      const header: Node[] = this.mode === "compile" ? [{ kind: "mode" }, { kind: "compiler" }] : [{ kind: "mode" }];
+      const header: Node[] =
+        this.mode === "compile"
+          ? [{ kind: "mode" }, { kind: "compiler" }, { kind: "output" }]
+          : [{ kind: "mode" }, { kind: "output" }];
       return [...header, ...this.roots];
     }
     return node.kind === "folder" ? node.children : [];
+  }
+
+  /** The files of `node` the current mode acts on. */
+  targets(node: Node): vscode.Uri[] {
+    switch (node.kind) {
+      case "file":
+        return this.isTarget(node.uri.fsPath) ? [node.uri] : [];
+      case "folder":
+        return node.children.flatMap((c) => this.targets(c));
+      default:
+        return [];
+    }
+  }
+
+  provideFileDecoration(uri: vscode.Uri): vscode.FileDecoration | undefined {
+    if (uri.scheme !== SCHEME) {
+      return undefined;
+    }
+    const file = uri.with({ scheme: "file" });
+    const node = this.nodes.get(key(file.fsPath));
+    const folder = !node;
+    const active = folder ? this.folderHasTargets(file.fsPath) : this.isTarget(file.fsPath);
+    const fresh = !folder && this.fresh.has(key(file.fsPath));
+    if (active && !fresh) {
+      return undefined;
+    }
+    return {
+      badge: fresh ? "•" : undefined,
+      tooltip: fresh ? "Written since the last run" : undefined,
+      color: active ? undefined : new vscode.ThemeColor("gitDecoration.ignoredResourceForeground"),
+    };
+  }
+
+  private folderHasTargets(dir: string): boolean {
+    for (const node of this.nodes.values()) {
+      if (isBelow(node.uri.fsPath, dir) && this.isTarget(node.uri.fsPath)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   getTreeItem(node: Node): vscode.TreeItem {
@@ -177,8 +306,8 @@ class ScriptsProvider implements vscode.TreeDataProvider<Node> {
         new vscode.ThemeColor(compile ? "charts.green" : "charts.purple"),
       );
       item.tooltip = compile
-        ? "Compile mode: a click on a script compiles it. Click here to switch to decompile mode."
-        : "Decompile mode: a click on a .pex file decompiles it. Click here to switch to compile mode.";
+        ? "Compile mode: ▶ compiles the .psc sources. Click here to switch to decompile mode."
+        : "Decompile mode: ▶ decompiles the .pex files. Click here to switch to compile mode.";
       item.command = {
         command: compile ? "papyrus.scripts.decompileMode" : "papyrus.scripts.compileMode",
         title: "Switch mode",
@@ -188,16 +317,24 @@ class ScriptsProvider implements vscode.TreeDataProvider<Node> {
     if (node.kind === "compiler") {
       return compilerItem();
     }
+    if (node.kind === "output") {
+      return this.outputItem();
+    }
     if (node.kind === "folder") {
-      // Collapsed: a workspace may hold thousands of scripts.
-      const item = new vscode.TreeItem(node.name, vscode.TreeItemCollapsibleState.Collapsed);
-      item.resourceUri = node.uri;
-      item.contextValue = "papyrusFolder";
+      // Collapsed until "Expand All": a workspace may hold thousands of scripts.
+      const item = new vscode.TreeItem(
+        node.name,
+        this.expanded ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed,
+      );
+      item.id = `${this.generation}:${key(node.uri.fsPath)}`;
+      item.resourceUri = rowUri(node.uri);
+      item.contextValue = this.targets(node).length > 0 ? "papyrusFolder" : "papyrusFolderOther";
       item.iconPath = vscode.ThemeIcon.Folder;
+      item.tooltip = node.uri.fsPath;
       return item;
     }
-    const item = new vscode.TreeItem(node.uri, vscode.TreeItemCollapsibleState.None);
-    item.contextValue = "papyrusFile";
+    const item = new vscode.TreeItem(rowUri(node.uri), vscode.TreeItemCollapsibleState.None);
+    item.contextValue = this.isTarget(node.uri.fsPath) ? "papyrusFile" : "papyrusFileOther";
     const status = this.statuses.get(key(node.uri.fsPath));
     const error = this.errors.get(key(node.uri.fsPath));
     if (status === "running") {
@@ -210,11 +347,30 @@ class ScriptsProvider implements vscode.TreeDataProvider<Node> {
       item.iconPath = vscode.ThemeIcon.File;
     }
     item.tooltip = error ?? node.uri.fsPath;
-    item.command = {
-      command: "papyrus.scripts.run",
-      title: this.mode === "compile" ? "Compile" : "Decompile",
-      arguments: [node],
+    item.command = { command: "papyrus.scripts.open", title: "Open", arguments: [node] };
+    return item;
+  }
+
+  private outputItem(): vscode.TreeItem {
+    const dirs = this.outputDirs();
+    const folders = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
+    const show = (dir: string) => {
+      const folder = folders.find((f) => isWithin(dir, f));
+      return folder ? path.relative(folder, dir) || "." : dir;
     };
+    const item = new vscode.TreeItem(
+      `Output: ${dirs.length === 1 ? show(dirs[0]) : dirs.length === 0 ? "—" : `${dirs.length} folders`}`,
+    );
+    item.contextValue = "papyrusOutput";
+    item.iconPath = new vscode.ThemeIcon("folder-opened");
+    item.tooltip = dirs.length > 0 ? `${dirs.join("\n")}\n\nClick to reveal.` : "No output directory yet.";
+    if (dirs.length > 0) {
+      item.command = {
+        command: "revealFileInOS",
+        title: "Reveal",
+        arguments: [vscode.Uri.file(dirs[0])],
+      };
+    }
     return item;
   }
 }
@@ -224,7 +380,8 @@ function compilerItem(): vscode.TreeItem {
   const builtin = "built-in";
   const compilers = [...new Set(state.buildDirs.map((b) => b.compiler ?? builtin))];
   const only = compilers.length === 1 ? compilers[0] : undefined;
-  const label = compilers.length === 0 ? builtin : only === undefined ? "mixed" : only === builtin ? builtin : path.basename(only);
+  const label =
+    compilers.length === 0 ? builtin : only === undefined ? "mixed" : only === builtin ? builtin : path.basename(only);
   const item = new vscode.TreeItem(`Compiler: ${label}`);
   item.contextValue = "papyrusCompiler";
   item.iconPath = new vscode.ThemeIcon(only === builtin || compilers.length === 0 ? "package" : "tools");
@@ -270,22 +427,22 @@ function sort(folder: FolderNode): void {
   }
 }
 
-function files(node: Node): vscode.Uri[] {
-  switch (node.kind) {
-    case "mode":
-    case "compiler":
-      return [];
-    case "file":
-      return [node.uri];
-    default:
-      return node.children.flatMap(files);
+/** Opens a script, or the decompiled source of a `.pex` file. */
+function open(uri: vscode.Uri): void {
+  if (uri.fsPath.toLowerCase().endsWith(".pex")) {
+    void vscode.commands.executeCommand("papyrus.decompile", uri);
+  } else {
+    void vscode.window.showTextDocument(uri);
   }
 }
 
 /** Registers the view and its commands. */
 export function registerScriptsView(context: vscode.ExtensionContext): void {
   const provider = new ScriptsProvider(context.workspaceState);
-  const view = vscode.window.createTreeView("papyrus.scripts", { treeDataProvider: provider });
+  const view = vscode.window.createTreeView("papyrus.scripts", {
+    treeDataProvider: provider,
+    showCollapseAll: true,
+  });
   const updateMode = () => {
     // The section header, in capitals: the most visible text of the view.
     view.title = provider.mode === "compile" ? "Compile" : "Decompile";
@@ -327,6 +484,10 @@ export function registerScriptsView(context: vscode.ExtensionContext): void {
   };
 
   const run = async (uris: vscode.Uri[], single: boolean) => {
+    if (uris.length === 0) {
+      return;
+    }
+    provider.clearFresh();
     if (provider.mode === "compile") {
       await runCompile({ type: "papyrus", files: uris.map((u) => u.fsPath) });
     } else {
@@ -334,7 +495,7 @@ export function registerScriptsView(context: vscode.ExtensionContext): void {
     }
   };
 
-  const watcher = vscode.workspace.createFileSystemWatcher("**/*.{psc,pex}", false, true, false);
+  const watcher = vscode.workspace.createFileSystemWatcher("**/*.{psc,pex}");
   let timer: NodeJS.Timeout | undefined;
   const refreshSoon = () => {
     clearTimeout(timer);
@@ -345,7 +506,12 @@ export function registerScriptsView(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     view,
     watcher,
-    watcher.onDidCreate(refreshSoon),
+    vscode.window.registerFileDecorationProvider(provider),
+    watcher.onDidCreate((uri) => {
+      provider.markFresh(uri);
+      refreshSoon();
+    }),
+    watcher.onDidChange((uri) => provider.markFresh(uri)),
     watcher.onDidDelete(refreshSoon),
     compileEvents.event((e) => provider.setStatus(e.script, e.status)),
     vscode.commands.registerCommand("papyrus.scripts.compileMode", async () => {
@@ -357,21 +523,20 @@ export function registerScriptsView(context: vscode.ExtensionContext): void {
       updateMode();
     }),
     vscode.commands.registerCommand("papyrus.scripts.refresh", () => provider.refresh()),
+    vscode.commands.registerCommand("papyrus.scripts.expandAll", () => provider.expandAll()),
     vscode.commands.registerCommand("papyrus.scripts.run", (node: Node) =>
-      run(files(node), node.kind === "file"),
+      run(provider.targets(node), node.kind === "file"),
     ),
     vscode.commands.registerCommand("papyrus.scripts.runAll", async () => {
       const roots = await provider.getChildren();
-      await run(roots.flatMap(files), false);
+      await run(
+        roots.flatMap((r) => provider.targets(r)),
+        false,
+      );
     }),
     vscode.commands.registerCommand("papyrus.scripts.open", (node: Node) => {
-      if (node.kind !== "file") {
-        return;
-      }
-      if (provider.mode === "compile") {
-        void vscode.window.showTextDocument(node.uri);
-      } else {
-        void vscode.commands.executeCommand("papyrus.decompile", node.uri);
+      if (node.kind === "file") {
+        open(node.uri);
       }
     }),
   );

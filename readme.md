@@ -36,14 +36,16 @@ papyrus_analyzer disasm Foo.pex
 papyrus_compiler MyQuest -i=Source -o=Scripts -f=TESV_Papyrus_Flags.flg   # PapyrusCompiler.exe compatible
 ```
 
-VS Code: the **Papyrus** view of the activity bar compiles | decompiles in one click.
+VS Code: the **Papyrus** view of the activity bar shows `.psc` and `.pex` together and compiles | decompiles in one click.
 
 ```mermaid
 flowchart LR
-    mode{{"COMPILE MODE | DECOMPILE MODE"}} --> tree["scripts tree"]
-    tree -- "click a file" --> run["compile | decompile it"]
-    tree -- "▶ on a folder" --> all["everything below"]
+    mode{{"COMPILE MODE | DECOMPILE MODE<br/>(click to switch)"}} --> tree["scripts tree: .psc + .pex<br/>non-targets dimmed, new outputs •"]
+    tree -- "▶ on a file | folder" --> run["compile | decompile it (everything below)"]
+    tree -- "click a file" --> open["open it"]
 ```
+
+Header rows: `Compiler:` built-in | `[compiler] path` · `Output:` the output directory of the mode (click → reveal).
 
 ## `papyrus.toml`
 

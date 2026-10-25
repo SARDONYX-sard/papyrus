@@ -1,4 +1,4 @@
-// Bundles the extension into one CommonJS file, `dist/extension.js`.
+// Bundles the extension into one CommonJS file, `build/extension.js`.
 //
 // The SSR build targets Node; every dependency (vscode-languageclient, ...) is
 // bundled, so the VSIX needs no `node_modules`. Only `vscode`, provided by the
@@ -15,13 +15,13 @@ import { defineConfig } from "vite";
 
 export default defineConfig(({ mode }) => {
   const debug = mode === "development";
-  const outDir = path.join(import.meta.dirname, "../dist");
+  const outDir = path.join(import.meta.dirname, "../build");
   return {
     root: import.meta.dirname,
     plugins: [
       {
-        // `dist` also holds the server binary, so it is not emptied; drop the
-        // source map of a previous debug build instead.
+        // `build` also holds the server binary and the VSIX, so it is not
+        // emptied; drop the source map of a previous debug build instead.
         name: "remove-stale-sourcemap",
         buildStart() {
           if (!debug) fs.rmSync(path.join(outDir, "extension.js.map"), { force: true });

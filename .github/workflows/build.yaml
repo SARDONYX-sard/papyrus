@@ -91,7 +91,7 @@ jobs:
         run: npm ci
 
       - name: Package VSIX
-        run: node dist.cjs --vsix --target ${{ matrix.job.target }} --binary build/pkg/${{ env.EXE }}
+        run: node build.cjs --vsix --target ${{ matrix.job.target }} --binary build/pkg/${{ env.EXE }}
 
       - name: Upload artifacts
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
