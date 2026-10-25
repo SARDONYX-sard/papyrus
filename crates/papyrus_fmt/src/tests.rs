@@ -250,11 +250,8 @@ fn collect_psc(dir: &Path, out: &mut Vec<PathBuf>) {
 /// idempotently.
 #[test]
 fn corpus_formats_safely_and_idempotently() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(2)
-        .unwrap()
-        .join("tests/corpus");
+    let root =
+        Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(2).unwrap().join("tests/corpus");
     let mut files = Vec::new();
     collect_psc(&root, &mut files);
     if files.len() < 100 {

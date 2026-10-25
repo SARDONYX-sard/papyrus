@@ -860,11 +860,8 @@ fn collect_psc(dir: &Path, out: &mut Vec<PathBuf>) {
 /// and SKSE sources of `psc_deps`.
 #[test]
 fn corpus_has_no_semantic_diagnostics() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(2)
-        .unwrap()
-        .join("tests/corpus");
+    let root =
+        Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(2).unwrap().join("tests/corpus");
     let deps = root.join("psc_deps");
     let mut dep_files = Vec::new();
     collect_psc(&deps, &mut dep_files);
