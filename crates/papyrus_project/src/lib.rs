@@ -1009,89 +1009,73 @@ fn collect_scripts(dir: &Path, skipped: &[PathBuf], out: &mut Vec<PathBuf>) {
     }
 }
 /// A commented manifest to start from.
-pub const TEMPLATE: &str = r#"[package]
+pub const TEMPLATE: &str = r#"# papyrus.toml — shared with your team. Paths: relative to this file.
+# Machine paths → ${NAME} variables, first wins:
+#   papyrus.var setting | --var NAME=VALUE  >  papyrus.local.toml [var] (not committed)  >  [var] below
+# Built-ins: ${env:NAME} · ${workspaceFolder} · ${game:SkyrimSE | SkyrimLE | SkyrimVR | Enderal | EnderalSE} (registry, Windows)
+
+[package]
 name = "MyMod"
 version = "0.1.0"
 
-# This file is shared with your team: keep machine specific paths out of it and
-# write them as `${NAME}` variables. A variable is taken from, first wins:
-#   1. the `papyrus.var` editor setting, or `papyrus_analyzer --var NAME=VALUE`
-#   2. `[var]` of papyrus.local.toml next to this file (add it to .gitignore)
-#   3. `[var]` of this file, for values shared by everyone
-# An undefined variable is an error. `${env:NAME}` reads the environment
-# variable NAME, `${workspaceFolder}` is the workspace folder and
-# `${game:SkyrimSE}` (SkyrimLE, SkyrimVR, Enderal, EnderalSE) is the game
-# installation found in the registry. The registry only exists on Windows: on
-# other systems set SKYRIM_DIR in `papyrus.var` or papyrus.local.toml instead.
 [var]
 SKYRIM_DIR = "${game:SkyrimSE}"
 
-# Without `path`, the built-in compiler of papyrus_analyzer is used.
-[compiler]
+[compiler]                      # no path → built-in compiler
 path = "${SKYRIM_DIR}/Papyrus Compiler/PapyrusCompiler.exe"
-# Extra arguments passed as is.
-args = []
+args = []                       # extra arguments, as is
 
 [build]
-# Directories of the scripts to compile, searched recursively (relative to this file).
-sources = ["."]
-# Where the compiled `.pex` files go, keeping the directory structure of `sources`.
-output = "output"
-# Other script sources, in lookup order (after `sources`).
-imports = ["${SKYRIM_DIR}/Data/Scripts/Source"]
-# The flags file (`Hidden`, `Conditional`, ...).
-flags = "${SKYRIM_DIR}/Data/Scripts/Source/TESV_Papyrus_Flags.flg"
+sources = ["."]                 # script dirs, recursive
+output = "output"               # .pex, same tree as sources
+imports = ["${SKYRIM_DIR}/Data/Scripts/Source"]                     # lookup order, after sources
+flags = "${SKYRIM_DIR}/Data/Scripts/Source/TESV_Papyrus_Flags.flg"  # Hidden, Conditional, ...
 optimize = true
-release = false
-final = false
-quiet = true
+release = false                 # strip DebugOnly
+final = false                   # strip BetaOnly
+quiet = true                    # errors only
 
-# Projects whose sources this one uses (transitively), imported after `sources`.
-[dependencies]
+[dependencies]                  # projects whose sources this one sees
 # MCMHelper = { path = "../MCMHelper" }
 
-# Lint levels: "allow", "warn" or "deny", by lint (`papyrus_analyzer lint --list`),
-# by group (correctness, suspicious, complexity, style, pedantic) or "all".
-[lints]
-# complexity = "allow"
-# unused-local = "deny"
+[lints]                         # lint | group | "all" = "allow" | "warn" | "deny"
+# complexity = "allow"          # groups: correctness · suspicious · complexity · style · pedantic
+# unused-local = "deny"         # lints: papyrus_analyzer lint --list
 
-# Formatter settings. Unset values come from .editorconfig, then from the editor.
-[format]
-# indent-style = "space"        # space or tab
+[format]                        # unset → .editorconfig → editor
+# indent-style = "space"        # space | tab
 # indent-size = 4
-# keyword-case = "canonical"    # canonical, preserve, PascalCase, camelCase, lowercase, UPPERCASE
-# Names take the same values; canonical is the spelling of their definition
-# (actor -> Actor, getvalue() -> GetValue()), which the other cases start from.
-# script-case = "canonical"     # types, extends, Import, receivers like Debug.Trace
-# function-case = "canonical"   # functions and events
-# property-case = "canonical"
-# variable-case = "canonical"   # locals, parameters and script variables
-# flag-case = "canonical"       # Hidden, Conditional, ...
 # max-blank-lines = 1
-# newline = "auto"              # auto, lf, crlf
+# newline = "auto"              # auto | lf | crlf
 # final-newline = true
 #
-# Spelling of single keywords, winning over keyword-case.
-# [format.keywords]
+# Cases: canonical | preserve | PascalCase | camelCase | lowercase | UPPERCASE
+#   names: canonical = as defined (actor → Actor), the others start from it
+# keyword-case = "canonical"
+# script-case = "canonical"     # types · extends · Import · Debug.Trace
+# function-case = "canonical"   # functions · events
+# property-case = "canonical"
+# variable-case = "canonical"   # locals · parameters · script variables
+# flag-case = "canonical"       # Hidden · Conditional
+#
+# [format.keywords]             # one keyword, case only; wins over keyword-case
 # as = "As"
 
-# Several projects in one folder, like Cargo workspaces: in the papyrus.toml of
-# the parent folder. Members inherit these settings; their own values win
-# (imports are appended). Each member sees only its sources, its
-# dependencies and its imports.
+# Several projects, like Cargo workspaces → in the papyrus.toml of the parent folder.
+# Members inherit; own values win (imports appended). A member sees its sources + dependencies + imports.
 # [workspace]
-# members = ["*"]               # subdirectories with a papyrus.toml, or paths
+# members = ["*"]               # "dir" | "dir/*" (subdirs with a papyrus.toml); ${NAME} allowed
 # exclude = []
 # [workspace.var]
-# [workspace.build]             # imports, flags, optimize, release, final, quiet
+# [workspace.compiler]          # path · args
+# [workspace.build]             # imports · flags · optimize · release · final · quiet
 # [workspace.lints]
 # [workspace.format]
 "#;
 
 /// A `papyrus.local.toml` to start from.
-pub const LOCAL_TEMPLATE: &str = r#"# Machine specific values for papyrus.toml. Do not commit this file.
-[var]
+pub const LOCAL_TEMPLATE: &str = r#"# papyrus.local.toml — this machine only, do not commit (.gitignore).
+[var]                           # wins over [var] of papyrus.toml
 # SKYRIM_DIR = "${game:SkyrimSE}"
 "#;
 
