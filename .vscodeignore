@@ -11,7 +11,7 @@
 !schemas/**
 !resources/**
 
-# The bundled extension (see extension/vite.config.ts) and the server binary (see build.cjs).
+# The bundled extension (see extension/vite.config.ts) and the server binary (see `node tasks.cjs build`).
 !build/extension.cjs
 !build/papyrus_analyzer
 !build/papyrus_analyzer.exe

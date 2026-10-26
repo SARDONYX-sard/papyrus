@@ -65,10 +65,11 @@ Tests (`cargo test`):
 - `npm run check` — type checks the extension.
 - `npm run grammar` — regenerates the TextMate grammars of `syntaxes/`.
 
-`build.cjs` does the packaging; everything goes to `build/`:
+`tasks.cjs` holds the tasks (`node tasks.cjs help` lists them with their options); everything goes to `build/`:
 
-- `node build.cjs` — copies the server next to the extension.
-- `node build.cjs --vsix --target <triple>` — builds `build/papyrus-analyzer-<platform>.vsix`.
+- `node tasks.cjs build` — copies the server next to the extension.
+- `node tasks.cjs build --vsix --target <triple>` — builds `build/papyrus-analyzer-<platform>.vsix`.
+- `npm run tag -- [-m <message>]` — tags HEAD as `<version>-dev.<short sha>` (signed, annotated) and pushes the tag, which releases it.
 
 ## CI
 

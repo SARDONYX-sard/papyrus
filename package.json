@@ -611,11 +611,12 @@
   "scripts": {
     "compile": "vite build --config extension/vite.config.ts",
     "build:server": "cargo build --release",
-    "release": "npm run compile && npm run build:server && node ./build.cjs",
-    "package": "npm run build:server && node ./build.cjs --vsix",
+    "release": "npm run compile && npm run build:server && node ./tasks.cjs build",
+    "package": "npm run build:server && node ./tasks.cjs build --vsix",
+    "tag": "node ./tasks.cjs tag",
     "check": "tsc -p ./extension",
     "compile:debug": "vite build --config extension/vite.config.ts --mode development",
-    "debug": "npm run compile:debug && cargo build && node ./build.cjs --profile debug",
+    "debug": "npm run compile:debug && cargo build && node ./tasks.cjs build --profile debug",
     "grammar": "node syntaxes/generate.mjs"
   },
   "devDependencies": {
