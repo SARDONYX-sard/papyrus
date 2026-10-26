@@ -5,7 +5,8 @@
 //! The launch arguments: `test` (`"Script.Function"`, a `; #[test]`
 //! function) or `run` with `args`, `cwd` (the folder of papyrus.toml) and
 //! `stopOnEntry`. The VM runs on the main thread; a thread reads the
-//! requests, which the VM answers when it is paused.
+//! requests, which the VM answers when it is paused. Watch expressions,
+//! hovers and the debug console evaluate Papyrus expressions ([`eval`]).
 
 #![allow(clippy::print_stderr)]
 
@@ -22,6 +23,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use serde_json::{Value as Json, json};
 
 use crate::run;
+
+mod eval;
 
 /// The only thread of the machine.
 const THREAD: i64 = 1;
@@ -242,6 +245,27 @@ impl Session {
                 let total = frames.len();
                 self.client.respond(req, json!({ "stackFrames": frames, "totalFrames": total }));
             }
+            // Watch, hover and the debug console: an expression in a frame.
+            "evaluate" => {
+                let args = &req["arguments"];
+                let frame = (args["frameId"].as_u64())
+                    .and_then(|id| vm.stack().get((id as usize).wrapping_sub(1)))
+                    .or_else(|| vm.stack().last());
+                let text = args["expression"].as_str().unwrap_or_default();
+                match eval::evaluate(vm, frame, text) {
+                    Ok(value) => {
+                        let v = self.variable(vm, text, &value);
+                        self.client.respond(
+                            req,
+                            json!({
+                                "result": v["value"],
+                                "variablesReference": v["variablesReference"],
+                            }),
+                        );
+                    }
+                    Err(message) => self.client.fail(req, &message),
+                }
+            }
             "scopes" => {
                 let index = req["arguments"]["frameId"].as_u64().unwrap_or(1) as usize - 1;
                 let mut scopes = Vec::new();
@@ -308,7 +332,7 @@ impl Session {
                 self.stopped = true;
                 self.client.respond(req, json!({}));
             }
-            "evaluate" => self.client.fail(req, "expressions are not supported"),
+            "evaluate" => self.client.fail(req, "pause the program to evaluate"),
             _ => self.client.respond(req, json!({})),
         }
     }
@@ -381,6 +405,7 @@ pub(crate) fn run(_args: &[String]) -> i32 {
                     json!({
                         "supportsConfigurationDoneRequest": true,
                         "supportsTerminateRequest": true,
+                        "supportsEvaluateForHovers": true,
                     }),
                 );
                 client.event("initialized", json!({}));
