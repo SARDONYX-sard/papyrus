@@ -28,9 +28,24 @@ jobs:
       fail-fast: false
       matrix:
         job:
-          - { target: aarch64-apple-darwin, os: macos-latest, archive: tar.gz, exe: "" }
-          - { target: x86_64-pc-windows-msvc, os: windows-latest, archive: zip, exe: .exe }
-          - { target: x86_64-unknown-linux-gnu, os: ubuntu-latest, archive: tar.gz, exe: "" }
+          - {
+              target: aarch64-apple-darwin,
+              os: macos-latest,
+              archive: tar.gz,
+              exe: "",
+            }
+          - {
+              target: x86_64-pc-windows-msvc,
+              os: windows-latest,
+              archive: zip,
+              exe: .exe,
+            }
+          - {
+              target: x86_64-unknown-linux-gnu,
+              os: ubuntu-latest,
+              archive: tar.gz,
+              exe: "",
+            }
     runs-on: ${{ matrix.job.os }}
     permissions:
       contents: write
@@ -42,7 +57,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@v2.9.1
+        uses: Swatinem/rust-cache@v2.9.3
         with:
           prefix-key: cargo-${{ env.PROFILE }}-${{ matrix.job.target }}
 
@@ -96,7 +111,7 @@ jobs:
 
       - name: Upload artifacts
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
-        uses: actions/upload-artifact@v4.6.2
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ env.APP_NAME }}-${{ matrix.job.target }}
           path: |
