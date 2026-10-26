@@ -24,7 +24,7 @@ value (0, None, \"\"...) and are listed at the end. `Utility.Wait` sends
 the `OnUpdate` events registered with `RegisterForUpdate`.";
 
 const TEST_USAGE: &str = "\
-usage: papyrus_analyzer test
+usage: papyrus_analyzer test [PATH | FILTER]...
 
 Runs the `; #[test]` functions of the scripts below the current directory,
 each on a new object of its script, after its `OnInit`. A test fails when a
@@ -35,6 +35,9 @@ the test script replace the native in its tests.
 The scripts of the [test] sources of papyrus.toml see the built-in script
 `PapyrusAnalyzer` (`AssertIntEq`, `AssertTrue`, `Fail`...; `Import
 PapyrusAnalyzer` calls them unqualified). A project script of that name wins.
+
+  PATH     only the tests of the scripts of this file or directory
+  FILTER   only the tests whose `Script.Function` contains it (any case)
 
 options:
   -h, --help   print this help";
@@ -170,7 +173,8 @@ pub(crate) fn test(args: &[String]) -> i32 {
     let mut scripts: Vec<PathBuf> = Vec::new();
     collect(&std::env::current_dir().unwrap_or_default(), &mut scripts);
     let marked = marked_functions(&scripts);
-    let tests: Vec<&Marked> = marked.iter().filter(|m| m.mocks.is_none()).collect();
+    let tests: Vec<&Marked> =
+        marked.iter().filter(|m| m.mocks.is_none() && selected(m, args)).collect();
 
     let mut vm = Vm::new(loader(&scripts));
     let mut failed = 0;
@@ -207,6 +211,25 @@ fn paint(sgr: &str, text: &str) -> String {
     if color { format!("\x1b[{sgr}m{text}\x1b[0m") } else { text.to_owned() }
 }
 
+/// Whether the arguments of `test` select `m`: every test without any; else
+/// the tests below a path argument, or whose name contains another one.
+fn selected(m: &Marked, args: &[String]) -> bool {
+    let name = format!("{}.{}", m.script, m.function).to_ascii_lowercase();
+    let mut filters = args.iter().filter(|a| !a.starts_with('-')).peekable();
+    if filters.peek().is_none() {
+        return true;
+    }
+    let below = |dir: &std::path::Path| {
+        let canonical =
+            |p: &std::path::Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_owned());
+        canonical(&m.path).starts_with(canonical(dir))
+    };
+    filters.any(|f| {
+        let path = std::path::Path::new(f);
+        if path.exists() { below(path) } else { name.contains(&f.to_ascii_lowercase()) }
+    })
+}
+
 /// Why a test failed: an error of the machine, errors the game would log
 /// (failed assertions among them), or `False` returned.
 pub(crate) fn problem(vm: &Vm, result: &Result<Value, papyrus_vm::VmError>) -> Option<String> {
@@ -220,6 +243,8 @@ pub(crate) fn problem(vm: &Vm, result: &Result<Value, papyrus_vm::VmError>) -> O
 
 /// A function marked `; #[test]` or `; #[mock(Script.Function)]`.
 pub(crate) struct Marked {
+    /// The file of the script.
+    path: PathBuf,
     script: String,
     function: String,
     /// The native a mock replaces; `None` for a test.
@@ -250,6 +275,7 @@ pub(crate) fn marked_functions(scripts: &[PathBuf]) -> Vec<Marked> {
             let func = std::iter::once(node).chain(node.ancestors()).find_map(ast::Function::cast);
             if let Some(name) = func.and_then(|f| f.name()) {
                 out.push(Marked {
+                    path: path.clone(),
                     script: script.clone(),
                     function: name.text().to_owned(),
                     mocks,

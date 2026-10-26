@@ -7,6 +7,7 @@ import { client, showAssemblyCommand } from "./decompile";
 import { isBelow, isWithin, key } from "./paths";
 import { DecompileFilesRequest } from "./protocol";
 import { scriptScope, state } from "./state";
+import { runTests } from "./tests";
 
 /**
  * The Papyrus explorer: the status of the language server (click: details,
@@ -23,7 +24,9 @@ import { scriptScope, state } from "./state";
  * (compile mode) and the output directory of the mode.
  *
  * A click opens a file; the ▶ button of a file or folder runs the
- * action on it (everything below, for a folder). Each script shows the
+ * action on it (everything below, for a folder). In compile mode, the test
+ * scripts (`[test] sources`, never compiled) get a Run Tests button instead:
+ * `papyrus_analyzer test` on them. Each script shows the
  * result of its last run. Outputs keep the directory structure:
  * `[build] output` of papyrus.toml (`decompile` below it), else
  * `build/papyrus/compile` and `build/papyrus/decompile` of the workspace
@@ -189,10 +192,38 @@ class ExplorerProvider implements vscode.TreeDataProvider<Node>, vscode.FileDeco
    */
   isTarget(file: string): boolean {
     if (this.mode === "compile") {
-      return file.toLowerCase().endsWith(".psc") && !this.buildDirs().some((dir) => isBelow(file, dir));
+      return (
+        file.toLowerCase().endsWith(".psc") &&
+        !this.buildDirs().some((dir) => isBelow(file, dir)) &&
+        !this.isTest(file)
+      );
     }
     const decompiled = state.buildDirs.map((b) => b.decompile);
     return file.toLowerCase().endsWith(".pex") && !decompiled.some((dir) => isWithin(file, dir));
+  }
+
+  /**
+   * Whether `file` is a test script: a `.psc` file of `[test] sources`, never
+   * compiled; in compile mode, its button runs its tests instead.
+   */
+  isTest(file: string): boolean {
+    return (
+      this.mode === "compile" &&
+      file.toLowerCase().endsWith(".psc") &&
+      state.testSources.some((dir) => isWithin(file, dir))
+    );
+  }
+
+  /** The test scripts of `node`. */
+  tests(node: Node): vscode.Uri[] {
+    switch (node.kind) {
+      case "file":
+        return this.isTest(node.uri.fsPath) ? [node.uri] : [];
+      case "folder":
+        return node.children.flatMap((c) => this.tests(c));
+      default:
+        return [];
+    }
   }
 
   /** The roots of the tree: the workspace folders, plus the sources and outputs outside of them. */
@@ -306,7 +337,9 @@ class ExplorerProvider implements vscode.TreeDataProvider<Node>, vscode.FileDeco
     const file = uri.with({ scheme: "file" });
     const node = this.nodes.get(key(file.fsPath));
     const folder = !node;
-    const active = folder ? this.folderHasTargets(file.fsPath) : this.isTarget(file.fsPath);
+    const active = folder
+      ? this.folderHasTargets(file.fsPath)
+      : this.isTarget(file.fsPath) || this.isTest(file.fsPath);
     const fresh = !folder && this.fresh.has(key(file.fsPath));
     const limited = !folder && this.isLimited(file.fsPath);
     if (active && !fresh && !limited) {
@@ -342,7 +375,8 @@ class ExplorerProvider implements vscode.TreeDataProvider<Node>, vscode.FileDeco
 
   private folderHasTargets(dir: string): boolean {
     for (const node of this.nodes.values()) {
-      if (isBelow(node.uri.fsPath, dir) && this.isTarget(node.uri.fsPath)) {
+      const file = node.uri.fsPath;
+      if (isBelow(file, dir) && (this.isTarget(file) || this.isTest(file))) {
         return true;
       }
     }
@@ -392,7 +426,13 @@ class ExplorerProvider implements vscode.TreeDataProvider<Node>, vscode.FileDeco
       );
       item.id = `${folder?.generation ?? 0}:${k}`;
       item.resourceUri = rowUri(node.uri);
-      item.contextValue = this.targets(node).length > 0 ? "papyrusFolder" : "papyrusFolderOther";
+      // A folder of scripts compiles them; a folder of tests only runs them.
+      item.contextValue =
+        this.targets(node).length > 0
+          ? "papyrusFolder"
+          : this.tests(node).length > 0
+            ? "papyrusFolderTests"
+            : "papyrusFolderOther";
       // The directories of the projects stand out from the limited ones.
       const sources = state.sources.some((d) => key(d) === k);
       const tests = state.testSources.some((d) => key(d) === k);
@@ -402,7 +442,11 @@ class ExplorerProvider implements vscode.TreeDataProvider<Node>, vscode.FileDeco
       return item;
     }
     const item = new vscode.TreeItem(rowUri(node.uri), vscode.TreeItemCollapsibleState.None);
-    item.contextValue = this.isTarget(node.uri.fsPath) ? "papyrusFile" : "papyrusFileOther";
+    item.contextValue = this.isTarget(node.uri.fsPath)
+      ? "papyrusFile"
+      : this.isTest(node.uri.fsPath)
+        ? "papyrusFileTest"
+        : "papyrusFileOther";
     const status = this.statuses.get(key(node.uri.fsPath));
     const error = this.errors.get(key(node.uri.fsPath));
     if (status === "running") {
@@ -652,6 +696,10 @@ export function registerExplorerView(context: vscode.ExtensionContext): void {
           false,
         );
       }),
+    ),
+    // Test scripts: `papyrus_analyzer test` on them, in a terminal.
+    vscode.commands.registerCommand("papyrus.explorer.runTests", (node: Node) =>
+      runTests(provider.tests(node).map((u) => u.fsPath)),
     ),
     vscode.commands.registerCommand("papyrus.explorer.open", (node: Node) => {
       if (node.kind === "file") {

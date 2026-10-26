@@ -36,7 +36,7 @@ papyrus_analyzer decompile -o out Scripts/        # whole folders, structure kep
 papyrus_analyzer lint [--fix] [-D warnings] [PATH]...
 papyrus_analyzer fmt [--check] [PATH]...
 papyrus_analyzer disasm Foo.pex
-papyrus_analyzer test                             # the ; #[test] functions, see Tests
+papyrus_analyzer test [PATH | FILTER]...          # the ; #[test] functions, see Tests
 papyrus_analyzer run MyQuest.Start 3 "text"       # a function in the VM
 papyrus_analyzer help [COMMAND]                   # the options of a command (or COMMAND --help)
 papyrus_compiler MyQuest -i=Source -o=Scripts -f=TESV_Papyrus_Flags.flg   # PapyrusCompiler.exe compatible
@@ -52,6 +52,8 @@ flowchart LR
     tree -- "▶ on a file | folder" --> run["compile | decompile it (everything below)"]
     tree -- "click a file" --> open["open it"]
 ```
+
+Test scripts (`[test] sources`) are never compiled: their button runs their tests instead.
 
 Header rows: `Compiler:` built-in | `[compiler] path` · `Output:` the output directory of the mode (click → reveal).
 

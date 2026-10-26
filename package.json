@@ -235,6 +235,12 @@
         "command": "papyrus.explorer.decompile"
       },
       {
+        "title": "Run Tests",
+        "category": "Papyrus",
+        "icon": "$(beaker)",
+        "command": "papyrus.explorer.runTests"
+      },
+      {
         "title": "Open",
         "category": "Papyrus",
         "command": "papyrus.explorer.open"
@@ -421,6 +427,10 @@
           "when": "false"
         },
         {
+          "command": "papyrus.explorer.runTests",
+          "when": "false"
+        },
+        {
           "command": "papyrus.explorer.assemble",
           "when": "false"
         }
@@ -491,13 +501,23 @@
           "group": "1_run"
         },
         {
+          "command": "papyrus.explorer.runTests",
+          "when": "view == papyrus.explorer && viewItem =~ /^papyrus(FileTest|FolderTests)$/",
+          "group": "inline"
+        },
+        {
+          "command": "papyrus.explorer.runTests",
+          "when": "view == papyrus.explorer && viewItem =~ /^papyrus(FileTest|FolderTests)$/",
+          "group": "1_run"
+        },
+        {
           "command": "papyrus.explorer.open",
-          "when": "view == papyrus.explorer && viewItem =~ /^papyrusFile(Other)?$/",
+          "when": "view == papyrus.explorer && viewItem =~ /^papyrusFile(Other|Test)?$/",
           "group": "1_run"
         },
         {
           "command": "papyrus.explorer.assemble",
-          "when": "view == papyrus.explorer && viewItem =~ /^papyrusFile(Other)?$/",
+          "when": "view == papyrus.explorer && viewItem =~ /^papyrusFile(Other|Test)?$/",
           "group": "1_run"
         }
       ]
