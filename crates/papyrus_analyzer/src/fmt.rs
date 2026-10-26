@@ -17,9 +17,24 @@ use std::{
 
 use papyrus_ide::{FileId, Workspace};
 
+const USAGE: &str = "\
+usage: papyrus_analyzer fmt [OPTIONS] [PATH]...
+
+Formats scripts (directories recursively; default: the current directory)
+with .editorconfig, then [format] of papyrus.toml. Names are written like
+their definition, resolved against the imports of papyrus.toml.
+
+options:
+  --check      only list the unformatted files; exit code 1 if any
+  -h, --help   print this help";
+
 /// Runs the subcommand and returns the process exit code: 0 on success, 1
 /// when `--check` found unformatted files or a file could not be formatted.
 pub(crate) fn run(args: &[String]) -> i32 {
+    if args.iter().any(|a| a == "-h" || a == "--help") {
+        println!("{USAGE}");
+        return 0;
+    }
     let check = args.iter().any(|a| a == "--check");
     let mut paths: Vec<PathBuf> =
         args.iter().filter(|a| !a.starts_with("--")).map(PathBuf::from).collect();
@@ -148,6 +163,11 @@ pub(crate) fn names(ws: &Workspace, file: FileId) -> papyrus_fmt::Names {
 /// flags file, for name resolution (`fmt`, `lint`): the imports of the
 /// `papyrus.toml` of the current directory, else the game scripts.
 pub(crate) fn workspace(scripts: &[PathBuf]) -> Workspace {
+    workspace_with_imports(scripts).0
+}
+
+/// Like [`workspace`], with the import directories, to load more scripts later.
+pub(crate) fn workspace_with_imports(scripts: &[PathBuf]) -> (Workspace, Vec<PathBuf>) {
     let cwd = std::env::current_dir().unwrap_or_default();
     let vars = papyrus_project::Variables::for_command_line(&cwd);
     let manifest =
@@ -179,7 +199,7 @@ pub(crate) fn workspace(scripts: &[PathBuf]) -> Workspace {
     {
         ws.set_flags_file(path, Arc::from(text));
     }
-    ws
+    (ws, imports)
 }
 
 fn collect(path: &Path, out: &mut Vec<PathBuf>) {

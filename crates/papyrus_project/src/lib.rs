@@ -116,6 +116,16 @@ struct RawManifest {
     workspace: Option<workspace::RawWorkspace>,
     #[serde(default)]
     dependencies: BTreeMap<String, workspace::RawDependency>,
+    #[serde(default)]
+    test: RawTest,
+}
+
+/// `[test]`.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+struct RawTest {
+    #[serde(default)]
+    sources: Vec<Spanned<String>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -444,6 +454,9 @@ pub struct Project {
     /// The sources of `[dependencies]`, transitively: imported before
     /// `imports`.
     pub dependency_sources: Vec<PathBuf>,
+    /// `[test] sources`: directories of tests (`; #[test]` functions, which see the built-in `PapyrusAnalyzer` script),
+    /// run by `papyrus_analyzer test` and never compiled into `output`.
+    pub test_sources: Vec<PathBuf>,
     /// `[dependencies]`: name and manifest directory.
     pub dependencies: Vec<(String, PathBuf)>,
     /// The manifest of the workspace this project is a member of.
@@ -672,6 +685,7 @@ pub(crate) fn parse_with(
     format.merge(format_settings(&raw.format, &mut resolver.errors));
     let mut lints = inherited.map(|i| i.lints.clone()).unwrap_or_default();
     lint_settings_into(&mut lints, &raw.lints, &mut resolver.errors);
+    let test_sources: Vec<PathBuf> = raw.test.sources.iter().map(|p| resolver.path(p)).collect();
     let dependencies: Vec<(String, PathBuf)> = raw
         .dependencies
         .iter()
@@ -727,6 +741,7 @@ pub(crate) fn parse_with(
         output,
         imports,
         dependency_sources: Vec::new(),
+        test_sources,
         dependencies,
         workspace_manifest: inherited.map(|i| i.manifest.clone()),
         flags,
@@ -856,6 +871,7 @@ impl Project {
             extra_args: Vec::new(),
             imports,
             dependency_sources: Vec::new(),
+            test_sources: Vec::new(),
             dependencies: Vec::new(),
             workspace_manifest: None,
             flags,
@@ -934,10 +950,13 @@ impl Project {
         self.command(script, &dirs, output)
     }
 
-    /// Directories never searched for scripts: the output, and the default
-    /// build directory, which holds decompiled scripts.
+    /// Directories never searched for scripts: the output, the default build
+    /// directory, which holds decompiled scripts, and the tests.
     fn skipped_dirs(&self) -> Vec<PathBuf> {
-        vec![self.output.clone(), default_build_dir(&self.root)]
+        let mut dirs = vec![self.output.clone(), default_build_dir(&self.root)];
+        // Tests are not part of the mod.
+        dirs.extend(self.test_sources.iter().cloned());
+        dirs
     }
 
     /// Every script below the source directories, recursively. The output
@@ -1043,6 +1062,9 @@ optimize = true
 release = false                 # strip DebugOnly
 final = false                   # strip BetaOnly
 quiet = true                    # errors only
+
+[test]                          # papyrus_analyzer test: ; #[test] functions, PapyrusAnalyzer.Assert* built in
+# sources = ["tests"]           # not built; a test script extends the script it tests
 
 [dependencies]                  # projects whose sources this one sees
 # MCMHelper = { path = "../MCMHelper" }

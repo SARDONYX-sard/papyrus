@@ -62,8 +62,9 @@ if (vsix) {
   // Vite bundles the dependencies into build/extension.cjs. vsce only looks for
   // one `LICENSE[.md|.txt]` file; LICENSE-MIT and LICENSE-APACHE are packaged
   // through .vscodeignore, so its check (and its y/N prompt) is skipped.
+  // vsce comes from devDependencies, at the version of package-lock.json.
   run(
-    `npx --yes @vscode/vsce package --no-dependencies --skip-license ${platform ? `--target ${platform}` : ""} --out ${out}`,
+    `npx vsce package --no-dependencies --skip-license ${platform ? `--target ${platform}` : ""} --out ${out}`,
   );
   console.log(`packaged ${out}`);
 }

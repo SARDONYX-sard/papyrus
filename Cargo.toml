@@ -47,6 +47,7 @@ papyrus_lexer = { path = "./crates/papyrus_lexer", version = "0.0.0" }
 papyrus_pex = { path = "./crates/papyrus_pex", version = "0.1.0" }
 papyrus_parser = { path = "./crates/papyrus_parser", version = "0.0.0" }
 papyrus_project = { path = "./crates/papyrus_project", version = "0.0.0" }
+papyrus_vm = { path = "./crates/papyrus_vm", version = "0.0.0" }
 skyrim_data_dir = { path = "./crates/skyrim_data_dir", version = "0.1.0" }
 
 # non-local crates

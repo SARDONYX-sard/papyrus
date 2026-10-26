@@ -5,12 +5,26 @@
 //! the current directory is compiled: its sources, imports, flags file,
 //! output directory and optimization setting.
 
-#![allow(clippy::print_stderr)]
+#![allow(clippy::print_stdout, clippy::print_stderr)]
 
 use papyrus_compiler::cli::{self, Args};
 
+const USAGE: &str = "\
+usage: papyrus_analyzer compile
+       papyrus_analyzer compile <object or folder> [<arguments>]
+
+Without arguments: compiles the project of the papyrus.toml of the current
+directory (or its ancestors): its sources, imports, flags file, output and
+optimization. With arguments: like PapyrusCompiler.exe, as below.
+
+";
+
 /// Runs the subcommand and returns the process exit code.
 pub(crate) fn run(args: &[String]) -> i32 {
+    if args.iter().any(|a| a == "-h" || a == "--help") {
+        println!("{USAGE}{}", cli::USAGE);
+        return 0;
+    }
     if !args.is_empty() {
         return cli::run(args);
     }

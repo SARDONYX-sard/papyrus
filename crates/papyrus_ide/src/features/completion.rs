@@ -439,6 +439,7 @@ impl<'s, 'a> Ctx<'s, 'a> {
             .sema
             .ws
             .all_scripts()
+            .filter(|&(_, f)| self.sema.ws.is_visible(f, self.sema.file))
             .filter(|(name, _)| {
                 first.is_none_or(|c| {
                     name.as_str().chars().next().map(|f| f.to_ascii_lowercase()) == Some(c)

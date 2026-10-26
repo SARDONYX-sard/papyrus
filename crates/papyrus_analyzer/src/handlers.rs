@@ -103,8 +103,8 @@ impl Server {
         }
         let (file, lines, offset) = self.position(&params.text_document_position_params)?;
         // Inside a `; #[allow(...)]` comment: the attribute and its lints.
-        let text = self.ws.text(file)?;
-        if let Some((range, value)) = papyrus_lint::ignore::attribute_hover(&text, offset) {
+        if let Some((range, value)) = papyrus_lint::ignore::attribute_hover(&self.ws, file, offset)
+        {
             return Some(Hover {
                 contents: HoverContents::Markup(MarkupContent {
                     kind: MarkupKind::Markdown,
@@ -128,7 +128,11 @@ impl Server {
         params: GotoDefinitionParams,
     ) -> Option<GotoDefinitionResponse> {
         let (file, lines, offset) = self.position(&params.text_document_position_params)?;
-        let targets = papyrus_ide::goto_definition(&self.ws, file, offset);
+        // `; #[mock(Script.Function)]`: the script or the native.
+        let targets = match papyrus_lint::ignore::attribute_definition(&self.ws, file, offset) {
+            Some(target) => vec![target],
+            None => papyrus_ide::goto_definition(&self.ws, file, offset),
+        };
         self.nav_response(file, lines, targets)
     }
 
@@ -217,41 +221,40 @@ impl Server {
     }
 
     pub(crate) fn completion(&mut self, params: CompletionParams) -> Option<CompletionResponse> {
-        let (lines, completions) = if let Some((lines, offset)) =
-            self.flags_position(&params.text_document_position)
-        {
-            (lines, papyrus_ide::flag_file_completions(&self.ws, offset))
-        } else {
-            let (file, lines, offset) = self.position(&params.text_document_position)?;
-            // Inside a `; #[allow(...)]` comment: the lints.
-            let text = self.ws.text(file)?;
-            if let Some((range, items)) = papyrus_lint::ignore::attribute_completions(&text, offset)
-            {
-                let items = items
-                    .into_iter()
-                    .map(|(label, detail)| CompletionItem {
-                        kind: Some(lsp_types::CompletionItemKind::KEYWORD),
-                        detail: Some(detail),
-                        text_edit: Some(CompletionTextEdit::Edit(TextEdit {
-                            range: lines.range(range),
-                            new_text: label.clone(),
-                        })),
-                        label,
-                        ..Default::default()
-                    })
-                    .collect();
-                return Some(CompletionResponse::List(CompletionList {
-                    is_incomplete: false,
-                    items,
-                }));
-            }
-            // These only trigger completion for attributes, not in code.
-            let trigger = params.context.as_ref().and_then(|c| c.trigger_character.as_deref());
-            if matches!(trigger, Some("[" | "(" | ",")) {
-                return None;
-            }
-            (lines, papyrus_ide::completions(&self.ws, file, offset))
-        };
+        let (lines, completions) =
+            if let Some((lines, offset)) = self.flags_position(&params.text_document_position) {
+                (lines, papyrus_ide::flag_file_completions(&self.ws, offset))
+            } else {
+                let (file, lines, offset) = self.position(&params.text_document_position)?;
+                // Inside a `; #[allow(...)]` comment: the lints.
+                if let Some((range, items)) =
+                    papyrus_lint::ignore::attribute_completions(&self.ws, file, offset)
+                {
+                    let items = items
+                        .into_iter()
+                        .map(|(label, detail)| CompletionItem {
+                            kind: Some(lsp_types::CompletionItemKind::KEYWORD),
+                            detail: Some(detail),
+                            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                                range: lines.range(range),
+                                new_text: label.clone(),
+                            })),
+                            label,
+                            ..Default::default()
+                        })
+                        .collect();
+                    return Some(CompletionResponse::List(CompletionList {
+                        is_incomplete: false,
+                        items,
+                    }));
+                }
+                // These only trigger completion for attributes, not in code.
+                let trigger = params.context.as_ref().and_then(|c| c.trigger_character.as_deref());
+                if matches!(trigger, Some("[" | "(" | ",")) {
+                    return None;
+                }
+                (lines, papyrus_ide::completions(&self.ws, file, offset))
+            };
         let snippets = self
             .caps
             .text_document
@@ -435,6 +438,46 @@ impl Server {
                 data: None,
             });
         }
+        // `▶ Run Test | ⚙ Debug` above `; #[test]` functions: the client runs
+        // `papyrus_analyzer run Script.Function`, or debugs it with
+        // `papyrus_analyzer debug`.
+        if let (Some(text), Some(script)) = (self.ws.text(file), self.ws.file(file).index.name) {
+            use papyrus_parser::ast::{self, AstNode};
+            let parse = papyrus_parser::parse(&text);
+            for attr in papyrus_parser::attrs::attributes(parse.syntax_node()) {
+                if attr.inner || !attr.path.eq_ignore_ascii_case("test") {
+                    continue;
+                }
+                let node = parse.syntax_node().covering_node(attr.target);
+                let Some(name) = std::iter::once(node)
+                    .chain(node.ancestors())
+                    .find_map(ast::Function::cast)
+                    .and_then(|f| f.name())
+                else {
+                    continue;
+                };
+                let line = lines.position(attr.target.start()).line;
+                let target = serde_json::Value::String(format!("{}.{}", script, name.text()));
+                // Like rust-analyzer: `▶︎ Run Test | ⚙︎ Debug`.
+                for (title, command) in [
+                    ("▶\u{fe0e} Run Test", "papyrus.runTest"),
+                    ("⚙\u{fe0e} Debug", "papyrus.debugTest"),
+                ] {
+                    lenses.push(CodeLens {
+                        range: lsp_types::Range::new(
+                            Position::new(line, 0),
+                            Position::new(line, 0),
+                        ),
+                        command: Some(Command {
+                            title: title.to_owned(),
+                            command: command.to_owned(),
+                            arguments: Some(vec![uri.clone(), target.clone()]),
+                        }),
+                        data: None,
+                    });
+                }
+            }
+        }
         Some(lenses)
     }
 
@@ -529,6 +572,10 @@ impl Server {
     pub(crate) fn formatting(&mut self, params: DocumentFormattingParams) -> Option<Vec<TextEdit>> {
         let file = self.file(&params.text_document.uri).ok()?;
         let data = self.ws.file(file);
+        if !self.is_editable(&data.path) {
+            log::info!("{}: not formatted, not a script of the workspace", data.path.display());
+            return None;
+        }
         let text = data.open.as_ref()?.text.clone();
         let editor = &params.options;
         let options = papyrus_project::format_options_for(&data.path, |o| {
@@ -632,6 +679,10 @@ impl Server {
         use lsp_types::{CodeActionKind, CodeActionOrCommand, NumberOrString};
 
         let file = self.file(&params.text_document.uri).ok()?;
+        // Code actions edit the file: none for imported scripts.
+        if !self.is_editable(&self.ws.file(file).path) {
+            return None;
+        }
         let lines = Lines::of(&self.ws, file)?;
         let range = lines.text_range(params.range);
         let mut assists = papyrus_ide::assists::assists(&self.ws, file, range);
@@ -693,10 +744,35 @@ impl Server {
     ) -> Result<Option<lsp_types::PrepareRenameResponse>, String> {
         let Some((file, lines, offset)) = self.position(&params) else { return Ok(None) };
         let (range, placeholder) = papyrus_ide::prepare_rename(&self.ws, file, offset)?;
+        // Every file the rename would change must be ours.
+        let edit = papyrus_ide::rename(&self.ws, file, offset, &placeholder)?;
+        self.check_editable(&edit)?;
         Ok(Some(lsp_types::PrepareRenameResponse::RangeWithPlaceholder {
             range: lines.range(range),
             placeholder,
         }))
+    }
+
+    /// Refuses a rename changing a file that is not ours (an imported script,
+    /// the flags file of the game...).
+    fn check_editable(&self, edit: &papyrus_ide::RenameEdit) -> Result<(), String> {
+        let paths = edit
+            .ranges
+            .iter()
+            .filter_map(|(nav, _)| match nav {
+                papyrus_ide::NavFile::Script(f) => Some(self.ws.file(*f).path.clone()),
+                papyrus_ide::NavFile::Flags => self.ws.flags().path.clone(),
+            })
+            .chain(edit.file_renames.iter().map(|(f, _)| self.ws.file(*f).path.clone()));
+        for path in paths {
+            if !self.is_editable(&path) {
+                return Err(format!(
+                    "cannot rename: it would change {}, which is not a script of the workspace",
+                    path.display()
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// `textDocument/rename`.
@@ -714,6 +790,7 @@ impl Server {
             return Ok(None);
         };
         let edit = papyrus_ide::rename(&self.ws, file, offset, &params.new_name)?;
+        self.check_editable(&edit)?;
         let mut cache = FxHashMap::default();
         // Edits grouped by document, in order.
         let mut by_uri: Vec<(lsp_types::Uri, Vec<TextEdit>)> = Vec::new();

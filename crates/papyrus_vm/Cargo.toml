@@ -1,0 +1,22 @@
+[package]
+name = "papyrus_vm"
+version = "0.0.0"
+description = "A small Papyrus virtual machine running .pex code, with mocked natives, for tests."
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+papyrus_pex.workspace = true
+rustc-hash.workspace = true
+
+[dev-dependencies]
+papyrus_compiler.workspace = true
+papyrus_ide.workspace = true
+
+[lints]
+workspace = true

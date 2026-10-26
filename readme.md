@@ -13,16 +13,19 @@ Tooling for the Papyrus scripting language of Skyrim, in Rust.
 | **Decompiler**                   | `.pex` → `.psc` — compiles back to the same code                        |
 | **Linter**                       | clippy-like levels and groups, `--fix`                                  |
 | **Formatter** · **Disassembler** | `fmt` · `disasm`                                                        |
+| **Tests** · **Debugger**         | `; #[test]` functions run in a Papyrus VM, natives mocked · DAP         |
 
 Language server:
 
-|              |                                                                                      |
-| ------------ | ------------------------------------------------------------------------------------ |
-| Diagnostics  | like the official compiler, with related places (`defined here`)                     |
-| Navigation   | hover · definition · declaration (overridden function) · references · rename         |
-| Editing      | completion · signature help · snippets · inlay hints (parameters, `overrides Quest`) |
-| Code actions | quick fixes · De Morgan · inline variable                                            |
-| Display      | semantic tokens · folding · symbols · formatting                                     |
+|              |                                                                                                              |
+| ------------ | ------------------------------------------------------------------------------------------------------------ |
+| Diagnostics  | like the official compiler, with related places (`defined here`)                                             |
+| Navigation   | hover (operators, may-be-None values) · definition · declaration (overridden function) · references · rename |
+| Editing      | completion · signature help · snippets · inlay hints (parameters, `overrides Quest`)                         |
+| Code actions | quick fixes (check None, allow a lint) · De Morgan · inline variable                                         |
+| Display      | semantic tokens · folding · symbols · formatting · `▶ Run Test` \| `⚙ Debug` code lenses                     |
+
+Imported scripts (game sources, `[build] imports`) are read only: never formatted, renamed or fixed.
 
 ## Quick start
 
@@ -33,8 +36,13 @@ papyrus_analyzer decompile -o out Scripts/        # whole folders, structure kep
 papyrus_analyzer lint [--fix] [-D warnings] [PATH]...
 papyrus_analyzer fmt [--check] [PATH]...
 papyrus_analyzer disasm Foo.pex
+papyrus_analyzer test                             # the ; #[test] functions, see Tests
+papyrus_analyzer run MyQuest.Start 3 "text"       # a function in the VM
+papyrus_analyzer help [COMMAND]                   # the options of a command (or COMMAND --help)
 papyrus_compiler MyQuest -i=Source -o=Scripts -f=TESV_Papyrus_Flags.flg   # PapyrusCompiler.exe compatible
 ```
+
+The [releases](https://github.com/SARDONYX-sard/papyrus_analyzer/releases) have `papyrus_analyzer` (zip on Windows, tar.gz on Linux and macOS) and the VS Code extension (`.vsix`).
 
 VS Code: the **Papyrus** view of the activity bar shows `.psc` and `.pex` together and compiles | decompiles in one click.
 
@@ -80,6 +88,9 @@ optimize = true                 # true | false
 release = false                 # true | false — strip DebugOnly calls
 final = false                   # true | false — strip BetaOnly calls
 quiet = true                    # true | false — errors only
+
+[test]
+sources = ["tests"]             # test scripts: see the built-in PapyrusAnalyzer, never compiled into output
 
 [dependencies]                  # other projects whose sources this one sees
 MCMHelper = { path = "../MCMHelper" }
@@ -194,15 +205,19 @@ papyrus_analyzer lint -D warnings -A style --fix Scripts/Source
 
 Rust-like attributes, in comments:
 
-| Attribute | Applies to |
-| --- | --- |
-| `; #[allow(names)]` | the next declaration \| statement (a whole `Function`, `If`...) · its line when after code |
-| `; #![allow(names)]` | the whole file |
-| `; #[fmt::skip]` | same as `#[allow]` — kept as written |
-| `; #![fmt::skip]` | the whole file, not formatted |
+| Attribute                    | Applies to                                                                                 |
+| ---------------------------- | ------------------------------------------------------------------------------------------ |
+| `; #[allow(names)]`          | the next declaration \| statement (a whole `Function`, `If`...), on the line above it      |
+| `; #![allow(names)]`         | the whole file — before the code, at the top                                               |
+| `; #[fmt::skip]`             | same as `#[allow]` — kept as written                                                       |
+| `; #![fmt::skip]`            | the whole file, not formatted — before the code, at the top                                |
+| `; #[test]`                  | the next function: a test, see [Tests](#tests)                                             |
+| `; #[mock(Script.Function)]` | the next function: replaces the native in the tests of its script                          |
 
-`names`: lints (`unused_local` | `unused-local`) · groups · `all`; none → every lint. Text after `]` (a reason) is ignored.
-Quick fixes on a lint problem add them: *Allow `code` here* · *Allow `code` in this file*.
+Attributes have completion, hover and go to definition (the mocked native); unknown ones are reported. Like in Rust, they go before what they apply to: after code on its line, or `#![...]` below the code, an attribute applies to nothing (`misplaced-attribute`, with a quick fix moving it).
+
+`names`: lints (`unused_local` | `unused-local`) · groups · `all`; none → every lint. Text after `]` (a reason) is ignored. Attributes stack, one per line: a long list can be split (`[format] max-width` does it).
+Quick fixes on a lint problem add them: _Allow `code` here_ · _Allow `code` in this file_.
 
 ```papyrus
 ; #[allow(unused_local)]           ; the whole function
@@ -212,6 +227,37 @@ Function F()
     Float[] m = new Float[9]
 EndFunction
 ```
+
+## Tests
+
+Unit tests of scripts, outside of the game: a VM runs the compiled code. A test script extends the script it tests, in `[test] sources`:
+
+```papyrus
+ScriptName MyQuestTests extends MyQuest
+Import PapyrusAnalyzer             ; built in, seen by the test sources only
+
+; #[test]
+Function CountsKills()
+    RecordKill()
+    AssertIntEq(Kills, 1, "one kill")
+EndFunction
+
+; #[mock(Game.GetPlayer)] the object it is called on comes first when declared
+Actor Function FakePlayer()
+    Return None
+EndFunction
+```
+
+- Each test runs on a new object, after its `OnInit`. It fails on a failed assertion, an error the game would log (a call on `None`, an index out of range...) or `Return False`.
+- `PapyrusAnalyzer`: `AssertIntEq` · `AssertFloatEq` · `AssertStringEq` · `AssertBoolEq` · `AssertTrue` · `AssertFalse` · `AssertNone` · `AssertNotNone` · `Fail`. A project script of the same name wins.
+- Natives: `Debug.Trace` prints, `Math` · `StringUtil` · `Utility.Random*` (seeded) work, the others return their default value and are listed. `#[mock]` replaces one; its signature is checked.
+- Events: `Utility.Wait` advances the clock and sends the `OnUpdate` (`RegisterForUpdate`...) that are due; other events are called like functions.
+
+```sh
+papyrus_analyzer test
+```
+
+VS Code: `▶︎ Run Test` | `⚙︎ Debug` above each test. The debugger (`papyrus_analyzer debug`, launch type `papyrus`) has breakpoints, steps, the call stack, the variables (locals, `Self`) and watch expressions: Papyrus expressions without calls, like `values[i] * 2` or `Self.Count > 3`.
 
 ## Contributing
 

@@ -118,6 +118,7 @@ pub struct Lint {
 
 /// Every lint, in reporting order.
 pub const LINTS: &[Lint] = &[
+    lints::index_out_of_bounds::LINT,
     lints::unused_local::LINT,
     lints::unreachable_code::LINT,
     lints::bool_literal_comparison::LINT,
@@ -215,7 +216,7 @@ pub fn lint_source(
         }
     }
     out.retain(|d| !ignores.silence(d));
-    out.extend(ignore::check_attributes(sema.root));
+    out.extend(ignore::check_attributes(ws, file, sema.root));
     out.sort_by_key(|d| d.range.start());
     out
 }
@@ -229,11 +230,15 @@ pub fn ignore_fixes(
     config: &LintConfig,
 ) -> Vec<Assist> {
     let Some(text) = ws.text(file) else { return Vec::new() };
-    lint(ws, file, config)
-        .iter()
-        .filter(|d| d.range.intersect(range).is_some())
-        .flat_map(|d| ignore::ignore_fixes(&text, d))
-        .collect()
+    let mut out = Vec::new();
+    for d in lint(ws, file, config).iter().filter(|d| d.range.intersect(range).is_some()) {
+        // Problems of lints can be allowed; the others (attributes) cannot.
+        if find(d.code).is_some() {
+            out.extend(ignore::ignore_fixes(&text, d));
+        }
+        out.extend(ignore::attribute_fixes(&text, d));
+    }
+    out
 }
 
 /// The fixes of the reported lints applicable at `range` of `file`.
@@ -311,7 +316,7 @@ pub(crate) mod test_utils {
             .into_iter()
             .filter(|d| d.code == code)
             .map(|d| {
-                let line = src[..usize::from(d.range.start())].lines().count().max(1);
+                let line = src[..usize::from(d.range.start())].matches('\n').count() + 1;
                 format!("{line}: {}", d.message)
             })
             .collect()

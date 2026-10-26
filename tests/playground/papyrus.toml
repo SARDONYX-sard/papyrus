@@ -25,14 +25,16 @@ release = false                 # strip DebugOnly
 final = false                   # strip BetaOnly
 quiet = true                    # errors only
 
+[test]
+sources = ["tests"]             # ; #[test] functions, PapyrusAnalyzer.Assert* built in: run by papyrus_analyzer test, not built
+
 [dependencies]                  # projects whose sources this one sees
 # MCMHelper = { path = "../MCMHelper" }
 
 [lints]                         # lint | group | "all" = "allow" | "warn" | "deny"
-complexity = "allow"            # groups: correctness · suspicious · complexity · style · pedantic
+complexity = "warn"            # groups: correctness · suspicious · complexity · style · pedantic
 unused-local = "deny"           # lints: papyrus_analyzer lint --list
-# pedantic = "deny"
-# unchecked-cast = "warn"
+pedantic = "deny"
 
 [format]                        # unset → .editorconfig → editor
 indent-style = "space"          # space | tab

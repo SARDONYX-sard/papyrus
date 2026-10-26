@@ -580,7 +580,21 @@ fn check_names(sema: &Sema<'_>, out: &mut Vec<Diagnostic>) {
                     out.push(Diagnostic::error(
                         ty.base().map_or(node.text_range(), |b| b.text_range()),
                         "unknown-type",
-                        format!("unknown type `{}`", ty.base_text()),
+                        format!(
+                            "unknown type `{}`{}",
+                            ty.base_text(),
+                            builtin_hint(sema, ty.base_text())
+                        ),
+                    ));
+                }
+            }
+            SyntaxKind::IMPORT => {
+                let Some(nr) = node.children().find_map(ast::NameRef::cast) else { continue };
+                if sema.ws.script_near(Name::new(nr.text()), sema.file).is_none() {
+                    out.push(Diagnostic::error(
+                        nr.syntax().text_range(),
+                        "unknown-type",
+                        format!("unknown script `{}`{}", nr.text(), builtin_hint(sema, nr.text())),
                     ));
                 }
             }
@@ -667,7 +681,16 @@ fn check_name_ref(
         out.push(Diagnostic::error(
             range,
             "unresolved-name",
-            format!("cannot find `{}` in this scope", nr.text()),
+            format!("cannot find `{}` in this scope{}", nr.text(), builtin_hint(sema, nr.text())),
         ));
     }
+}
+
+/// Why the built-in script `name` (`PapyrusAnalyzer`) is not seen, if it is
+/// one.
+fn builtin_hint(sema: &Sema<'_>, name: &str) -> &'static str {
+    let builtin = sema.ws.script(Name::new(name)).is_some_and(|f| {
+        sema.ws.file(f).origin == crate::Origin::Builtin && !sema.ws.is_visible(f, sema.file)
+    });
+    if builtin { ": it is only available in the [test] sources of papyrus.toml" } else { "" }
 }

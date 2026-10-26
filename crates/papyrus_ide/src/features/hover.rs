@@ -20,8 +20,104 @@ pub struct HoverResult {
 
 /// Describes the name at `offset`.
 pub fn hover(ws: &Workspace, file: FileId, offset: TextSize) -> Option<HoverResult> {
-    with_sema(ws, file, |sema| keyword_hover(sema, offset).or_else(|| name_hover(sema, offset)))
-        .flatten()
+    with_sema(ws, file, |sema| {
+        keyword_hover(sema, offset)
+            .or_else(|| operator_hover(sema, offset))
+            .or_else(|| name_hover(sema, offset))
+    })
+    .flatten()
+}
+
+/// What an operator does in Papyrus, by token kind.
+fn operator_doc(kind: SyntaxKind) -> Option<(&'static str, &'static str)> {
+    use SyntaxKind::*;
+    Some(match kind {
+        PLUS => (
+            "+",
+            "Addition; with a `String` on either side, concatenation (the other side is cast to `String`).",
+        ),
+        MINUS => ("-", "Subtraction, or negation before a value."),
+        STAR => ("*", "Multiplication."),
+        SLASH => (
+            "/",
+            "Division. Between two `Int`s, the result is truncated toward zero: `7 / 2` is `3`.",
+        ),
+        PERCENT => ("%", "Remainder of the division of two `Int`s (only `Int`s)."),
+        EQ2 => (
+            "==",
+            "Equality. Strings compare ignoring case; objects by identity; an `Int` and a `Float` by value.",
+        ),
+        NEQ => ("!=", "Inequality: `!(a == b)`."),
+        LT => ("<", "Less than. Strings compare ignoring case."),
+        LTEQ => ("<=", "Less than or equal. Strings compare ignoring case."),
+        GT => (">", "Greater than. Strings compare ignoring case."),
+        GTEQ => (">=", "Greater than or equal. Strings compare ignoring case."),
+        AMP2 => (
+            "&&",
+            "Logical and, short-circuit: the right side runs only when the left one is true. Both sides are cast to `Bool`.",
+        ),
+        PIPE2 => (
+            "||",
+            "Logical or, short-circuit: the right side runs only when the left one is false. Both sides are cast to `Bool`.",
+        ),
+        BANG => (
+            "!",
+            "Logical not; the value is cast to `Bool` (`None`, `0`, `\"\"` and empty arrays are false).",
+        ),
+        EQ => ("=", "Assignment; the value is cast to the type of the target when needed."),
+        PLUSEQ => ("+=", "`a = a + b`: addition, or concatenation for strings."),
+        MINUSEQ => ("-=", "`a = a - b`."),
+        STAREQ => ("*=", "`a = a * b`."),
+        SLASHEQ => ("/=", "`a = a / b`; truncated between `Int`s."),
+        PERCENTEQ => ("%=", "`a = a % b`."),
+        _ => return None,
+    })
+}
+
+/// The documentation of the operator at `offset`, with the types it works on
+/// here: `Int + Float → Float`.
+fn operator_hover(sema: &Sema<'_>, offset: TextSize) -> Option<HoverResult> {
+    use crate::{
+        hir::{Body, Expr},
+        typeck::{self, Ty},
+    };
+    let tok = sema.root.token_at_offset(offset).max_by_key(|t| operator_doc(t.kind()).is_some())?;
+    let (symbol, doc) = operator_doc(tok.kind())?;
+    let mut markdown = format!("```papyrus\n{symbol}\n```\n*operator*\n\n{doc}");
+    // The types, from the expression of the operator.
+    let func = tok
+        .parent()?
+        .ancestors()
+        .find(|n| matches!(n.kind(), SyntaxKind::FUNCTION | SyntaxKind::EVENT));
+    if let Some(body) = func.and_then(|f| Body::lower(sema, f)) {
+        let types = typeck::check_body(sema, &body);
+        let ty = |e: crate::hir::ExprId| match types.types.get(e.0 as usize) {
+            Some(Ty::Unknown) | None => None,
+            Some(t) => Some(t.display()),
+        };
+        let at = tok.text_range();
+        let found = body
+            .exprs
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, r))| r.contains_range(at))
+            .min_by_key(|(_, (_, r))| r.len())
+            .map(|(i, (e, _))| (crate::hir::ExprId(i as u32), e.clone()));
+        let line = match found {
+            Some((id, Expr::Binary { lhs, rhs, .. })) => ty(lhs)
+                .zip(ty(rhs))
+                .zip(ty(id))
+                .map(|((l, r), out)| format!("`{l}` {symbol} `{r}` → `{out}`")),
+            Some((id, Expr::Unary { expr, .. })) => {
+                ty(expr).zip(ty(id)).map(|(v, out)| format!("{symbol}`{v}` → `{out}`"))
+            }
+            _ => None,
+        };
+        if let Some(line) = line {
+            markdown.push_str(&format!("\n\nHere: {line}"));
+        }
+    }
+    Some(HoverResult { range: tok.text_range(), markdown })
 }
 
 /// The documentation of the keyword at `offset`, with an example. For `Self`
@@ -116,7 +212,7 @@ fn nullness_line(sema: &Sema<'_>, range: TextRange) -> Option<String> {
             (*at, format!("the cast `{}` gives None when it fails", text(*at)))
         }
         Nullness::MaybeNone(NoneSource::Call(at)) => {
-            (*at, format!("`{}` may return None", text(*at)))
+            (*at, format!("`{}` returns an object, which may always be None", text(*at)))
         }
     };
     let here = format!("[here]({})", location_link(sema, at));

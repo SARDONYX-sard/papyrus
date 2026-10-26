@@ -1,5 +1,6 @@
-ScriptName CompilerBasics extends Quest Hidden
-{ Arithmetic, casts, strings and control flow. }
+ScriptName Base extends ObjectReference Hidden
+{Samples of the compiler: properties, variables, arithmetic, casts, strings,
+control flow, arrays and states. The parent of Child, which calls it with `Parent.`.}
 
 Import Utility
 
@@ -9,6 +10,18 @@ Actor Property PlayerRef Auto
 Int counter = 10
 String label = "basics"
 Bool enabled = True Conditional
+
+Event OnInit()
+    Debug.Trace("Base: init")
+EndEvent
+
+Function Greet(String asName)
+    Debug.Trace("Base: hello " + asName)
+EndFunction
+
+Int Function Rank()
+    Return 1
+EndFunction
 
 Int Function Add(Int a, Int b = 2) Global
     Return a + b
@@ -50,7 +63,7 @@ Function UseThings()
     Debug.Trace("count " + Count, 1)
     PlayerRef.Kill()
     Float mult = PlayerRef.GetActorValue("SpeedMult")
-    Int[] values = new Int[5]
+    Int[] values = New Int[5]
     values[0] = 4
     values[1] = values[0] * 2
     Int where = values.Find(8)
@@ -62,12 +75,9 @@ Function UseThings()
     EndIf
     GoToState("Busy")
     String current = GetState()
-EndFunction
-
-Event OnInit()
-    UseThings()
+    Debug.Trace(current + ": " + mult + " " + where + " " + size)
     RegisterForSingleUpdate(1.0)
-EndEvent
+EndFunction
 
 State Busy
     Event OnUpdate()

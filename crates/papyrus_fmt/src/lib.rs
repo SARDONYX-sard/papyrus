@@ -16,8 +16,8 @@
 //! - trailing whitespace is removed and the file ends with one line break.
 //!
 //! Attributes in comments keep code as written, like `#[rustfmt::skip]`:
-//! `; #[fmt::skip]` the next declaration or statement (or its line, after
-//! code), `; #![fmt::skip]` the whole file. See [`papyrus_parser::attrs`].
+//! `; #[fmt::skip]` the next declaration or statement, `; #![fmt::skip]` the whole
+//! file. See [`papyrus_parser::attrs`].
 //!
 //! Scripts with syntax errors are not formatted. The result is checked before
 //! being returned: it must parse without errors and contain the same

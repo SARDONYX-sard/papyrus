@@ -372,6 +372,7 @@ dependencies = [
  "papyrus_parser",
  "papyrus_pex",
  "papyrus_project",
+ "papyrus_vm",
  "rayon",
  "rustc-hash",
  "serde",
@@ -474,6 +475,16 @@ dependencies = [
  "serde",
  "skyrim_data_dir",
  "toml",
+]
+
+[[package]]
+name = "papyrus_vm"
+version = "0.0.0"
+dependencies = [
+ "papyrus_compiler",
+ "papyrus_ide",
+ "papyrus_pex",
+ "rustc-hash",
 ]
 
 [[package]]

@@ -55,11 +55,22 @@ papyrus_analyzer: language server for the Papyrus scripting language (stdio)
 
 USAGE:
     papyrus_analyzer [OPTIONS]            run the language server on stdio
-    papyrus_analyzer fmt [--check] [PATH]...
-                                          format scripts (directories recursively);
-                                          --check only lists unformatted files
+    papyrus_analyzer <COMMAND> [ARGS]...
 
-OPTIONS:
+COMMANDS:
+    compile      compile the project of papyrus.toml, or like PapyrusCompiler.exe
+    decompile    decompile .pex files to .psc
+    disasm       print the disassembly of .pex files
+    fmt          format scripts
+    lint         check scripts for problems, and fix them
+    test         run the `; #[test]` functions of the scripts
+    run          run a function in the Papyrus VM, natives mocked
+    debug        debug adapter (DAP, stdio) running tests and functions in the VM
+    help         print this help, or the help of a command
+
+`papyrus_analyzer <COMMAND> --help` (or `help <COMMAND>`) prints the options of a command.
+
+OPTIONS (language server):
     --var NAME=VALUE      Value of a `${NAME}` variable of papyrus.toml, e.g.
                           --var SKYRIM_DIR=\"D:/Steam/steamapps/common/Skyrim Special Edition\"
                           (`${env:NAME}` reads environment variables instead)

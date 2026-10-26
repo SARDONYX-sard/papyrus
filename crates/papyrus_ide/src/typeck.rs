@@ -61,7 +61,8 @@ impl Ty {
         matches!(self, Ty::Value(TypeRef { base: BaseType::Int | BaseType::Float, array: false }))
     }
 
-    fn display(self) -> String {
+    /// The type as written in scripts, for messages.
+    pub fn display(self) -> String {
         match self {
             Ty::Unknown => "?".to_owned(),
             Ty::None => "None".to_owned(),

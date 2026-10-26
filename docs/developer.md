@@ -54,7 +54,7 @@ Tests (`cargo test`):
 | --- | --- | --- |
 | `tests/corpus` | scripts compiled by the official compiler (git submodule) | read-only |
 | `tests/fmt` | `input.psc` → `expected.psc`, the formatter fixture | the tests |
-| `tests/playground` | a project (`papyrus.toml`, `src/`) to try the extension and the CLI on; samples of attributes, `Parent`, compiler features | anyone, any time — no test reads it |
+| `tests/playground` | a project (`papyrus.toml`, `src/`) to try the extension and the CLI on; `src/Base.psc` and `src/Child.psc` (compiler features, `Parent`), `src/Lints.psc` (each lint and the attributes, silenced by its first line), `tests/ChildTests.psc` (tests, mocks, events, watch expressions of the debugger) | anyone, any time — no test reads it |
 | `tests/playground/src/Scratch.psc` | an empty script to play with | free to edit |
 
 ## Building the extension
@@ -73,7 +73,7 @@ Tests (`cargo test`):
 ## CI
 
 - `ci.yaml` — `cargo fmt`, then clippy and the tests on Windows, Linux and macOS.
-- `build.yaml` — the server and the VSIX of each platform: artifacts on `main` and pull requests, attached to the GitHub release on tags (`release-lto` profile).
+- `build.yaml` — the VSIX and an archive of `papyrus_analyzer` (zip on Windows, else tar.gz) of each platform: artifacts on `main` and pull requests, attached to the GitHub release on tags (`release-lto` profile).
 
 ## Todo
 

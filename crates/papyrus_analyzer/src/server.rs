@@ -617,6 +617,7 @@ impl Server {
         self.ws = Workspace::new();
         let scopes = self.scopes();
         self.ws.set_scopes(&scopes);
+        self.install_builtins();
         for (path, text, version) in open {
             self.ws.set_open(path, text, version);
         }
@@ -822,7 +823,10 @@ impl Server {
         if data.origin != Origin::Workspace || build_dirs.iter().any(|d| data.path.starts_with(d)) {
             return false;
         }
-        self.members.iter().flat_map(|p| &p.sources).any(|s| data.path.starts_with(s))
+        self.members
+            .iter()
+            .flat_map(|p| p.sources.iter().chain(&p.test_sources))
+            .any(|s| data.path.starts_with(s))
     }
 
     /// The closed files to check.
