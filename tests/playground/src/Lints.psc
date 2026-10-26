@@ -28,7 +28,7 @@ Int Function UnreachableCode()
 EndFunction
 
 ; bool-literal-comparison (complexity): a comparison with True or False.
-; Quick fix: `If abFlag`. Allowed by `complexity = "allow"` in this papyrus.toml.
+; Quick fix: `If abFlag`. Allowed by `complexity = "warn"` in this papyrus.toml.
 Function BoolLiteralComparison(Bool abFlag)
     If abFlag == True
         Debug.Trace("flag")

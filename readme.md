@@ -216,7 +216,7 @@ Rust-like attributes, in comments:
 
 Attributes have completion, hover and go to definition (the mocked native); unknown ones are reported. Like in Rust, they go before what they apply to: after code on its line, or `#![...]` below the code, an attribute applies to nothing (`misplaced-attribute`, with a quick fix moving it).
 
-`names`: lints (`unused_local` | `unused-local`) · groups · `all`; none → every lint. Text after `]` (a reason) is ignored.
+`names`: lints (`unused_local` | `unused-local`) · groups · `all`; none → every lint. Text after `]` (a reason) is ignored. Attributes stack, one per line: a long list can be split (`[format] max-width` does it).
 Quick fixes on a lint problem add them: _Allow `code` here_ · _Allow `code` in this file_.
 
 ```papyrus

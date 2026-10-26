@@ -32,10 +32,9 @@ sources = ["tests"]             # ; #[test] functions, PapyrusAnalyzer.Assert* b
 # MCMHelper = { path = "../MCMHelper" }
 
 [lints]                         # lint | group | "all" = "allow" | "warn" | "deny"
-complexity = "allow"            # groups: correctness · suspicious · complexity · style · pedantic
+complexity = "warn"            # groups: correctness · suspicious · complexity · style · pedantic
 unused-local = "deny"           # lints: papyrus_analyzer lint --list
-# pedantic = "deny"
-# unchecked-cast = "warn"
+pedantic = "deny"
 
 [format]                        # unset → .editorconfig → editor
 indent-style = "space"          # space | tab

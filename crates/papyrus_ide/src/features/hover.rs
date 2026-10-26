@@ -212,7 +212,7 @@ fn nullness_line(sema: &Sema<'_>, range: TextRange) -> Option<String> {
             (*at, format!("the cast `{}` gives None when it fails", text(*at)))
         }
         Nullness::MaybeNone(NoneSource::Call(at)) => {
-            (*at, format!("`{}` may return None", text(*at)))
+            (*at, format!("`{}` returns an object, which may always be None", text(*at)))
         }
     };
     let here = format!("[here]({})", location_link(sema, at));

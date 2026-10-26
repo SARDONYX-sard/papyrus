@@ -25,6 +25,11 @@
 //! If a && a.IsDead()
 //! ```
 //!
+//! A function returning an object type (`Actor`, `ObjectReference`, `Form`...)
+//! may always return `None`: Papyrus has no non-None object types, so every
+//! call returning one counts, whatever the function (`Game.GetPlayer()` too).
+//! Functions returning `Int`, `Float`, `Bool`, `String` or arrays do not.
+//!
 //! Casts to a parent type (`akActor as ObjectReference`) never fail and are
 //! not reported. Only casts between scripts whose whole `extends` chain is
 //! known are: when the imports of papyrus.toml provide every script, as for
@@ -53,7 +58,7 @@ pub(crate) const CAST: Lint = Lint {
 pub(crate) const CALL: Lint = Lint {
     code: "unchecked-call-result",
     group: Group::Pedantic,
-    summary: "an object returned by a call used without checking it is not None",
+    summary: "the result of a function returning an object (always maybe None) used without checking it is not None",
     run: run_call,
     fix: None,
 };
@@ -77,7 +82,7 @@ fn run(sema: &Sema<'_>, lint: &'static Lint, out: &mut Vec<Diagnostic>) {
                     format!("the cast `{}` gives None when it fails", text(at))
                 }
                 (NoneSource::Call(at), "unchecked-call-result") => {
-                    format!("`{}` may return None", text(at))
+                    format!("`{}` returns an object, which may always be None", text(at))
                 }
                 _ => continue,
             };

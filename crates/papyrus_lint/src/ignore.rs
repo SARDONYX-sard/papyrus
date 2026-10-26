@@ -50,7 +50,8 @@ const ATTRIBUTES: &[AttributeDoc] = &[
         detail: "allow lints: `allow(unused_local, style)`",
         doc: "Allows the listed lints (lints, groups or `all`; none: every lint) in the \
               next declaration or statement, all its lines; in the whole file as \
-              `#![allow]`, before the code. Text after `]` is a reason, ignored.",
+              `#![allow]`, before the code. Text after `]` is a reason, ignored. \
+              Attributes stack: write one per line for long lists.",
         example: "; #![allow(style)] the whole file\n\
                   ScriptName MyQuest\n\n\
                   ; #[allow(unused_local)] the whole function\n\
@@ -766,6 +767,12 @@ mod tests {
         assert_eq!(check("unused-local", &all), Vec::<String>::new());
         let other = format!("; #![allow(unreachable_code)]\nScriptName T\n{BODY}");
         assert_eq!(check("unused-local", &other).len(), 2);
+        // Stacked, one per line.
+        let stacked =
+            format!("; #![allow(style)]\n; #![allow(unused_local)]\nScriptName T\n{BODY}");
+        assert_eq!(check("unused-local", &stacked), Vec::<String>::new());
+        let outer = "ScriptName T\n; #[allow(style)]\n; #[allow(unused_local)]\nFunction F()\n    Int a = 1\nEndFunction\n";
+        assert_eq!(check("unused-local", outer), Vec::<String>::new());
     }
 
     #[test]
