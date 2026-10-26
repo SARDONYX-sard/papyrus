@@ -24,17 +24,19 @@ value (0, None, \"\"...) and are listed at the end. `Utility.Wait` sends
 the `OnUpdate` events registered with `RegisterForUpdate`.";
 
 const TEST_USAGE: &str = "\
-usage: papyrus_analyzer test [--init]
+usage: papyrus_analyzer test
 
 Runs the `; #[test]` functions of the scripts below the current directory,
-each on a new object of its script, after its `OnInit`. A test fails when an
-`Assert.*` fails, when the game would log an error (a call on None...) or
-when it returns False. `; #[mock(Script.Function)]` functions of the test
-script replace the native in its tests.
+each on a new object of its script, after its `OnInit`. A test fails when a
+`PapyrusAnalyzer.Assert*` fails, when the game would log an error (a call on
+None...) or when it returns False. `; #[mock(Script.Function)]` functions of
+the test script replace the native in its tests.
+
+The scripts of the [test] sources of papyrus.toml see the built-in script
+`PapyrusAnalyzer` (`AssertIntEq`, `AssertTrue`, `Fail`...; `Import
+PapyrusAnalyzer` calls them unqualified). A project script of that name wins.
 
 options:
-  --init       write Assert.psc into the first [test] sources directory of
-               papyrus.toml (else tests/)
   -h, --help   print this help";
 
 /// Compiles the scripts of the workspace when the machine loads them.
@@ -63,6 +65,22 @@ impl ScriptLoader for Compiled {
             }
         }
     }
+}
+
+/// The loader of the scripts below the current directory, their imports and
+/// the built-in `PapyrusAnalyzer`, which every script of the run sees.
+fn loader(scripts: &[PathBuf]) -> Compiled {
+    let (mut ws, imports) = crate::fmt::workspace_with_imports(scripts);
+    let cwd = std::env::current_dir().unwrap_or_default();
+    crate::builtin::install(&mut ws, &[cwd]);
+    if let Some(path) = crate::builtin::shadowed_by(&ws) {
+        eprintln!(
+            "warning: {} hides the built-in `{}`",
+            path.display(),
+            papyrus_vm::PAPYRUS_ANALYZER
+        );
+    }
+    Compiled { ws, imports }
 }
 
 /// An argument from the command line.
@@ -95,8 +113,7 @@ pub(crate) fn run(args: &[String]) -> i32 {
 
     let mut scripts: Vec<PathBuf> = Vec::new();
     collect(&std::env::current_dir().unwrap_or_default(), &mut scripts);
-    let (ws, imports) = crate::fmt::workspace_with_imports(&scripts);
-    let mut vm = Vm::new(Compiled { ws, imports });
+    let mut vm = Vm::new(loader(&scripts));
     let marked = marked_functions(&scripts);
     let result = start(&mut vm, &marked, script).and_then(|obj| vm.call(obj, function, &values));
 
@@ -150,16 +167,12 @@ pub(crate) fn test(args: &[String]) -> i32 {
         println!("{TEST_USAGE}");
         return 0;
     }
-    if args.iter().any(|a| a == "--init") {
-        return init();
-    }
     let mut scripts: Vec<PathBuf> = Vec::new();
     collect(&std::env::current_dir().unwrap_or_default(), &mut scripts);
     let marked = marked_functions(&scripts);
     let tests: Vec<&Marked> = marked.iter().filter(|m| m.mocks.is_none()).collect();
 
-    let (ws, imports) = crate::fmt::workspace_with_imports(&scripts);
-    let mut vm = Vm::new(Compiled { ws, imports });
+    let mut vm = Vm::new(loader(&scripts));
     let mut failed = 0;
     for Marked { script, function, .. } in tests.iter().copied() {
         vm.output.clear();
@@ -244,33 +257,6 @@ fn start(
     }
     vm.send_event(obj, "OnInit", &[])?;
     Ok(obj)
-}
-
-/// `test --init`: writes `Assert.psc` into the first `[test] sources`
-/// directory of papyrus.toml, else `tests/`.
-fn init() -> i32 {
-    let cwd = std::env::current_dir().unwrap_or_default();
-    let vars = papyrus_project::Variables::for_command_line(&cwd);
-    let dir = papyrus_project::find_manifest(&cwd)
-        .and_then(|m| papyrus_project::load(&m, &vars).ok())
-        .and_then(|p| p.test_sources.first().cloned())
-        .unwrap_or_else(|| cwd.join("tests"));
-    let path = dir.join("Assert.psc");
-    if path.exists() {
-        eprintln!("{} already exists", path.display());
-        return 1;
-    }
-    match std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, papyrus_vm::ASSERT_PSC))
-    {
-        Ok(()) => {
-            println!("wrote {}", path.display());
-            0
-        }
-        Err(e) => {
-            eprintln!("{}: {e}", path.display());
-            1
-        }
-    }
 }
 
 fn collect(dir: &std::path::Path, out: &mut Vec<PathBuf>) {

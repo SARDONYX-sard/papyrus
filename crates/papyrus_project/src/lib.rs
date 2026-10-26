@@ -454,7 +454,7 @@ pub struct Project {
     /// The sources of `[dependencies]`, transitively: imported before
     /// `imports`.
     pub dependency_sources: Vec<PathBuf>,
-    /// `[test] sources`: directories of tests (`; #[test]` functions, `Assert.psc`),
+    /// `[test] sources`: directories of tests (`; #[test]` functions, which see the built-in `PapyrusAnalyzer` script),
     /// run by `papyrus_analyzer test` and never compiled into `output`.
     pub test_sources: Vec<PathBuf>,
     /// `[dependencies]`: name and manifest directory.
@@ -1063,7 +1063,7 @@ release = false                 # strip DebugOnly
 final = false                   # strip BetaOnly
 quiet = true                    # errors only
 
-[test]                          # papyrus_analyzer test: ; #[test] functions, Assert.psc (test --init)
+[test]                          # papyrus_analyzer test: ; #[test] functions, PapyrusAnalyzer.Assert* built in
 # sources = ["tests"]           # not built; a test script extends the script it tests
 
 [dependencies]                  # projects whose sources this one sees

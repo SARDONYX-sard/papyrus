@@ -11,8 +11,8 @@
 //!   versions and `UnregisterForUpdate*` of `Form`, `Alias` and
 //!   `ActiveMagicEffect`: schedule `OnUpdate` / `OnUpdateGameTime`;
 //! - `StringUtil.GetLength`, `StringUtil.Substring`, `StringUtil.Find`;
-//! - `Assert.*`, see [`ASSERT_PSC`]: a failed assertion is an error of
-//!   [`Vm::errors`], which fails the test.
+//! - `PapyrusAnalyzer.Assert*`, see [`PAPYRUS_ANALYZER_PSC`]: a failed
+//!   assertion is an error of [`Vm::errors`], which fails the test.
 
 use std::rc::Rc;
 
@@ -48,21 +48,35 @@ fn wait(vm: &mut Vm, seconds: f32) -> Value {
     Value::None
 }
 
-/// `Assert.psc`, the assertions of tests. Only `Native` declarations: the
-/// official compiler compiles it, and in the game a call only logs that the
-/// native is not bound. The machine implements them.
-pub const ASSERT_PSC: &str = r#"ScriptName Assert Hidden
-{Assertions of tests run by papyrus_analyzer test: a failure fails the test.}
+/// The name of the built-in script of tests, [`PAPYRUS_ANALYZER_PSC`].
+pub const PAPYRUS_ANALYZER: &str = "PapyrusAnalyzer";
 
-Function IntEq(Int aiActual, Int aiExpected, String asMessage = "") Global Native
-Function FloatEq(Float afActual, Float afExpected, Float afEpsilon = 0.0001, String asMessage = "") Global Native
-Function StringEq(String asActual, String asExpected, String asMessage = "") Global Native
-Function BoolEq(Bool abActual, Bool abExpected, String asMessage = "") Global Native
-Function IsTrue(Bool abValue, String asMessage = "") Global Native
-Function IsFalse(Bool abValue, String asMessage = "") Global Native
-Function IsNone(Form akForm, String asMessage = "") Global Native
-Function NotNone(Form akForm, String asMessage = "") Global Native
+/// `PapyrusAnalyzer.psc`, built into papyrus_analyzer: the assertions of
+/// tests, for the test directories only. Only `Native` declarations, which
+/// the machine implements. `Import PapyrusAnalyzer` calls them unqualified.
+pub const PAPYRUS_ANALYZER_PSC: &str = r#"ScriptName PapyrusAnalyzer Hidden
+{Built into papyrus_analyzer, for the scripts of the [test] sources of papyrus.toml.
+Assertions of `papyrus_analyzer test`: a failure fails the test.
+`Import PapyrusAnalyzer` calls them without `PapyrusAnalyzer.`.}
+
+Function AssertIntEq(Int aiActual, Int aiExpected, String asMessage = "") Global Native
+{Fails unless aiActual == aiExpected.}
+Function AssertFloatEq(Float afActual, Float afExpected, Float afEpsilon = 0.0001, String asMessage = "") Global Native
+{Fails unless afActual is within afEpsilon of afExpected.}
+Function AssertStringEq(String asActual, String asExpected, String asMessage = "") Global Native
+{Fails unless asActual == asExpected (ignoring case, like Papyrus).}
+Function AssertBoolEq(Bool abActual, Bool abExpected, String asMessage = "") Global Native
+{Fails unless abActual == abExpected.}
+Function AssertTrue(Bool abValue, String asMessage = "") Global Native
+{Fails unless abValue is True.}
+Function AssertFalse(Bool abValue, String asMessage = "") Global Native
+{Fails unless abValue is False.}
+Function AssertNone(Form akForm, String asMessage = "") Global Native
+{Fails unless akForm is None.}
+Function AssertNotNone(Form akForm, String asMessage = "") Global Native
+{Fails when akForm is None.}
 Function Fail(String asMessage) Global Native
+{Fails the test.}
 "#;
 
 /// Records a failed assertion.
@@ -83,10 +97,11 @@ fn register_asserts(vm: &mut Vm) {
             fail(vm, format!("expected {expected}, got {actual}"), &arg(args, 2))
         }
     };
-    vm.register_native("Assert", "IntEq", eq(|a, b| a.as_int() == b.as_int()));
-    vm.register_native("Assert", "BoolEq", eq(|a, b| a.truthy() == b.truthy()));
-    vm.register_native("Assert", "StringEq", eq(|a, b| a.loose_eq(b)));
-    vm.register_native("Assert", "FloatEq", |vm, _, args| {
+    const S: &str = PAPYRUS_ANALYZER;
+    vm.register_native(S, "AssertIntEq", eq(|a, b| a.as_int() == b.as_int()));
+    vm.register_native(S, "AssertBoolEq", eq(|a, b| a.truthy() == b.truthy()));
+    vm.register_native(S, "AssertStringEq", eq(|a, b| a.loose_eq(b)));
+    vm.register_native(S, "AssertFloatEq", |vm, _, args| {
         let (actual, expected) = (arg(args, 0).as_float(), arg(args, 1).as_float());
         if (actual - expected).abs() <= arg(args, 2).as_float() {
             return Value::None;
@@ -101,13 +116,11 @@ fn register_asserts(vm: &mut Vm) {
             fail(vm, what.to_owned(), &arg(args, 1))
         }
     };
-    vm.register_native("Assert", "IsTrue", check(true, "expected True"));
-    vm.register_native("Assert", "IsFalse", check(false, "expected False"));
-    vm.register_native("Assert", "NotNone", check(true, "expected an object, got None"));
-    vm.register_native("Assert", "IsNone", check(false, "expected None"));
-    vm.register_native("Assert", "Fail", |vm, _, args| {
-        fail(vm, "failed".to_owned(), &arg(args, 0))
-    });
+    vm.register_native(S, "AssertTrue", check(true, "expected True"));
+    vm.register_native(S, "AssertFalse", check(false, "expected False"));
+    vm.register_native(S, "AssertNotNone", check(true, "expected an object, got None"));
+    vm.register_native(S, "AssertNone", check(false, "expected None"));
+    vm.register_native(S, "Fail", |vm, _, args| fail(vm, "failed".to_owned(), &arg(args, 0)));
 }
 
 pub(crate) fn register_builtins(vm: &mut Vm) {

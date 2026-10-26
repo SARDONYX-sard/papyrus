@@ -263,6 +263,7 @@ impl Server {
             self.members.clear();
             self.publish_manifest_problems(&PathBuf::new(), Err(Vec::new()));
             self.ws.set_scopes(&[]);
+            self.install_builtins();
             return;
         };
         let result =
@@ -286,6 +287,15 @@ impl Server {
         }
         let scopes = self.scopes();
         self.ws.set_scopes(&scopes);
+        self.install_builtins();
+    }
+
+    /// Adds the built-in `PapyrusAnalyzer` script, seen by the test sources
+    /// of the projects.
+    pub(crate) fn install_builtins(&mut self) {
+        let test_dirs: Vec<PathBuf> =
+            self.members.iter().flat_map(|m| m.test_sources.iter().cloned()).collect();
+        crate::builtin::install(&mut self.ws, &test_dirs);
     }
 
     /// Publishes the problems of each manifest of the workspace of `root`,

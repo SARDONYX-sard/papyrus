@@ -42,7 +42,7 @@ const ATTRIBUTES: &[(&str, &str, &str)] = &[
         "test",
         "a test: `papyrus_analyzer test` runs it, it fails on errors or `False`",
         "A test, run by `papyrus_analyzer test` or ▶ Run test on a new object of \
-         the script, after its `OnInit`. It fails when an `Assert.*` fails, when \
+         the script, after its `OnInit`. It fails when a `PapyrusAnalyzer.Assert*` fails, when \
          the game would log an error (a call on `None`...) or when it returns \
          `False`.",
     ),

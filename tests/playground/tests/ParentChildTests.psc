@@ -1,21 +1,22 @@
 ScriptName ParentChildTests extends ParentChild
 {Tests of ParentChild. Extending it, they call its functions on Self.
 Run them with `papyrus_analyzer test`, or with ▶ Run test.}
+Import PapyrusAnalyzer
 
 ; #[test]
 Function CountAddsOne()
-    Assert.IntEq(Count(), 2, "ParentBase.Count() + 1")
+    AssertIntEq(Count(), 2, "ParentBase.Count() + 1")
 EndFunction
 
 ; #[test]
 Function GreetCallsTheParent()
     Greet("Dovahkiin")
-    Assert.IsTrue(Count() > 1)
+    AssertTrue(Count() > 1)
 EndFunction
 
 ; #[test]
 Function FailsOnPurpose()
-    Assert.IntEq(Count(), 3, "a failing test, to see the report: remove it")
+    AssertIntEq(Count(), 3, "a failing test, to see the report: remove it")
 EndFunction
 
 ; #[mock(Utility.RandomInt)] replaces the native in the tests of this script
@@ -25,7 +26,7 @@ EndFunction
 
 ; #[test]
 Function RandomIsMocked()
-    Assert.IntEq(Utility.RandomInt(1, 6), 4, "FixedRoll")
+    AssertIntEq(Utility.RandomInt(1, 6), 4, "FixedRoll")
 EndFunction
 
 Int updates
@@ -40,5 +41,5 @@ Function WaitSendsUpdates()
     Utility.Wait(3.5)
     UnregisterForUpdate()
     Utility.Wait(5.0)
-    Assert.IntEq(updates, 3)
+    AssertIntEq(updates, 3)
 EndFunction

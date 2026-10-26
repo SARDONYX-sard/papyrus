@@ -38,7 +38,7 @@ use rustc_hash::FxHashMap;
 
 use crate::script::{Func, Operand, key};
 pub use crate::{
-    natives::ASSERT_PSC,
+    natives::{PAPYRUS_ANALYZER, PAPYRUS_ANALYZER_PSC},
     script::Script,
     value::{ObjId, Value},
 };

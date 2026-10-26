@@ -28,6 +28,11 @@ pub enum Origin {
     Workspace,
     /// A file of the `n`-th configured import directory.
     Import(u16),
+    /// A script built into papyrus_analyzer (`PapyrusAnalyzer`, for tests):
+    /// seen only by the files of the test directories
+    /// ([`Workspace::set_test_dirs`]), and after every other script of the
+    /// same name.
+    Builtin,
 }
 
 /// The contents of a file opened in the editor.
@@ -107,12 +112,23 @@ pub struct Workspace {
     by_script: FxHashMap<Symbol, Vec<FileId>>,
     flags: FlagTable,
     scopes: Vec<ScopeKeys>,
+    /// The test directories, as [`path_key`]s ending with `/`.
+    test_dirs: Vec<String>,
 }
 
 /// Normalizes a path into a lookup key. Windows paths are case-insensitive.
 fn path_key(path: &Path) -> String {
     let s = path.to_string_lossy().replace('\\', "/");
     if cfg!(windows) { s.to_lowercase() } else { s }
+}
+
+/// The [`path_key`] of a directory, ending with `/`.
+fn dir_key(dir: &Path) -> String {
+    let mut k = path_key(dir);
+    if !k.ends_with('/') {
+        k.push('/');
+    }
+    k
 }
 
 impl Workspace {
@@ -226,18 +242,11 @@ impl Workspace {
     /// Sets the projects of a multi-project workspace; empty for one project,
     /// whose scripts see every script.
     pub fn set_scopes(&mut self, scopes: &[Scope]) {
-        let dir_key = |d: &PathBuf| {
-            let mut k = path_key(d);
-            if !k.ends_with('/') {
-                k.push('/');
-            }
-            k
-        };
         self.scopes = scopes
             .iter()
             .map(|s| ScopeKeys {
-                sources: s.sources.iter().map(dir_key).collect(),
-                visible: s.visible.iter().map(dir_key).collect(),
+                sources: s.sources.iter().map(|d| dir_key(d)).collect(),
+                visible: s.visible.iter().map(|d| dir_key(d)).collect(),
             })
             .collect();
         let scopings: Vec<_> =
@@ -247,6 +256,24 @@ impl Workspace {
                 (file.scope, file.visible_in) = scoping;
             }
         }
+    }
+
+    /// Sets the test directories, whose files see the [`Origin::Builtin`]
+    /// scripts.
+    pub fn set_test_dirs(&mut self, dirs: &[PathBuf]) {
+        self.test_dirs = dirs.iter().map(|d| dir_key(d)).collect();
+    }
+
+    /// Whether `file` is below a test directory.
+    pub fn is_test_file(&self, file: FileId) -> bool {
+        let key = path_key(&self.file(file).path);
+        self.test_dirs.iter().any(|d| key.starts_with(d.as_str()))
+    }
+
+    /// Whether the script of `target` may be used by `from`: built-in
+    /// scripts only by test files.
+    pub fn is_visible(&self, target: FileId, from: FileId) -> bool {
+        self.file(target).origin != Origin::Builtin || self.is_test_file(from)
     }
 
     /// The scope of a file and the scopes seeing it.
@@ -323,7 +350,10 @@ impl Workspace {
         let ids = self.by_script.get(&name.key())?;
         // A file of a scope sees only the scripts visible from its scope.
         let scope = near.and_then(|n| self.file(n).scope);
-        let visible = |id: FileId| scope.is_none_or(|s| self.file(id).visible_in & 1 << s != 0);
+        let visible = |id: FileId| {
+            scope.is_none_or(|s| self.file(id).visible_in & 1 << s != 0)
+                && near.is_none_or(|n| self.is_visible(id, n))
+        };
         if let [only] = ids.as_slice() {
             return Some(*only).filter(|&id| visible(id));
         }

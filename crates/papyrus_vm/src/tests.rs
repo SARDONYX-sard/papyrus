@@ -90,8 +90,8 @@ fn natives_none_and_failed_casts() {
 
 #[test]
 fn asserts_record_failures() {
-    let src = "ScriptName T\nFunction Check(Int x) Global\n    Assert.IntEq(x, 3, \"three\")\n    Assert.FloatEq(x / 2.0, 1.5)\n    Assert.IsTrue(x > 0)\nEndFunction\n";
-    let mut vm = vm(&[("T", src), ("Assert", crate::ASSERT_PSC)]);
+    let src = "ScriptName T\nImport PapyrusAnalyzer\nFunction Check(Int x) Global\n    PapyrusAnalyzer.AssertIntEq(x, 3, \"three\")\n    AssertFloatEq(x / 2.0, 1.5)\n    AssertTrue(x > 0)\nEndFunction\n";
+    let mut vm = vm(&[("T", src), ("PapyrusAnalyzer", crate::PAPYRUS_ANALYZER_PSC)]);
     vm.call_static("T", "Check", &[Value::Int(3)]).unwrap();
     assert!(vm.errors.is_empty(), "{:?}", vm.errors);
     vm.call_static("T", "Check", &[Value::Int(-1)]).unwrap();

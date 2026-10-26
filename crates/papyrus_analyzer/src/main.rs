@@ -3,6 +3,7 @@
 //! Speaks the Language Server Protocol over stdio. Logs go to stderr and are
 //! controlled with the `RUST_LOG` environment variable (default: `info`).
 
+mod builtin;
 mod compile;
 mod config;
 mod conv;

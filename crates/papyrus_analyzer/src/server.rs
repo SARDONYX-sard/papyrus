@@ -617,6 +617,7 @@ impl Server {
         self.ws = Workspace::new();
         let scopes = self.scopes();
         self.ws.set_scopes(&scopes);
+        self.install_builtins();
         for (path, text, version) in open {
             self.ws.set_open(path, text, version);
         }

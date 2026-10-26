@@ -308,6 +308,40 @@ fn signature_help_active_param() {
 }
 
 #[test]
+fn builtin_scripts_are_seen_by_tests_only() {
+    let builtin = "ScriptName PapyrusAnalyzer\nFunction AssertTrue(Bool b) Global Native\n";
+    let uses = |name: &str| {
+        format!(
+            "ScriptName {name}\nImport PapyrusAnalyzer\nFunction F()\n    PapyrusAnalyzer.AssertTrue(True)\n    AssertTrue(True)\nEndFunction\n"
+        )
+    };
+    let mut ws = Workspace::new();
+    ws.set_test_dirs(&[PathBuf::from("/ws/tests")]);
+    // Semantic checks need the base scripts.
+    ws.set_open(PathBuf::from("/ws/src/Form.psc"), Arc::from("ScriptName Form\n"), 0);
+    ws.set_disk_index(
+        PathBuf::from("/tmp/PapyrusAnalyzer.psc"),
+        index_text(builtin),
+        Origin::Builtin,
+    );
+    let test = ws.set_open(PathBuf::from("/ws/tests/T.psc"), Arc::from(uses("T")), 0);
+    let src = ws.set_open(PathBuf::from("/ws/src/S.psc"), Arc::from(uses("S")), 0);
+    let messages =
+        |file| -> Vec<String> { diagnostics(&ws, file).into_iter().map(|d| d.message).collect() };
+    assert_eq!(messages(test), Vec::<String>::new());
+    assert!(
+        messages(src).iter().any(|m| m.contains("only available in the [test] sources")),
+        "{:?}",
+        messages(src)
+    );
+
+    // A script of the project wins over the built-in one.
+    let own = "ScriptName PapyrusAnalyzer\nFunction AssertTrue(Bool b) Global\nEndFunction\n";
+    let own = ws.set_open(PathBuf::from("/ws/src/PapyrusAnalyzer.psc"), Arc::from(own), 0);
+    assert_eq!(ws.script_near(papyrus_intern::Name::new("PapyrusAnalyzer"), test), Some(own));
+}
+
+#[test]
 fn diagnostics_semantic() {
     let (ws, file, _) = workspace(&[
         ("Form.psc", FORM),

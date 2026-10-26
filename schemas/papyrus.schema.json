@@ -262,7 +262,7 @@
         "sources": {
           "type": "array",
           "items": { "type": "string" },
-          "markdownDescription": "Directories of tests: `; #[test]` functions and `Assert.psc` (`papyrus_analyzer test --init`). Run by `papyrus_analyzer test`, never compiled into `output`."
+          "markdownDescription": "Directories of tests: `; #[test]` functions. Their scripts see the built-in `PapyrusAnalyzer` script (`PapyrusAnalyzer.AssertIntEq(...)`, or `Import PapyrusAnalyzer`). Run by `papyrus_analyzer test`, never compiled into `output`."
         }
       }
     },
