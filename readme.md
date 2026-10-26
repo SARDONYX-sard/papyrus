@@ -207,14 +207,14 @@ Rust-like attributes, in comments:
 
 | Attribute                    | Applies to                                                                                 |
 | ---------------------------- | ------------------------------------------------------------------------------------------ |
-| `; #[allow(names)]`          | the next declaration \| statement (a whole `Function`, `If`...) · its line when after code |
-| `; #![allow(names)]`         | the whole file                                                                             |
+| `; #[allow(names)]`          | the next declaration \| statement (a whole `Function`, `If`...), on the line above it      |
+| `; #![allow(names)]`         | the whole file — before the code, at the top                                               |
 | `; #[fmt::skip]`             | same as `#[allow]` — kept as written                                                       |
-| `; #![fmt::skip]`            | the whole file, not formatted                                                              |
+| `; #![fmt::skip]`            | the whole file, not formatted — before the code, at the top                                |
 | `; #[test]`                  | the next function: a test, see [Tests](#tests)                                             |
 | `; #[mock(Script.Function)]` | the next function: replaces the native in the tests of its script                          |
 
-Attributes have completion, hover and go to definition (the mocked native); unknown ones are reported.
+Attributes have completion, hover and go to definition (the mocked native); unknown ones are reported. Like in Rust, they go before what they apply to: after code on its line, or `#![...]` below the code, an attribute applies to nothing (`misplaced-attribute`, with a quick fix moving it).
 
 `names`: lints (`unused_local` | `unused-local`) · groups · `all`; none → every lint. Text after `]` (a reason) is ignored.
 Quick fixes on a lint problem add them: _Allow `code` here_ · _Allow `code` in this file_.

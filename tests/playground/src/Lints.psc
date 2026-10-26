@@ -56,9 +56,8 @@ Function AllowedInFunction()
     Int notRead = 1
 EndFunction
 
-Function AllowedPerLine()
-    Int a = 1 ; #[allow(unused_local)] after code: this line only
-    ; #[allow(unused_local, suspicious)] alone on its line: the next statement
+Function AllowedPerStatement()
+    ; #[allow(unused_local, suspicious)] the next statement
     Int b = 2
     Int c = 3 ; reported: `c` is never read
 EndFunction
@@ -74,5 +73,8 @@ EndFunction
 ; ; #[allow(invalid_cast)] a compile error: cannot be allowed
 ; ; #[allow(unused_lokal)] unknown lint
 ; ; #[alow] unknown attribute
+; ; #![allow(all)] misplaced: `#![...]` goes before the code (an error)
 Function Mistakes()
+    Int a = 1 ; ; #[allow(unused_local)] misplaced: after code, applies to nothing
+    Debug.Trace(a)
 EndFunction

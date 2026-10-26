@@ -180,7 +180,8 @@ fn ignore_comments_keep_code_as_written() {
     let src = "scriptname A\nfunction F()\n; #[fmt::skip]\nint   x=1\nint   y=2   ; #[fmt::skip]\nint   z=3\nendfunction\n";
     assert_eq!(
         format(src, &options).unwrap(),
-        "ScriptName A\nFunction F()\n    ; #[fmt::skip]\nint   x=1\nint   y=2   ; #[fmt::skip]\n    Int z = 3\nEndFunction\n"
+        // After code, an attribute applies to nothing.
+        "ScriptName A\nFunction F()\n    ; #[fmt::skip]\nint   x=1\n    Int y = 2   ; #[fmt::skip]\n    Int z = 3\nEndFunction\n"
     );
     let file = "; #![fmt::skip]\nscriptname A\nint   x\n";
     assert_eq!(format(file, &options).unwrap(), file);

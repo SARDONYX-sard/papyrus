@@ -2,18 +2,22 @@
 //! [`papyrus_parser::attrs`]):
 //!
 //! ```papyrus
-//! ; #![allow(unchecked_cast)]            ; the whole file
+//! ; #![allow(unchecked_cast)]            ; the whole file: before the code
+//! ScriptName T
 //!
 //! ; #[allow(unused_local)]               ; the next declaration or statement
 //! Function F()
 //!     Int unused = 1
-//!     Int other = 2  ; #[allow(all)]     ; this line
+//!     ; #[allow(all)]                    ; this statement
+//!     Int other = 2
 //! EndFunction
 //! ```
 //!
 //! The arguments are lints (`unused_local` or `unused-local`), groups or
 //! `all`; without any, every lint. Unknown names are reported (`unknown-lint`):
-//! compiler errors such as `invalid_cast` cannot be allowed.
+//! compiler errors such as `invalid_cast` cannot be allowed. So are
+//! misplaced attributes (`misplaced-attribute`): after code on their line, or
+//! `#![...]` below the code, with a quick fix moving them.
 //!
 //! Inside an attribute, completion offers the lints, groups and attributes.
 
@@ -22,7 +26,10 @@ use papyrus_ide::{
     assists::{Assist, AssistKind, TextEdit},
     index::{Flags, Member},
 };
-use papyrus_parser::attrs::attributes;
+use papyrus_parser::attrs::{Misplacement, attributes, misplaced};
+
+/// The code of the problem of an attribute in the wrong place.
+const MISPLACED: &str = "misplaced-attribute";
 
 use crate::{Group, LINTS, is_known_name};
 
@@ -41,24 +48,27 @@ const ATTRIBUTES: &[AttributeDoc] = &[
     AttributeDoc {
         path: "allow",
         detail: "allow lints: `allow(unused_local, style)`",
-        doc: "Allows the listed lints (lints, groups or `all`; none: every lint): on the \
-              next declaration or statement, on its line after code, or in the whole \
-              file as `#![allow]`. Text after `]` is a reason, ignored.",
-        example: "; #![allow(style)] the whole file\n\n\
+        doc: "Allows the listed lints (lints, groups or `all`; none: every lint) in the \
+              next declaration or statement, all its lines; in the whole file as \
+              `#![allow]`, before the code. Text after `]` is a reason, ignored.",
+        example: "; #![allow(style)] the whole file\n\
+                  ScriptName MyQuest\n\n\
                   ; #[allow(unused_local)] the whole function\n\
                   Function F()\n\
                   \x20   Int unused = 1\n\
-                  \x20   Int b = 2 ; #[allow(unused_local)] this line only\n\
+                  \x20   ; #[allow(unused_local)] this statement\n\
+                  \x20   Int b = 2\n\
                   EndFunction",
     },
     AttributeDoc {
         path: "fmt::skip",
         detail: "keep the code as written by the formatter",
         doc: "Keeps the code as written: the formatter leaves the next declaration or \
-              statement alone, or the whole file as `#![fmt::skip]`.",
-        example: "; #[fmt::skip] aligned by hand\n\
-                  Float[] matrix = New Float[9]\n\n\
-                  ; #![fmt::skip] the whole file: not formatted",
+              statement alone; the whole file as `#![fmt::skip]`, before the code.",
+        example: "; #![fmt::skip] the whole file: not formatted\n\
+                  ScriptName MyQuest\n\n\
+                  ; #[fmt::skip] aligned by hand\n\
+                  Float[] matrix = New Float[9]",
     },
     AttributeDoc {
         path: "test",
@@ -279,6 +289,22 @@ pub(crate) fn check_attributes(
 ) -> Vec<Diagnostic> {
     let text = root.text();
     let mut out = Vec::new();
+    for m in misplaced(root) {
+        out.push(match m.why {
+            Misplacement::AfterCode => Diagnostic::warning(
+                m.range,
+                MISPLACED,
+                "an attribute applies to what follows it, not to code before it on its line: \
+                 move it to its own line, above",
+            ),
+            Misplacement::InnerBelowCode => Diagnostic::error(
+                m.range,
+                MISPLACED,
+                "`#![...]` applies to the whole file: it must come before the code, at the top \
+                 of the file",
+            ),
+        });
+    }
     for a in attributes(root) {
         if a.path.eq_ignore_ascii_case("mock") {
             check_mock(ws, file, text, &a, &mut out);
@@ -461,7 +487,12 @@ pub fn attribute_completions(
     let at = usize::from(offset).min(text.len());
     let line_start = text[..at].rfind('\n').map_or(0, |i| i + 1);
     let line = &text[line_start..at];
-    let comment = &line[line.find(';')? + 1..];
+    // Attributes go alone on their line, not after code.
+    let semicolon = line.find(';')?;
+    if !line[..semicolon].trim().is_empty() {
+        return None;
+    }
+    let comment = &line[semicolon + 1..];
     let body = comment.trim_start();
     let body = body.strip_prefix("#![").or_else(|| body.strip_prefix("#["))?;
     if body.contains(']') {
@@ -555,16 +586,55 @@ pub(crate) fn ignore_fixes(text: &str, d: &Diagnostic) -> Vec<Assist> {
     ]
 }
 
+/// The quick fix of a misplaced attribute: moves it above its line, or to
+/// the top of the file for `#![...]`.
+pub(crate) fn attribute_fixes(text: &str, d: &Diagnostic) -> Option<Assist> {
+    if d.code != MISPLACED {
+        return None;
+    }
+    let (start, end) = (usize::from(d.range.start()), usize::from(d.range.end()));
+    let comment = &text[start..end];
+    let newline = if text.contains("\r\n") { "\r\n" } else { "\n" };
+    let line_start = text[..start].rfind('\n').map_or(0, |i| i + 1);
+    let before = &text[line_start..start];
+    // After code: from the end of the code; alone: the whole line.
+    let removed = if before.trim().is_empty() {
+        let line_end = text[end..].find('\n').map_or(text.len(), |i| end + i + 1);
+        TextRange::new(TextSize::new(line_start as u32), TextSize::new(line_end as u32))
+    } else {
+        let code_end = line_start + before.trim_end().len();
+        TextRange::new(TextSize::new(code_end as u32), d.range.end())
+    };
+    let inner = comment.trim_start_matches(';').trim_start().starts_with("#![");
+    let (label, at, new_text) = if inner {
+        ("Move the attribute to the top of the file", 0, format!("{comment}{newline}"))
+    } else {
+        let indent = &before[..before.len() - before.trim_start().len()];
+        ("Move the attribute above", line_start, format!("{indent}{comment}{newline}"))
+    };
+    Some(Assist {
+        id: "move_attribute",
+        label: label.to_owned(),
+        kind: AssistKind::QuickFix,
+        target: d.range,
+        edits: vec![
+            TextEdit { range: TextRange::empty(TextSize::new(at as u32)), new_text },
+            TextEdit { range: removed, new_text: String::new() },
+        ],
+        fixes: Some(MISPLACED),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use crate::test_utils::check;
 
-    const BODY: &str = "Function F()\n    Int a = 1\n    Int b = 2  ; #[allow(unused_local)]\n    ; #[allow(suspicious)] because\n    Int c = 3\n    ; #[allow(bool-literal-comparison)]\n    Int d = 4\nEndFunction\n";
+    const BODY: &str = "Function F()\n    Int a = 1\n    ; #[allow(unused_local)]\n    Int b = 2\n    ; #[allow(suspicious)] because\n    Int c = 3\n    ; #[allow(bool-literal-comparison)]\n    Int d = 4\nEndFunction\n";
 
     #[test]
     fn outer_attributes_allow_their_item() {
         let src = format!("ScriptName T\n{BODY}");
-        assert_eq!(check("unused-local", &src), ["3: `a` is never read", "8: `d` is never read"]);
+        assert_eq!(check("unused-local", &src), ["3: `a` is never read", "9: `d` is never read"]);
         // Before a function: the whole function.
         let func = format!("ScriptName T\n; #[allow(unused_local)]\n{BODY}");
         assert_eq!(check("unused-local", &func), Vec::<String>::new());
@@ -679,21 +749,64 @@ mod tests {
         assert_eq!(names("; #[mock(Utility.R").unwrap(), ["RandomInt", "Wait"]);
         assert_eq!(names("; #[mock(Utility.Wait)"), None);
         assert_eq!(names("; #[").unwrap(), ["allow", "fmt::skip", "test", "mock"]);
-        let lints = names("Int x ; #[allow(unused_local, un").unwrap();
+        let lints = names("    ; #[allow(unused_local, un").unwrap();
         assert!(
             lints.contains(&"unchecked_cast".to_owned()) && lints.contains(&"style".to_owned())
         );
         assert_eq!(names("; just a comment"), None);
         assert_eq!(names("; #[allow(x)] "), None);
+        assert_eq!(names("Int x ; #[allow("), None);
     }
 
     #[test]
     fn inner_attributes_allow_the_file() {
         let src = format!("; #![allow(unused_local)]\nScriptName T\n{BODY}");
         assert_eq!(check("unused-local", &src), Vec::<String>::new());
-        let all = format!("ScriptName T\n; #![allow(all)]\n{BODY}");
+        let all = format!("; a comment first\n; #![allow(all)]\nScriptName T\n{BODY}");
         assert_eq!(check("unused-local", &all), Vec::<String>::new());
-        let other = format!("ScriptName T\n; #![allow(unreachable_code)]\n{BODY}");
+        let other = format!("; #![allow(unreachable_code)]\nScriptName T\n{BODY}");
         assert_eq!(check("unused-local", &other).len(), 2);
+    }
+
+    #[test]
+    fn misplaced_attributes_apply_to_nothing() {
+        let src = "ScriptName T\n; #![allow(all)]\nFunction F()\n    Int a = 1 ; #[allow(unused_local)]\nEndFunction\n";
+        assert_eq!(check("unused-local", src), ["4: `a` is never read"]);
+        assert_eq!(
+            check("misplaced-attribute", src),
+            [
+                "2: `#![...]` applies to the whole file: it must come before the code, at the top of the file",
+                "4: an attribute applies to what follows it, not to code before it on its line: move it to its own line, above",
+            ]
+        );
+    }
+
+    #[test]
+    fn misplaced_attributes_move_above() {
+        let src = "ScriptName T\n; #![allow(all)] why\nFunction F()\n    Int a = 1  ; #[allow(unused_local)]\nEndFunction\n";
+        let mut ws = papyrus_ide::Workspace::new();
+        let file = ws.set_open("/ws/T.psc".into(), src.into(), 0);
+        let range = papyrus_ide::TextRange::up_to(papyrus_ide::TextSize::of(src));
+        let mut fixes = crate::ignore_fixes(&ws, file, range, &crate::LintConfig::default());
+        fixes.retain(|a| a.id == "move_attribute");
+        let applied: Vec<String> = fixes
+            .iter()
+            .map(|a| {
+                let mut edits = a.edits.clone();
+                edits.sort_by_key(|e| std::cmp::Reverse(e.range.start()));
+                let mut out = src.to_owned();
+                for e in edits {
+                    out.replace_range(std::ops::Range::<usize>::from(e.range), &e.new_text);
+                }
+                out
+            })
+            .collect();
+        assert_eq!(
+            applied,
+            [
+                "; #![allow(all)] why\nScriptName T\nFunction F()\n    Int a = 1  ; #[allow(unused_local)]\nEndFunction\n",
+                "ScriptName T\n; #![allow(all)] why\nFunction F()\n    ; #[allow(unused_local)]\n    Int a = 1\nEndFunction\n",
+            ]
+        );
     }
 }
