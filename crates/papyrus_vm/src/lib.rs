@@ -316,7 +316,8 @@ impl Vm {
                 .min_by(|(_, a), (_, b)| a.due.total_cmp(&b.due))
                 .map(|(i, _)| i);
             let Some(i) = next else { break };
-            let (obj, game_time, due) = (self.timers[i].obj, self.timers[i].game_time, self.timers[i].due);
+            let (obj, game_time, due) =
+                (self.timers[i].obj, self.timers[i].game_time, self.timers[i].due);
             match self.timers[i].every {
                 Some(every) => self.timers[i].due += every,
                 None => drop(self.timers.remove(i)),

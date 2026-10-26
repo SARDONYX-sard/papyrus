@@ -103,7 +103,8 @@ impl Server {
         }
         let (file, lines, offset) = self.position(&params.text_document_position_params)?;
         // Inside a `; #[allow(...)]` comment: the attribute and its lints.
-        if let Some((range, value)) = papyrus_lint::ignore::attribute_hover(&self.ws, file, offset) {
+        if let Some((range, value)) = papyrus_lint::ignore::attribute_hover(&self.ws, file, offset)
+        {
             return Some(Hover {
                 contents: HoverContents::Markup(MarkupContent {
                     kind: MarkupKind::Markdown,
@@ -220,41 +221,40 @@ impl Server {
     }
 
     pub(crate) fn completion(&mut self, params: CompletionParams) -> Option<CompletionResponse> {
-        let (lines, completions) = if let Some((lines, offset)) =
-            self.flags_position(&params.text_document_position)
-        {
-            (lines, papyrus_ide::flag_file_completions(&self.ws, offset))
-        } else {
-            let (file, lines, offset) = self.position(&params.text_document_position)?;
-            // Inside a `; #[allow(...)]` comment: the lints.
-            if let Some((range, items)) =
-                papyrus_lint::ignore::attribute_completions(&self.ws, file, offset)
-            {
-                let items = items
-                    .into_iter()
-                    .map(|(label, detail)| CompletionItem {
-                        kind: Some(lsp_types::CompletionItemKind::KEYWORD),
-                        detail: Some(detail),
-                        text_edit: Some(CompletionTextEdit::Edit(TextEdit {
-                            range: lines.range(range),
-                            new_text: label.clone(),
-                        })),
-                        label,
-                        ..Default::default()
-                    })
-                    .collect();
-                return Some(CompletionResponse::List(CompletionList {
-                    is_incomplete: false,
-                    items,
-                }));
-            }
-            // These only trigger completion for attributes, not in code.
-            let trigger = params.context.as_ref().and_then(|c| c.trigger_character.as_deref());
-            if matches!(trigger, Some("[" | "(" | ",")) {
-                return None;
-            }
-            (lines, papyrus_ide::completions(&self.ws, file, offset))
-        };
+        let (lines, completions) =
+            if let Some((lines, offset)) = self.flags_position(&params.text_document_position) {
+                (lines, papyrus_ide::flag_file_completions(&self.ws, offset))
+            } else {
+                let (file, lines, offset) = self.position(&params.text_document_position)?;
+                // Inside a `; #[allow(...)]` comment: the lints.
+                if let Some((range, items)) =
+                    papyrus_lint::ignore::attribute_completions(&self.ws, file, offset)
+                {
+                    let items = items
+                        .into_iter()
+                        .map(|(label, detail)| CompletionItem {
+                            kind: Some(lsp_types::CompletionItemKind::KEYWORD),
+                            detail: Some(detail),
+                            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                                range: lines.range(range),
+                                new_text: label.clone(),
+                            })),
+                            label,
+                            ..Default::default()
+                        })
+                        .collect();
+                    return Some(CompletionResponse::List(CompletionList {
+                        is_incomplete: false,
+                        items,
+                    }));
+                }
+                // These only trigger completion for attributes, not in code.
+                let trigger = params.context.as_ref().and_then(|c| c.trigger_character.as_deref());
+                if matches!(trigger, Some("[" | "(" | ",")) {
+                    return None;
+                }
+                (lines, papyrus_ide::completions(&self.ws, file, offset))
+            };
         let snippets = self
             .caps
             .text_document

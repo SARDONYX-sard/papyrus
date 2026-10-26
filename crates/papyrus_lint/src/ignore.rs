@@ -106,7 +106,9 @@ fn mock_mismatch(mock: &Member, native: &Member) -> Option<String> {
     let params = mock.params[usize::from(receiver)..].iter().zip(&native.params);
     for (m, n) in params {
         if m.ty != n.ty {
-            let ty = |t: Option<papyrus_ide::index::TypeRef>| t.map_or("?".to_owned(), |t| t.to_string());
+            let ty = |t: Option<papyrus_ide::index::TypeRef>| {
+                t.map_or("?".to_owned(), |t| t.to_string())
+            };
             return Some(format!(
                 "parameter `{}` is `{}`, expected `{}`",
                 m.name.as_str(),
@@ -116,7 +118,9 @@ fn mock_mismatch(mock: &Member, native: &Member) -> Option<String> {
         }
     }
     if mock.ty != native.ty {
-        let ty = |t: Option<papyrus_ide::index::TypeRef>| t.map_or("nothing".to_owned(), |t| format!("`{t}`"));
+        let ty = |t: Option<papyrus_ide::index::TypeRef>| {
+            t.map_or("nothing".to_owned(), |t| format!("`{t}`"))
+        };
         return Some(format!("returns {}, expected {}", ty(mock.ty), ty(native.ty)));
     }
     None
@@ -170,11 +174,7 @@ fn check_mock(
         out.push(Diagnostic::error(
             mock.name_range,
             "invalid-mock",
-            format!(
-                "`{}` cannot replace `{}`: {why}",
-                mock.name.as_str(),
-                native.signature()
-            ),
+            format!("`{}` cannot replace `{}`: {why}", mock.name.as_str(), native.signature()),
         ));
     }
 }
@@ -533,6 +533,39 @@ mod tests {
     }
 
     #[test]
+    fn checks_mocks_against_their_native() {
+        let src = "ScriptName T\n; #[mock(Utility.RandomInt)]\nInt Function Ok(Int a, Int b)\nEndFunction\n; #[mock(Utility.RandomInt)]\nInt Function WithSelf(Form akSelf, Int a, Int b)\nEndFunction\n; #[mock(Utility.RandomInt)]\nFloat Function BadReturn(Int a, Int b)\nEndFunction\n; #[mock(Utility.RandomInt)]\nInt Function BadParam(Int a, Float b)\nEndFunction\n; #[mock(Utility.Wait)]\nFunction TooMany(Float a, Float b, Float c)\nEndFunction\n; #[mock(Utility.Helper)]\nFloat Function NotNative()\nEndFunction\n; #[mock(Nowhere.Thing)]\nFunction Unknown()\nEndFunction\n; #[mock(Wait)]\nFunction NoScript()\nEndFunction\n";
+        let (ws, file) = workspace(src);
+        let found: Vec<(String, String)> = crate::lint(&ws, file, &crate::LintConfig::default())
+            .into_iter()
+            .filter(|d| d.code == "invalid-mock")
+            .map(|d| (src[d.range].to_owned(), d.message))
+            .collect();
+        let at: Vec<&str> = found.iter().map(|(at, _)| at.as_str()).collect();
+        assert_eq!(
+            at,
+            ["BadReturn", "BadParam", "TooMany", "Utility.Helper", "Nowhere.Thing", "Wait"],
+            "{found:#?}"
+        );
+        assert!(found[0].1.contains("returns `Float`, expected `Int`"), "{}", found[0].1);
+        assert!(found[1].1.contains("parameter `b` is `Float`, expected `Int`"), "{}", found[1].1);
+        assert!(found[2].1.contains("expected 1 parameters (or 2"), "{}", found[2].1);
+    }
+
+    #[test]
+    fn mocks_go_to_their_native() {
+        let src = "ScriptName T\n; #[mock(Utility.RandomInt)]\nInt Function Roll(Int a, Int b)\nEndFunction\n";
+        let (ws, file) = workspace(src);
+        let goto = |needle: &str| {
+            let offset = papyrus_ide::TextSize::new((src.find(needle).unwrap() + 1) as u32);
+            let target = super::attribute_definition(&ws, file, offset).unwrap();
+            UTILITY[target.focus_range].to_owned()
+        };
+        assert_eq!(goto("Utility."), "Utility");
+        assert_eq!(goto("RandomInt"), "RandomInt");
+    }
+
+    #[test]
     fn reports_unknown_attributes_and_lints() {
         let src = "ScriptName T\n; #[allow(invalid_cast, unused_lokal, unused_local)]\n; #[alow]\nFunction F()\nEndFunction\n";
         let mut ws = papyrus_ide::Workspace::new();
@@ -578,7 +611,10 @@ mod tests {
         assert!(md.contains("runs instead of the native"), "{md}");
         let (word, md) = hover("Utility.").unwrap();
         assert_eq!(word, "Utility.RandomInt");
-        assert!(md.contains("Int Function RandomInt(Int aiMin = 0, Int aiMax = 100) Global Native"), "{md}");
+        assert!(
+            md.contains("Int Function RandomInt(Int aiMin = 0, Int aiMax = 100) Global Native"),
+            "{md}"
+        );
         let (word, md) = hover("unused_local").unwrap();
         assert_eq!(word, "unused_local");
         assert!(md.contains("suspicious · warn by default"), "{md}");

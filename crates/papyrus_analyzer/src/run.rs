@@ -18,9 +18,24 @@ usage: papyrus_analyzer run Script.Function [ARG]...
 
   ARG   Int (`3`), Float (`1.5`), Bool (`True`), None, or a String
 
-Runs the function on a new object of Script (`OnInit` is not called).
+Runs the function on a new object of Script, after its `OnInit`.
 Debug.Trace prints; natives without implementation return their default
-value (0, None, \"\"...) and are listed at the end.";
+value (0, None, \"\"...) and are listed at the end. `Utility.Wait` sends
+the `OnUpdate` events registered with `RegisterForUpdate`.";
+
+const TEST_USAGE: &str = "\
+usage: papyrus_analyzer test [--init]
+
+Runs the `; #[test]` functions of the scripts below the current directory,
+each on a new object of its script, after its `OnInit`. A test fails when an
+`Assert.*` fails, when the game would log an error (a call on None...) or
+when it returns False. `; #[mock(Script.Function)]` functions of the test
+script replace the native in its tests.
+
+options:
+  --init       write Assert.psc into the first [test] sources directory of
+               papyrus.toml (else tests/)
+  -h, --help   print this help";
 
 /// Compiles the scripts of the workspace when the machine loads them.
 struct Compiled {
@@ -68,6 +83,10 @@ fn parse_arg(arg: &str) -> Value {
 
 /// Runs the subcommand and returns the process exit code.
 pub(crate) fn run(args: &[String]) -> i32 {
+    if args.iter().any(|a| a == "-h" || a == "--help") {
+        println!("{USAGE}");
+        return 0;
+    }
     let Some((script, function)) = args.first().and_then(|a| a.split_once('.')) else {
         eprintln!("{USAGE}");
         return 2;
@@ -127,6 +146,10 @@ pub(crate) fn run(args: &[String]) -> i32 {
 /// EndFunction
 /// ```
 pub(crate) fn test(args: &[String]) -> i32 {
+    if args.iter().any(|a| a == "-h" || a == "--help") {
+        println!("{TEST_USAGE}");
+        return 0;
+    }
     if args.iter().any(|a| a == "--init") {
         return init();
     }

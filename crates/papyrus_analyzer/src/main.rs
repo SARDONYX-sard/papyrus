@@ -27,7 +27,27 @@ use papyrus_ide::{TokenModifier, TokenType};
 
 #[allow(clippy::print_stdout)]
 fn main() -> anyhow::Result<()> {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    // `help COMMAND` is `COMMAND --help`.
+    if args.first().is_some_and(|a| a == "help") {
+        args.remove(0);
+        args.truncate(1);
+        args.push("--help".to_owned());
+    }
+    // Subcommands first: their own `--help`.
+    let command: Option<fn(&[String]) -> i32> = match args.first().map(String::as_str) {
+        Some("compile") => Some(compile::run),
+        Some("decompile") => Some(decompile::run),
+        Some("disasm") => Some(disasm::run),
+        Some("fmt") => Some(fmt::run),
+        Some("lint") => Some(lint::run),
+        Some("test") => Some(run::test),
+        Some("run") => Some(run::run),
+        _ => None,
+    };
+    if let Some(command) = command {
+        std::process::exit(command(&args[1..]));
+    }
     if args.iter().any(|a| a == "--version" || a == "-V") {
         println!("papyrus_analyzer {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
@@ -35,28 +55,6 @@ fn main() -> anyhow::Result<()> {
     if args.iter().any(|a| a == "--help" || a == "-h") {
         println!("{}", config::USAGE);
         return Ok(());
-    }
-    if args.first().is_some_and(|a| a == "compile") {
-        std::process::exit(compile::run(&args[1..]));
-    }
-    if args.first().is_some_and(|a| a == "decompile") {
-        std::process::exit(decompile::run(&args[1..]));
-    }
-    if args.first().is_some_and(|a| a == "disasm") {
-        std::process::exit(disasm::run(&args[1..]));
-    }
-    if args.first().is_some_and(|a| a == "lint") {
-        std::process::exit(lint::run(&args[1..]));
-    }
-    if args.first().is_some_and(|a| a == "test") {
-        std::process::exit(run::test(&args[1..]));
-    }
-    if args.first().is_some_and(|a| a == "run") {
-        std::process::exit(run::run(&args[1..]));
-    }
-    if args.first().is_some_and(|a| a == "fmt") {
-        let code = fmt::run(&args[1..]);
-        std::process::exit(code);
     }
     let cli = config::CliOptions::parse(args).map_err(anyhow::Error::msg)?;
 

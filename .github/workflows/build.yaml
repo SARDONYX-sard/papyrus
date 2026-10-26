@@ -1,8 +1,9 @@
 name: Build
 
-# Builds the server and the VSIX of each platform. Pushes to main and pull
-# requests upload them as artifacts; tags build with `release-lto` and attach
-# them to the GitHub release.
+# Builds, for each platform, the VSIX and an archive (zip on Windows, tar.gz
+# elsewhere) of papyrus_analyzer: the server, `lint`, `fmt` and the other
+# subcommands. Pushes to main and pull requests upload them as artifacts; tags
+# build with `release-lto` and attach them to the GitHub release.
 on:
   push:
     branches: ["main"]
@@ -53,7 +54,7 @@ jobs:
         with:
           tool: cargo-license,cargo-bundle-licenses
 
-      # The server and the licenses of its dependencies, in build/pkg.
+      # papyrus_analyzer and the licenses of its dependencies, in build/pkg.
       - name: Collect outputs
         shell: bash
         run: |

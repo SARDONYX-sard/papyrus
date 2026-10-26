@@ -17,9 +17,24 @@ use std::{
 
 use papyrus_ide::{FileId, Workspace};
 
+const USAGE: &str = "\
+usage: papyrus_analyzer fmt [OPTIONS] [PATH]...
+
+Formats scripts (directories recursively; default: the current directory)
+with .editorconfig, then [format] of papyrus.toml. Names are written like
+their definition, resolved against the imports of papyrus.toml.
+
+options:
+  --check      only list the unformatted files; exit code 1 if any
+  -h, --help   print this help";
+
 /// Runs the subcommand and returns the process exit code: 0 on success, 1
 /// when `--check` found unformatted files or a file could not be formatted.
 pub(crate) fn run(args: &[String]) -> i32 {
+    if args.iter().any(|a| a == "-h" || a == "--help") {
+        println!("{USAGE}");
+        return 0;
+    }
     let check = args.iter().any(|a| a == "--check");
     let mut paths: Vec<PathBuf> =
         args.iter().filter(|a| !a.starts_with("--")).map(PathBuf::from).collect();

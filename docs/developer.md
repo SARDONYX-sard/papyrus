@@ -73,7 +73,7 @@ Tests (`cargo test`):
 ## CI
 
 - `ci.yaml` — `cargo fmt`, then clippy and the tests on Windows, Linux and macOS.
-- `build.yaml` — the server and the VSIX of each platform: artifacts on `main` and pull requests, attached to the GitHub release on tags (`release-lto` profile).
+- `build.yaml` — the VSIX and an archive of `papyrus_analyzer` (zip on Windows, else tar.gz) of each platform: artifacts on `main` and pull requests, attached to the GitHub release on tags (`release-lto` profile).
 
 ## Todo
 
