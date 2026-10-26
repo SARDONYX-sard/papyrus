@@ -116,43 +116,57 @@ pub(crate) fn run(args: &[String]) -> i32 {
 
     let mut scripts: Vec<PathBuf> = Vec::new();
     collect(&std::env::current_dir().unwrap_or_default(), &mut scripts);
+    let started = std::time::Instant::now();
     let mut vm = Vm::new(loader(&scripts));
     let marked = marked_functions(&scripts);
     let result = start(&mut vm, &marked, script).and_then(|obj| vm.call(obj, function, &values));
 
+    // Like `cargo test` with one test: sections separated by blank lines.
+    let name = format!("{script}.{function}");
+    println!("\nrunning 1 test\n\n---- {name} stdout ----");
     for line in &vm.output {
         println!("{line}");
     }
-    for e in &vm.errors {
-        eprintln!("error: {e}");
+    let mut errors = vm.errors.clone();
+    if let Err(e) = &result {
+        errors.push(e.to_string());
+    }
+    if !errors.is_empty() {
+        println!("\nerrors:");
+        for e in &errors {
+            println!("    {e}");
+        }
     }
     if !vm.native_calls.is_empty() {
-        eprintln!("native calls:");
+        println!("\nnative calls:");
+        let show = |v: &Value| match v {
+            Value::Str(s) => format!("{s:?}"),
+            other => vm.text(other),
+        };
         for c in &vm.native_calls {
-            let args: Vec<String> = c.args.iter().map(|a| format!("{a:?}")).collect();
+            let args: Vec<String> = c.args.iter().map(show).collect();
             let mark = if c.implemented { "" } else { "  (not implemented: default value)" };
-            eprintln!("  {}.{}({}){mark}", c.script, c.function, args.join(", "));
+            println!("    {}.{}({}){mark}", c.script, c.function, args.join(", "));
         }
     }
-    match result {
-        Ok(v) => {
-            if !matches!(v, Value::None) {
-                println!("=> {v}");
-            }
-            // Like `test`: errors or `False` fail, the exit code says so.
-            if !vm.errors.is_empty() || matches!(v, Value::Bool(false)) {
-                println!("{}  {script}.{function}", paint(RED, "FAIL"));
-                1
-            } else {
-                println!("{}    {script}.{function}", paint(GREEN, "ok"));
-                0
-            }
-        }
-        Err(e) => {
-            eprintln!("error: {e}");
-            1
-        }
+    if let Ok(v) = &result
+        && !matches!(v, Value::None)
+    {
+        println!("\n=> {}", vm.text(v));
     }
+    // Like `test`: errors or `False` fail, the exit code says so.
+    let failed = problem(&vm, &result).is_some();
+    let (verdict, title) =
+        if failed { (paint(RED, "FAILED"), "failures") } else { (paint(GREEN, "ok"), "successes") };
+    println!("\n{title}:\n    {name}");
+    // The summary of `test`, for one test.
+    println!(
+        "\ntest result: {verdict}. {} passed; {} failed; 0 filtered out; finished in {:.2}s\n",
+        u8::from(!failed),
+        u8::from(failed),
+        started.elapsed().as_secs_f64()
+    );
+    i32::from(failed)
 }
 
 /// `papyrus_analyzer test`: runs the functions marked `; #[test]` of the
@@ -172,36 +186,65 @@ pub(crate) fn test(args: &[String]) -> i32 {
     }
     let mut scripts: Vec<PathBuf> = Vec::new();
     collect(&std::env::current_dir().unwrap_or_default(), &mut scripts);
+    let started = std::time::Instant::now();
     let marked = marked_functions(&scripts);
-    let tests: Vec<&Marked> =
-        marked.iter().filter(|m| m.mocks.is_none() && selected(m, args)).collect();
+    let all = marked.iter().filter(|m| m.mocks.is_none());
+    let tests: Vec<&Marked> = all.clone().filter(|m| selected(m, args)).collect();
+    let filtered_out = all.count() - tests.len();
 
+    // Like `cargo test`: a line per test, then the output of the failures,
+    // then the summary.
+    let plural = if tests.len() == 1 { "" } else { "s" };
+    println!("\nrunning {} test{plural}", tests.len());
     let mut vm = Vm::new(loader(&scripts));
-    let mut failed = 0;
+    // Name, output (Debug.Trace...), problem.
+    let mut results: Vec<(String, Vec<String>, Option<String>)> = Vec::new();
     for Marked { script, function, .. } in tests.iter().copied() {
         vm.output.clear();
         vm.errors.clear();
         let result = start(&mut vm, &marked, script).and_then(|obj| vm.call(obj, function, &[]));
-        match problem(&vm, &result) {
-            None => println!("{}    {script}.{function}", paint(GREEN, "ok")),
-            Some(why) => {
-                failed += 1;
-                println!("{}  {script}.{function}: {why}", paint(RED, "FAIL"));
-                for line in &vm.output {
-                    println!("        {line}");
-                }
+        let name = format!("{script}.{function}");
+        let problem = match &result {
+            // One line per error, like a panic message.
+            Ok(_) if !vm.errors.is_empty() => Some(vm.errors.join("\n")),
+            _ => problem(&vm, &result),
+        };
+        let verdict = if problem.is_some() { paint(RED, "FAILED") } else { paint(GREEN, "ok") };
+        println!("test {name} ... {verdict}");
+        results.push((name, std::mem::take(&mut vm.output), problem));
+    }
+
+    let failures: Vec<_> = results
+        .iter()
+        .filter_map(|(name, output, problem)| Some((name, output, problem.as_ref()?)))
+        .collect();
+    if !failures.is_empty() {
+        println!("\nfailures:\n");
+        for (name, output, problem) in &failures {
+            println!("---- {name} stdout ----");
+            for line in output.iter() {
+                println!("{line}");
             }
+            println!("{problem}\n");
+        }
+        println!("failures:");
+        for (name, ..) in &failures {
+            println!("    {name}");
         }
     }
-    let passed = paint(GREEN, &format!("{} passed", tests.len() - failed));
-    let failures = format!("{failed} failed");
-    let failures = if failed > 0 { paint(RED, &failures) } else { failures };
-    println!("{passed}, {failures}");
+
+    let failed = results.iter().filter(|(_, _, p)| p.is_some()).count();
+    let verdict = if failed > 0 { paint(RED, "FAILED") } else { paint(GREEN, "ok") };
+    println!(
+        "\ntest result: {verdict}. {} passed; {failed} failed; {filtered_out} filtered out; finished in {:.2}s\n",
+        results.len() - failed,
+        started.elapsed().as_secs_f64()
+    );
     i32::from(failed > 0)
 }
 
 const GREEN: &str = "32";
-const RED: &str = "1;31";
+const RED: &str = "31";
 
 /// `text` in the color `sgr` (an ANSI code) when stdout is a terminal and
 /// `NO_COLOR` is not set.
