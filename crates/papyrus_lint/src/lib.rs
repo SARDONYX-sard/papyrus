@@ -118,6 +118,7 @@ pub struct Lint {
 
 /// Every lint, in reporting order.
 pub const LINTS: &[Lint] = &[
+    lints::index_out_of_bounds::LINT,
     lints::unused_local::LINT,
     lints::unreachable_code::LINT,
     lints::bool_literal_comparison::LINT,
