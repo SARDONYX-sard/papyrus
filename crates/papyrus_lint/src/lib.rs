@@ -215,7 +215,7 @@ pub fn lint_source(
         }
     }
     out.retain(|d| !ignores.silence(d));
-    out.extend(ignore::check_attributes(sema.root));
+    out.extend(ignore::check_attributes(ws, file, sema.root));
     out.sort_by_key(|d| d.range.start());
     out
 }

@@ -4,13 +4,19 @@
 //!   [`Vm::output`];
 //! - `Math.*`: computed (angles in degrees, like the game);
 //! - `Utility.RandomInt`, `Utility.RandomFloat`: from [`Vm::seed`];
-//! - `Utility.Wait`, `Utility.WaitGameTime`: advance [`Vm::clock`];
-//!   `Utility.GetCurrentRealTime`, `Utility.GetCurrentGameTime` read it;
-//! - `StringUtil.GetLength`, `StringUtil.Substring`, `StringUtil.Find`.
+//! - `Utility.Wait`, `Utility.WaitGameTime`: advance [`Vm::clock`] and send
+//!   the due update events ([`Vm::advance`]); `Utility.GetCurrentRealTime`,
+//!   `Utility.GetCurrentGameTime` read it;
+//! - `RegisterForUpdate`, `RegisterForSingleUpdate`, their `GameTime`
+//!   versions and `UnregisterForUpdate*` of `Form`, `Alias` and
+//!   `ActiveMagicEffect`: schedule `OnUpdate` / `OnUpdateGameTime`;
+//! - `StringUtil.GetLength`, `StringUtil.Substring`, `StringUtil.Find`;
+//! - `Assert.*`, see [`ASSERT_PSC`]: a failed assertion is an error of
+//!   [`Vm::errors`], which fails the test.
 
 use std::rc::Rc;
 
-use crate::{Value, Vm};
+use crate::{ObjId, Value, Vm};
 
 fn arg(args: &[Value], i: usize) -> Value {
     args.get(i).cloned().unwrap_or_default()
@@ -30,7 +36,82 @@ fn random(vm: &mut Vm) -> u64 {
     x.wrapping_mul(0x2545_f491_4f6c_dd1d)
 }
 
+/// A game hour in seconds, at the default time scale of 20.
+const GAME_HOUR: f32 = 3600.0 / 20.0;
+
+/// Advances the clock, sending the due update events; an error of one stops
+/// the run.
+fn wait(vm: &mut Vm, seconds: f32) -> Value {
+    if let Err(e) = vm.advance(seconds) {
+        vm.abort = Some(e);
+    }
+    Value::None
+}
+
+/// `Assert.psc`, the assertions of tests. Only `Native` declarations: the
+/// official compiler compiles it, and in the game a call only logs that the
+/// native is not bound. The machine implements them.
+pub const ASSERT_PSC: &str = r#"ScriptName Assert Hidden
+{Assertions of tests run by papyrus_analyzer test: a failure fails the test.}
+
+Function IntEq(Int aiActual, Int aiExpected, String asMessage = "") Global Native
+Function FloatEq(Float afActual, Float afExpected, Float afEpsilon = 0.0001, String asMessage = "") Global Native
+Function StringEq(String asActual, String asExpected, String asMessage = "") Global Native
+Function BoolEq(Bool abActual, Bool abExpected, String asMessage = "") Global Native
+Function IsTrue(Bool abValue, String asMessage = "") Global Native
+Function IsFalse(Bool abValue, String asMessage = "") Global Native
+Function IsNone(Form akForm, String asMessage = "") Global Native
+Function NotNone(Form akForm, String asMessage = "") Global Native
+Function Fail(String asMessage) Global Native
+"#;
+
+/// Records a failed assertion.
+fn fail(vm: &mut Vm, what: String, message: &Value) -> Value {
+    let message = message.to_string();
+    let message = if message.is_empty() { String::new() } else { format!(": {message}") };
+    vm.errors.push(format!("assertion failed: {what}{message}"));
+    Value::None
+}
+
+fn register_asserts(vm: &mut Vm) {
+    let eq = |f: fn(&Value, &Value) -> bool| {
+        move |vm: &mut Vm, _, args: &[Value]| {
+            let (actual, expected) = (arg(args, 0), arg(args, 1));
+            if f(&actual, &expected) {
+                return Value::None;
+            }
+            fail(vm, format!("expected {expected}, got {actual}"), &arg(args, 2))
+        }
+    };
+    vm.register_native("Assert", "IntEq", eq(|a, b| a.as_int() == b.as_int()));
+    vm.register_native("Assert", "BoolEq", eq(|a, b| a.truthy() == b.truthy()));
+    vm.register_native("Assert", "StringEq", eq(|a, b| a.loose_eq(b)));
+    vm.register_native("Assert", "FloatEq", |vm, _, args| {
+        let (actual, expected) = (arg(args, 0).as_float(), arg(args, 1).as_float());
+        if (actual - expected).abs() <= arg(args, 2).as_float() {
+            return Value::None;
+        }
+        fail(vm, format!("expected {expected}, got {actual}"), &arg(args, 3))
+    });
+    let check = |want: bool, what: &'static str| {
+        move |vm: &mut Vm, _, args: &[Value]| {
+            if arg(args, 0).truthy() == want {
+                return Value::None;
+            }
+            fail(vm, what.to_owned(), &arg(args, 1))
+        }
+    };
+    vm.register_native("Assert", "IsTrue", check(true, "expected True"));
+    vm.register_native("Assert", "IsFalse", check(false, "expected False"));
+    vm.register_native("Assert", "NotNone", check(true, "expected an object, got None"));
+    vm.register_native("Assert", "IsNone", check(false, "expected None"));
+    vm.register_native("Assert", "Fail", |vm, _, args| {
+        fail(vm, "failed".to_owned(), &arg(args, 0))
+    });
+}
+
 pub(crate) fn register_builtins(vm: &mut Vm) {
+    register_asserts(vm);
     for name in ["Trace", "Notification", "MessageBox", "TraceStack"] {
         vm.register_native("Debug", name, |vm, _, args| {
             vm.output.push(text(args, 0));
@@ -70,17 +151,39 @@ pub(crate) fn register_builtins(vm: &mut Vm) {
         Value::Float(lo + (hi - lo) * unit)
     });
     vm.register_native("Utility", "Wait", |vm, _, args| {
-        vm.clock += arg(args, 0).as_float().max(0.0);
-        Value::None
+        wait(vm, arg(args, 0).as_float())
     });
     vm.register_native("Utility", "WaitGameTime", |vm, _, args| {
-        // Game hours to seconds, at the default time scale of 20.
-        vm.clock += arg(args, 0).as_float().max(0.0) * 3600.0 / 20.0;
-        Value::None
+        wait(vm, arg(args, 0).as_float() * GAME_HOUR)
     });
+    for script in ["Form", "Alias", "ActiveMagicEffect"] {
+        let update = |repeat: bool, game_time: bool| {
+            move |vm: &mut Vm, this: Option<ObjId>, args: &[Value]| {
+                let hours = if game_time { GAME_HOUR } else { 1.0 };
+                if let Some(obj) = this {
+                    vm.register_update(obj, arg(args, 0).as_float() * hours, repeat, game_time);
+                }
+                Value::None
+            }
+        };
+        vm.register_native(script, "RegisterForUpdate", update(true, false));
+        vm.register_native(script, "RegisterForSingleUpdate", update(false, false));
+        vm.register_native(script, "RegisterForUpdateGameTime", update(true, true));
+        vm.register_native(script, "RegisterForSingleUpdateGameTime", update(false, true));
+        let unregister = |game_time: bool| {
+            move |vm: &mut Vm, this: Option<ObjId>, _: &[Value]| {
+                if let Some(obj) = this {
+                    vm.unregister_update(obj, game_time);
+                }
+                Value::None
+            }
+        };
+        vm.register_native(script, "UnregisterForUpdate", unregister(false));
+        vm.register_native(script, "UnregisterForUpdateGameTime", unregister(true));
+    }
     vm.register_native("Utility", "GetCurrentRealTime", |vm, _, _| Value::Float(vm.clock));
     vm.register_native("Utility", "GetCurrentGameTime", |vm, _, _| {
-        Value::Float(vm.clock * 20.0 / 3600.0 / 24.0)
+        Value::Float(vm.clock / GAME_HOUR / 24.0)
     });
 
     vm.register_native("StringUtil", "GetLength", |_, _, args| {

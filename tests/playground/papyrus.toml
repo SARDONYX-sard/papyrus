@@ -25,6 +25,9 @@ release = false                 # strip DebugOnly
 final = false                   # strip BetaOnly
 quiet = true                    # errors only
 
+[test]
+sources = ["tests"]             # ; #[test] functions and Assert.psc: run by papyrus_analyzer test, not built
+
 [dependencies]                  # projects whose sources this one sees
 # MCMHelper = { path = "../MCMHelper" }
 

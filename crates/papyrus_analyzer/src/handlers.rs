@@ -103,8 +103,7 @@ impl Server {
         }
         let (file, lines, offset) = self.position(&params.text_document_position_params)?;
         // Inside a `; #[allow(...)]` comment: the attribute and its lints.
-        let text = self.ws.text(file)?;
-        if let Some((range, value)) = papyrus_lint::ignore::attribute_hover(&text, offset) {
+        if let Some((range, value)) = papyrus_lint::ignore::attribute_hover(&self.ws, file, offset) {
             return Some(Hover {
                 contents: HoverContents::Markup(MarkupContent {
                     kind: MarkupKind::Markdown,
@@ -128,7 +127,11 @@ impl Server {
         params: GotoDefinitionParams,
     ) -> Option<GotoDefinitionResponse> {
         let (file, lines, offset) = self.position(&params.text_document_position_params)?;
-        let targets = papyrus_ide::goto_definition(&self.ws, file, offset);
+        // `; #[mock(Script.Function)]`: the script or the native.
+        let targets = match papyrus_lint::ignore::attribute_definition(&self.ws, file, offset) {
+            Some(target) => vec![target],
+            None => papyrus_ide::goto_definition(&self.ws, file, offset),
+        };
         self.nav_response(file, lines, targets)
     }
 
@@ -224,8 +227,8 @@ impl Server {
         } else {
             let (file, lines, offset) = self.position(&params.text_document_position)?;
             // Inside a `; #[allow(...)]` comment: the lints.
-            let text = self.ws.text(file)?;
-            if let Some((range, items)) = papyrus_lint::ignore::attribute_completions(&text, offset)
+            if let Some((range, items)) =
+                papyrus_lint::ignore::attribute_completions(&self.ws, file, offset)
             {
                 let items = items
                     .into_iter()

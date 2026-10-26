@@ -18,19 +18,166 @@
 //! Inside an attribute, completion offers the lints, groups and attributes.
 
 use papyrus_ide::{
-    Diagnostic, TextRange, TextSize,
+    Diagnostic, FileId, NavFile, NavTarget, TextRange, TextSize, Workspace,
     assists::{Assist, AssistKind, TextEdit},
+    index::{Flags, Member},
 };
 use papyrus_parser::attrs::attributes;
 
 use crate::{Group, LINTS, is_known_name};
 
-/// The attributes, by path.
-const ATTRIBUTES: &[(&str, &str)] = &[
-    ("allow", "allow lints: `allow(unused_local, style)`"),
-    ("fmt::skip", "keep the code as written by the formatter"),
-    ("test", "a test: `papyrus_analyzer test` runs it, it fails on errors or `False`"),
+/// The attributes: path, completion detail and hover documentation.
+const ATTRIBUTES: &[(&str, &str, &str)] = &[
+    (
+        "allow",
+        "allow lints: `allow(unused_local, style)`",
+        "Allows the listed lints (lints, groups or `all`; none: every lint).",
+    ),
+    (
+        "fmt::skip",
+        "keep the code as written by the formatter",
+        "Keeps the code as written: the formatter leaves it alone.",
+    ),
+    (
+        "test",
+        "a test: `papyrus_analyzer test` runs it, it fails on errors or `False`",
+        "A test, run by `papyrus_analyzer test` or ▶ Run test on a new object of \
+         the script, after its `OnInit`. It fails when an `Assert.*` fails, when \
+         the game would log an error (a call on `None`...) or when it returns \
+         `False`.",
+    ),
+    (
+        "mock",
+        "in a test script: this function replaces a native, `mock(Game.GetPlayer)`",
+        "In a test script: this function runs instead of the native \
+         `mock(Script.Function)` in the tests of the script. With one more \
+         parameter than the native, the first one is the object the native is \
+         called on.",
+    ),
 ];
+
+/// The file of the script `name`.
+fn script_file(ws: &Workspace, name: &str) -> Option<FileId> {
+    ws.all_scripts().find(|(n, _)| n.as_str().eq_ignore_ascii_case(name)).map(|(_, f)| f)
+}
+
+/// The natives the script of `file` declares (not inherited), which
+/// `#[mock]` can replace.
+fn natives(ws: &Workspace, file: FileId) -> impl Iterator<Item = &Member> {
+    ws.file(file)
+        .index
+        .members
+        .iter()
+        .filter(|m| m.is_callable() && m.state.is_none() && m.flags.contains(Flags::NATIVE))
+}
+
+/// The native `function` of `script`, with its file.
+fn native<'a>(ws: &'a Workspace, script: &str, function: &str) -> Option<(FileId, &'a Member)> {
+    let file = script_file(ws, script)?;
+    let m = natives(ws, file).find(|m| m.name.as_str().eq_ignore_ascii_case(function))?;
+    Some((file, m))
+}
+
+/// Whether the line of `offset` has an attribute, to parse only then.
+fn on_attribute_line(text: &str, offset: TextSize) -> bool {
+    let at = usize::from(offset).min(text.len());
+    let line_start = text[..at].rfind('\n').map_or(0, |i| i + 1);
+    let line_end = text[at..].find('\n').map_or(text.len(), |i| at + i);
+    text[line_start..line_end].contains("#[") || text[line_start..line_end].contains("#![")
+}
+
+/// Why the mock function `mock` cannot replace `native`.
+fn mock_mismatch(mock: &Member, native: &Member) -> Option<String> {
+    let receiver = mock.params.len() == native.params.len() + 1;
+    if mock.params.len() != native.params.len() && !receiver {
+        return Some(format!(
+            "expected {} parameters (or {} with the object the native is called on first), found {}",
+            native.params.len(),
+            native.params.len() + 1,
+            mock.params.len()
+        ));
+    }
+    if receiver && mock.params[0].ty.is_none_or(|ty| ty.object().is_none()) {
+        return Some(format!(
+            "the extra first parameter `{}` receives the object the native is called on: it must have an object type",
+            mock.params[0].name.as_str()
+        ));
+    }
+    let params = mock.params[usize::from(receiver)..].iter().zip(&native.params);
+    for (m, n) in params {
+        if m.ty != n.ty {
+            let ty = |t: Option<papyrus_ide::index::TypeRef>| t.map_or("?".to_owned(), |t| t.to_string());
+            return Some(format!(
+                "parameter `{}` is `{}`, expected `{}`",
+                m.name.as_str(),
+                ty(m.ty),
+                ty(n.ty)
+            ));
+        }
+    }
+    if mock.ty != native.ty {
+        let ty = |t: Option<papyrus_ide::index::TypeRef>| t.map_or("nothing".to_owned(), |t| format!("`{t}`"));
+        return Some(format!("returns {}, expected {}", ty(mock.ty), ty(native.ty)));
+    }
+    None
+}
+
+/// The problems of a `#[mock(Script.Function)]` attribute: a bad argument,
+/// an unknown native, or a function whose signature does not match it.
+fn check_mock(
+    ws: &Workspace,
+    file: FileId,
+    text: &str,
+    a: &papyrus_parser::attrs::Attribute<'_>,
+    out: &mut Vec<Diagnostic>,
+) {
+    let path = range_of(text, a.path);
+    let [arg] = a.args.as_slice() else {
+        out.push(Diagnostic::error(path, "invalid-mock", "expected `mock(Script.Function)`"));
+        return;
+    };
+    let range = range_of(text, arg);
+    let Some((script, function)) = arg.split_once('.') else {
+        out.push(Diagnostic::error(range, "invalid-mock", "expected `mock(Script.Function)`"));
+        return;
+    };
+    let (script, function) = (script.trim(), function.trim());
+    let Some(script_file) = script_file(ws, script) else {
+        out.push(Diagnostic::warning(range, "invalid-mock", format!("unknown script `{script}`")));
+        return;
+    };
+    let Some(native) =
+        natives(ws, script_file).find(|m| m.name.as_str().eq_ignore_ascii_case(function))
+    else {
+        out.push(Diagnostic::error(
+            range,
+            "invalid-mock",
+            format!("`{script}` has no native `{function}`: only natives can be mocked"),
+        ));
+        return;
+    };
+    let mock = ws
+        .file(file)
+        .index
+        .members
+        .iter()
+        .find(|m| m.is_callable() && a.target.contains(m.name_range.start()));
+    let Some(mock) = mock else {
+        out.push(Diagnostic::error(path, "invalid-mock", "`mock` applies to a function"));
+        return;
+    };
+    if let Some(why) = mock_mismatch(mock, native) {
+        out.push(Diagnostic::error(
+            mock.name_range,
+            "invalid-mock",
+            format!(
+                "`{}` cannot replace `{}`: {why}",
+                mock.name.as_str(),
+                native.signature()
+            ),
+        ));
+    }
+}
 
 /// Whether `names` (`None`: every lint) cover the lint `code`.
 fn covers(names: Option<&[String]>, code: &str) -> bool {
@@ -86,13 +233,22 @@ fn range_of(text: &str, part: &str) -> TextRange {
     TextRange::at(TextSize::new(start as u32), TextSize::of(part))
 }
 
-/// Warnings about the attributes: unknown attributes and lints.
-pub(crate) fn check_attributes(root: papyrus_parser::SyntaxNode<'_>) -> Vec<Diagnostic> {
+/// Problems of the attributes: unknown attributes and lints, mocks that
+/// cannot replace their native.
+pub(crate) fn check_attributes(
+    ws: &Workspace,
+    file: FileId,
+    root: papyrus_parser::SyntaxNode<'_>,
+) -> Vec<Diagnostic> {
     let text = root.text();
     let mut out = Vec::new();
     for a in attributes(root) {
-        if !ATTRIBUTES.iter().any(|(p, _)| a.path.eq_ignore_ascii_case(p)) {
-            let expected: Vec<String> = ATTRIBUTES.iter().map(|(p, _)| format!("`{p}`")).collect();
+        if a.path.eq_ignore_ascii_case("mock") {
+            check_mock(ws, file, text, &a, &mut out);
+            continue;
+        }
+        if !ATTRIBUTES.iter().any(|(p, ..)| a.path.eq_ignore_ascii_case(p)) {
+            let expected: Vec<String> = ATTRIBUTES.iter().map(|(p, ..)| format!("`{p}`")).collect();
             out.push(Diagnostic::warning(
                 range_of(text, a.path),
                 "unknown-attribute",
@@ -124,14 +280,16 @@ pub(crate) fn check_attributes(root: papyrus_parser::SyntaxNode<'_>) -> Vec<Diag
     out
 }
 
-/// The hover of the attribute part at `offset` of `text`: the attribute (with
-/// the lines it applies to) or the lint under the cursor.
-pub fn attribute_hover(text: &str, offset: TextSize) -> Option<(TextRange, String)> {
+/// The hover of the attribute part at `offset` of `file`: the attribute (with
+/// the lines it applies to), or the lint or mocked native under the cursor.
+pub fn attribute_hover(
+    ws: &Workspace,
+    file: FileId,
+    offset: TextSize,
+) -> Option<(TextRange, String)> {
+    let text = &*ws.text(file)?;
     // Every hover comes here first: parse only for lines with an attribute.
-    let at = usize::from(offset).min(text.len());
-    let line_start = text[..at].rfind('\n').map_or(0, |i| i + 1);
-    let line_end = text[at..].find('\n').map_or(text.len(), |i| at + i);
-    if !text[line_start..line_end].contains("#[") && !text[line_start..line_end].contains("#![") {
+    if !on_attribute_line(text, offset) {
         return None;
     }
     let parse = papyrus_parser::parse(text);
@@ -166,7 +324,15 @@ pub fn attribute_hover(text: &str, offset: TextSize) -> Option<(TextRange, Strin
             continue;
         }
         let name = lint_name(arg);
-        let doc = if let Some(lint) = LINTS.iter().find(|l| l.code.eq_ignore_ascii_case(&name)) {
+        let doc = if attr.path.eq_ignore_ascii_case("mock") {
+            let (script, function) = arg.split_once('.')?;
+            let (script, function) = (script.trim(), function.trim());
+            let (_, native) = native(ws, script, function)?;
+            format!(
+                "```papyrus\n{}\n```\n*native of `{script}`, replaced in the tests of this script*",
+                native.signature()
+            )
+        } else if let Some(lint) = LINTS.iter().find(|l| l.code.eq_ignore_ascii_case(&name)) {
             format!(
                 "```papyrus\n{}\n```\n*lint · {} · {} by default*\n\n{}",
                 lint.code.replace('-', "_"),
@@ -196,13 +362,7 @@ pub fn attribute_hover(text: &str, offset: TextSize) -> Option<(TextRange, Strin
     }
     // The attribute itself.
     let path_range = range_of(text, attr.path);
-    let what = if attr.path.eq_ignore_ascii_case("allow") {
-        "Allows the listed lints (lints, groups or `all`; none: every lint)."
-    } else if attr.path.eq_ignore_ascii_case("fmt::skip") {
-        "Keeps the code as written: the formatter leaves it alone."
-    } else {
-        return None;
-    };
+    let (_, _, what) = ATTRIBUTES.iter().find(|(p, ..)| attr.path.eq_ignore_ascii_case(p))?;
     let range = if path_range.contains_inclusive(offset) {
         path_range
     } else {
@@ -224,12 +384,42 @@ pub fn attribute_hover(text: &str, offset: TextSize) -> Option<(TextRange, Strin
     ))
 }
 
-/// Completion inside an attribute comment at `offset` of `text`: the range
+/// The declaration of the script or the native named by the
+/// `mock(Script.Function)` attribute at `offset` of `file`.
+pub fn attribute_definition(ws: &Workspace, file: FileId, offset: TextSize) -> Option<NavTarget> {
+    let text = &*ws.text(file)?;
+    if !on_attribute_line(text, offset) {
+        return None;
+    }
+    let parse = papyrus_parser::parse(text);
+    let attrs = attributes(parse.syntax_node());
+    let arg = attrs
+        .iter()
+        .filter(|a| a.path.eq_ignore_ascii_case("mock"))
+        .flat_map(|a| &a.args)
+        .find(|arg| range_of(text, arg).contains_inclusive(offset))?;
+    let (script, function) = arg.split_once('.')?;
+    let on_script = usize::from(offset) <= usize::from(range_of(text, arg).start()) + script.len();
+    let (script, function) = (script.trim(), function.trim());
+    let (target, focus_range, full_range) = if on_script {
+        let f = script_file(ws, script)?;
+        let range = ws.file(f).index.name_range?;
+        (f, range, range)
+    } else {
+        let (f, m) = native(ws, script, function)?;
+        (f, m.name_range, m.full_range)
+    };
+    Some(NavTarget { file: NavFile::Script(target), focus_range, full_range })
+}
+
+/// Completion inside an attribute comment at `offset` of `file`: the range
 /// to replace, and the items as `(label, detail)`.
 pub fn attribute_completions(
-    text: &str,
+    ws: &Workspace,
+    file: FileId,
     offset: TextSize,
 ) -> Option<(TextRange, Vec<(String, String)>)> {
+    let text = &*ws.text(file)?;
     let at = usize::from(offset).min(text.len());
     let line_start = text[..at].rfind('\n').map_or(0, |i| i + 1);
     let line = &text[line_start..at];
@@ -238,6 +428,31 @@ pub fn attribute_completions(
     let body = body.strip_prefix("#![").or_else(|| body.strip_prefix("#["))?;
     if body.contains(']') {
         return None;
+    }
+    // `mock(Script.Function`: the scripts with natives, then their natives.
+    if let Some(arg) = body.get(..5).filter(|p| p.eq_ignore_ascii_case("mock(")).map(|_| &body[5..])
+    {
+        if arg.contains([')', ',']) {
+            return None;
+        }
+        let arg = arg.trim_start();
+        let (script, word) = match arg.split_once('.') {
+            Some((script, word)) => (Some(script.trim()), word),
+            None => (None, arg),
+        };
+        let replace = TextRange::new(TextSize::new((at - word.len()) as u32), offset);
+        let items = match script {
+            None => ws
+                .all_scripts()
+                .filter(|&(_, f)| natives(ws, f).next().is_some())
+                .map(|(name, _)| (name.as_str().to_owned(), "script with natives".to_owned()))
+                .collect(),
+            Some(script) => (script_file(ws, script).into_iter())
+                .flat_map(|f| natives(ws, f))
+                .map(|m| (m.name.as_str().to_owned(), m.signature()))
+                .collect(),
+        };
+        return Some((replace, items));
     }
     // The word being typed.
     let word_len = body.len()
@@ -249,7 +464,7 @@ pub fn attribute_completions(
     let replace = TextRange::new(TextSize::new((at - word_len) as u32), offset);
     let before = &body[..body.len() - word_len];
     let items = if before.is_empty() {
-        ATTRIBUTES.iter().map(|(p, d)| (p.to_string(), d.to_string())).collect()
+        ATTRIBUTES.iter().map(|(p, d, _)| (p.to_string(), d.to_string())).collect()
     } else if before.trim_start().to_ascii_lowercase().starts_with("allow(")
         && before.trim_end().ends_with(['(', ','])
     {
@@ -336,13 +551,34 @@ mod tests {
         );
     }
 
+    const UTILITY: &str = "ScriptName Utility Hidden\nInt Function RandomInt(Int aiMin = 0, Int aiMax = 100) Global Native\nFunction Wait(Float afSeconds) Global Native\nFloat Function Helper()\nEndFunction\n";
+
+    /// A workspace of `src` and the Utility script.
+    fn workspace(src: &str) -> (papyrus_ide::Workspace, papyrus_ide::FileId) {
+        let mut ws = papyrus_ide::Workspace::new();
+        ws.set_open("/ws/Utility.psc".into(), UTILITY.into(), 0);
+        let file = ws.set_open("/ws/T.psc".into(), src.into(), 0);
+        (ws, file)
+    }
+
     #[test]
     fn hovers_attributes_and_lints() {
-        let src = "ScriptName T\n; #[allow(unused_local, style)] why\nFunction F()\nEndFunction\n";
+        let src = "ScriptName T\n; #[allow(unused_local, style)] why\nFunction F()\nEndFunction\n; #[test]\nFunction G()\nEndFunction\n; #[mock(Utility.RandomInt)]\nInt Function Roll(Int a, Int b)\nEndFunction\n";
+        let (ws, file) = workspace(src);
         let hover = |needle: &str| {
             let offset = papyrus_ide::TextSize::new((src.find(needle).unwrap() + 1) as u32);
-            super::attribute_hover(src, offset).map(|(r, md)| (src[r].to_owned(), md))
+            super::attribute_hover(&ws, file, offset).map(|(r, md)| (src[r].to_owned(), md))
         };
+        let (word, md) = hover("test").unwrap();
+        assert_eq!(word, "test");
+        assert!(md.contains("`papyrus_analyzer test`"), "{md}");
+        assert!(md.contains("Applies to lines 6–7 (`Function G()`)"), "{md}");
+        let (word, md) = hover("mock").unwrap();
+        assert_eq!(word, "mock");
+        assert!(md.contains("runs instead of the native"), "{md}");
+        let (word, md) = hover("Utility.").unwrap();
+        assert_eq!(word, "Utility.RandomInt");
+        assert!(md.contains("Int Function RandomInt(Int aiMin = 0, Int aiMax = 100) Global Native"), "{md}");
         let (word, md) = hover("unused_local").unwrap();
         assert_eq!(word, "unused_local");
         assert!(md.contains("suspicious · warn by default"), "{md}");
@@ -359,11 +595,15 @@ mod tests {
     #[test]
     fn completes_attributes_and_lints() {
         let names = |src: &str| {
+            let (ws, file) = workspace(src);
             let offset = papyrus_ide::TextSize::of(src);
-            super::attribute_completions(src, offset)
+            super::attribute_completions(&ws, file, offset)
                 .map(|(_, items)| items.into_iter().map(|i| i.0).collect::<Vec<_>>())
         };
-        assert_eq!(names("; #[").unwrap(), ["allow", "fmt::skip", "test"]);
+        assert_eq!(names("; #[mock(Uti").unwrap(), ["Utility"]);
+        assert_eq!(names("; #[mock(Utility.R").unwrap(), ["RandomInt", "Wait"]);
+        assert_eq!(names("; #[mock(Utility.Wait)"), None);
+        assert_eq!(names("; #[").unwrap(), ["allow", "fmt::skip", "test", "mock"]);
         let lints = names("Int x ; #[allow(unused_local, un").unwrap();
         assert!(
             lints.contains(&"unchecked_cast".to_owned()) && lints.contains(&"style".to_owned())

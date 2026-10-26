@@ -8,17 +8,22 @@
 //!
 //! Natives have no code. A native call runs, in order:
 //!
-//! 1. the implementation registered for `Script.Function`
+//! 1. a mock: a function of a test object ([`Vm::mock`], `; #[mock(Script.Function)]`
+//!    in tests);
+//! 2. the implementation registered for `Script.Function`
 //!    ([`Vm::register_native`]); `Debug.Trace`, `Math.*` and a few `Utility`
 //!    functions are built in, see [`natives`];
-//! 2. else nothing: the default value of the return type (`None`, `0`,
+//! 3. else nothing: the default value of the return type (`None`, `0`,
 //!    `False`, `""`).
 //!
 //! Every native call is recorded in [`Vm::native_calls`], so that tests can
 //! check what the script asked the game to do.
 //!
 //! Unlike the game, one thread runs everything: a call runs to completion,
-//! `Utility.Wait` only advances [`Vm::clock`]. Errors the game logs (a call on
+//! `Utility.Wait` only advances [`Vm::clock`], sending on the way the
+//! `OnUpdate` / `OnUpdateGameTime` events registered with `RegisterForUpdate`
+//! and the like ([`Vm::advance`]). Other events are sent by calling them
+//! ([`Vm::send_event`]). Errors the game logs (a call on
 //! `None`, an index out of bounds) go to [`Vm::errors`], and the code goes on
 //! with a default value, like in the game.
 
@@ -33,6 +38,7 @@ use rustc_hash::FxHashMap;
 
 use crate::script::{Func, Operand, key};
 pub use crate::{
+    natives::ASSERT_PSC,
     script::Script,
     value::{ObjId, Value},
 };
@@ -102,12 +108,27 @@ struct Frame {
     script: String,
 }
 
+/// A registration of `RegisterForUpdate` and the like.
+struct Timer {
+    obj: ObjId,
+    /// `OnUpdateGameTime`, else `OnUpdate`.
+    game_time: bool,
+    /// When it fires, on [`Vm::clock`].
+    due: f32,
+    /// The interval of a repeating timer.
+    every: Option<f32>,
+}
+
 /// The machine.
 pub struct Vm {
     loader: Box<dyn ScriptLoader>,
     scripts: FxHashMap<String, Option<Rc<Script>>>,
     objects: Vec<Instance>,
     natives: FxHashMap<String, NativeFn>,
+    /// `script.function` → the object and function replacing it.
+    mocks: FxHashMap<String, (ObjId, String)>,
+    /// The mocks running, which call the real native when they call it.
+    mocking: rustc_hash::FxHashSet<String>,
     /// What `Debug.Trace`, `Debug.Notification`... printed.
     pub output: Vec<String>,
     /// Errors the game would log; the code went on.
@@ -121,6 +142,10 @@ pub struct Vm {
     /// Instructions left before [`VmError::StepLimit`].
     pub step_limit: u64,
     depth: usize,
+    timers: Vec<Timer>,
+    /// An error of an event sent by a native, which stops the run when the
+    /// native returns.
+    abort: Option<VmError>,
 }
 
 impl Vm {
@@ -131,6 +156,8 @@ impl Vm {
             scripts: FxHashMap::default(),
             objects: Vec::new(),
             natives: FxHashMap::default(),
+            mocks: FxHashMap::default(),
+            mocking: Default::default(),
             output: Vec::new(),
             errors: Vec::new(),
             native_calls: Vec::new(),
@@ -138,6 +165,8 @@ impl Vm {
             seed: 0x2545_f491_4f6c_dd1d,
             step_limit: 10_000_000,
             depth: 0,
+            timers: Vec::new(),
+            abort: None,
         };
         natives::register_builtins(&mut vm);
         vm
@@ -179,7 +208,8 @@ impl Vm {
     }
 
     /// Creates an object of `script`, its variables set to their initial
-    /// values, in its `Auto` state. `OnInit` is not called.
+    /// values, in its `Auto` state. `OnInit` is not called: send it with
+    /// [`Vm::send_event`].
     pub fn new_object(&mut self, script: &str) -> Result<ObjId, VmError> {
         let chain = self.chain(script);
         if chain.is_empty() {
@@ -241,6 +271,64 @@ impl Vm {
         self.invoke(func, None, &defined, args)
     }
 
+    /// Sends the event `name` to `obj`: calls it when its script (or a
+    /// parent) defines it, else does nothing, like the game.
+    pub fn send_event(&mut self, obj: ObjId, name: &str, args: &[Value]) -> Result<(), VmError> {
+        let script = self.objects[obj.0].script.clone();
+        let state = self.objects[obj.0].state.clone();
+        match self.resolve(&script, &state, &key(name)) {
+            Some((func, defined)) => self.invoke(func, Some(obj), &defined, args).map(drop),
+            None => Ok(()),
+        }
+    }
+
+    /// Registers `obj` for `OnUpdate` (`OnUpdateGameTime` when `game_time`)
+    /// in `seconds`, every `seconds` when `repeat`; replaces its previous
+    /// registration, like the game.
+    pub(crate) fn register_update(
+        &mut self,
+        obj: ObjId,
+        seconds: f32,
+        repeat: bool,
+        game_time: bool,
+    ) {
+        self.unregister_update(obj, game_time);
+        let seconds = seconds.max(0.0);
+        self.timers.push(Timer {
+            obj,
+            game_time,
+            due: self.clock + seconds,
+            every: (repeat && seconds > 0.0).then_some(seconds),
+        });
+    }
+
+    pub(crate) fn unregister_update(&mut self, obj: ObjId, game_time: bool) {
+        self.timers.retain(|t| t.obj != obj || t.game_time != game_time);
+    }
+
+    /// Advances [`Vm::clock`] by `seconds`, sending on the way the due
+    /// `OnUpdate` and `OnUpdateGameTime` events, in order.
+    pub fn advance(&mut self, seconds: f32) -> Result<(), VmError> {
+        let end = self.clock + seconds.max(0.0);
+        loop {
+            let next = (self.timers.iter().enumerate())
+                .filter(|(_, t)| t.due <= end)
+                .min_by(|(_, a), (_, b)| a.due.total_cmp(&b.due))
+                .map(|(i, _)| i);
+            let Some(i) = next else { break };
+            let (obj, game_time, due) = (self.timers[i].obj, self.timers[i].game_time, self.timers[i].due);
+            match self.timers[i].every {
+                Some(every) => self.timers[i].due += every,
+                None => drop(self.timers.remove(i)),
+            }
+            self.clock = self.clock.max(due);
+            let event = if game_time { "OnUpdateGameTime" } else { "OnUpdate" };
+            self.send_event(obj, event, &[])?;
+        }
+        self.clock = self.clock.max(end);
+        Ok(())
+    }
+
     /// Finds `name` up the chain of `script`, the functions of `state`
     /// first; returns it with the script defining it.
     fn resolve(&mut self, script: &str, state: &str, name: &str) -> Option<(Rc<Func>, String)> {
@@ -255,7 +343,7 @@ impl Vm {
         args: &[Value],
     ) -> Result<Value, VmError> {
         if func.native {
-            return Ok(self.call_native(&func, this, script, args));
+            return self.call_native(&func, this, script, args);
         }
         if self.depth >= 512 {
             return Err(VmError::StackOverflow);
@@ -287,19 +375,57 @@ impl Vm {
         this: Option<ObjId>,
         script: &str,
         args: &[Value],
-    ) -> Value {
+    ) -> Result<Value, VmError> {
         let script_name = self.script(script).map_or_else(|| script.to_owned(), |s| s.name.clone());
-        let native = self.natives.get(&format!("{script}.{}", key(&func.name))).cloned();
+        let native_key = format!("{script}.{}", key(&func.name));
+        // A mock runs instead, unless it is running already (a mock may call
+        // the native it replaces).
+        let mock =
+            self.mocks.get(&native_key).cloned().filter(|_| !self.mocking.contains(&native_key));
+        let native = self.natives.get(&native_key).cloned();
         self.native_calls.push(NativeCall {
             script: script_name,
             function: func.name.clone(),
             args: args.to_vec(),
-            implemented: native.is_some(),
+            implemented: mock.is_some() || native.is_some(),
         });
-        match native {
+        if let Some((obj, function)) = mock {
+            let mock_script = self.objects[obj.0].script.clone();
+            let state = self.objects[obj.0].state.clone();
+            let Some((f, defined)) = self.resolve(&mock_script, &state, &key(&function)) else {
+                return Err(VmError::UnknownFunction(function));
+            };
+            // One more parameter than the native: the object it is called on.
+            let mut mock_args = args.to_vec();
+            if f.params.len() == args.len() + 1 {
+                mock_args.insert(0, this.map_or(Value::None, Value::Object));
+            }
+            self.mocking.insert(native_key.clone());
+            let result = self.invoke(f, Some(obj), &defined, &mock_args);
+            self.mocking.remove(&native_key);
+            return result;
+        }
+        let value = match native {
             Some(f) => f(self, this, args),
             None => Value::default_of(&func.return_type),
+        };
+        match self.abort.take() {
+            Some(e) => Err(e),
+            None => Ok(value),
         }
+    }
+
+    /// Runs the function unction of obj instead of the native
+    /// script.name ("Game.GetPlayer"), until [Vm::clear_mocks]. With one
+    /// more parameter than the native, the first one is the object the native
+    /// is called on.
+    pub fn mock(&mut self, native: &str, obj: ObjId, function: &str) {
+        self.mocks.insert(key(native), (obj, function.to_owned()));
+    }
+
+    /// Removes every mock.
+    pub fn clear_mocks(&mut self) {
+        self.mocks.clear();
     }
 
     fn run(&mut self, func: &Func, frame: &mut Frame) -> Result<Value, VmError> {

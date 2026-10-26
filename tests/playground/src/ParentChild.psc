@@ -14,13 +14,3 @@ EndFunction
 Int Function Count()
     Return Parent.Count() + 1
 EndFunction
-
-; #[test]
-Bool Function CountAddsOne()
-    Return Count() == 2
-EndFunction
-
-; #[test]
-Bool Function FailsOnPurpose()
-    Return Count() == 3
-EndFunction

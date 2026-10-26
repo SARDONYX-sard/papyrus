@@ -78,7 +78,8 @@ pub(crate) fn run(args: &[String]) -> i32 {
     collect(&std::env::current_dir().unwrap_or_default(), &mut scripts);
     let (ws, imports) = crate::fmt::workspace_with_imports(&scripts);
     let mut vm = Vm::new(Compiled { ws, imports });
-    let result = vm.new_object(script).and_then(|obj| vm.call(obj, function, &values));
+    let marked = marked_functions(&scripts);
+    let result = start(&mut vm, &marked, script).and_then(|obj| vm.call(obj, function, &values));
 
     for line in &vm.output {
         println!("{line}");
@@ -125,39 +126,22 @@ pub(crate) fn run(args: &[String]) -> i32 {
 ///     Return AddNumbers(1, 2) == 3
 /// EndFunction
 /// ```
-pub(crate) fn test(_args: &[String]) -> i32 {
-    use papyrus_parser::ast::{self, AstNode};
-
+pub(crate) fn test(args: &[String]) -> i32 {
+    if args.iter().any(|a| a == "--init") {
+        return init();
+    }
     let mut scripts: Vec<PathBuf> = Vec::new();
     collect(&std::env::current_dir().unwrap_or_default(), &mut scripts);
-    // (script, function) of every `#[test]`.
-    let mut tests = Vec::new();
-    for path in &scripts {
-        let Some(text) = papyrus_ide::read_file(path) else { continue };
-        let parse = papyrus_parser::parse(&text);
-        let file = parse.source_file();
-        let Some(script) = file.header().and_then(|h| h.name()).map(|n| n.text().to_owned()) else {
-            continue;
-        };
-        for attr in papyrus_parser::attrs::attributes(parse.syntax_node()) {
-            if attr.inner || !attr.path.eq_ignore_ascii_case("test") {
-                continue;
-            }
-            let node = parse.syntax_node().covering_node(attr.target);
-            let func = std::iter::once(node).chain(node.ancestors()).find_map(ast::Function::cast);
-            if let Some(name) = func.and_then(|f| f.name()) {
-                tests.push((script.clone(), name.text().to_owned()));
-            }
-        }
-    }
+    let marked = marked_functions(&scripts);
+    let tests: Vec<&Marked> = marked.iter().filter(|m| m.mocks.is_none()).collect();
 
     let (ws, imports) = crate::fmt::workspace_with_imports(&scripts);
     let mut vm = Vm::new(Compiled { ws, imports });
     let mut failed = 0;
-    for (script, function) in &tests {
+    for Marked { script, function, .. } in tests.iter().copied() {
         vm.output.clear();
         vm.errors.clear();
-        let result = vm.new_object(script).and_then(|obj| vm.call(obj, function, &[]));
+        let result = start(&mut vm, &marked, script).and_then(|obj| vm.call(obj, function, &[]));
         let problem = match &result {
             Err(e) => Some(e.to_string()),
             Ok(_) if !vm.errors.is_empty() => Some(vm.errors.join("; ")),
@@ -177,6 +161,93 @@ pub(crate) fn test(_args: &[String]) -> i32 {
     }
     println!("{} passed, {failed} failed", tests.len() - failed);
     i32::from(failed > 0)
+}
+
+/// A function marked `; #[test]` or `; #[mock(Script.Function)]`.
+struct Marked {
+    script: String,
+    function: String,
+    /// The native a mock replaces; `None` for a test.
+    mocks: Option<String>,
+}
+
+/// The `#[test]` and `#[mock]` functions of `scripts`.
+fn marked_functions(scripts: &[PathBuf]) -> Vec<Marked> {
+    use papyrus_parser::ast::{self, AstNode};
+    let mut out = Vec::new();
+    for path in scripts {
+        let Some(text) = papyrus_ide::read_file(path) else { continue };
+        if !text.contains("#[") {
+            continue;
+        }
+        let parse = papyrus_parser::parse(&text);
+        let file = parse.source_file();
+        let Some(script) = file.header().and_then(|h| h.name()).map(|n| n.text().to_owned()) else {
+            continue;
+        };
+        for attr in papyrus_parser::attrs::attributes(parse.syntax_node()) {
+            let mocks = match attr.path.to_ascii_lowercase().as_str() {
+                "test" => None,
+                "mock" => Some(attr.args.first().map(|a| a.to_string()).unwrap_or_default()),
+                _ => continue,
+            };
+            let node = parse.syntax_node().covering_node(attr.target);
+            let func = std::iter::once(node).chain(node.ancestors()).find_map(ast::Function::cast);
+            if let Some(name) = func.and_then(|f| f.name()) {
+                out.push(Marked {
+                    script: script.clone(),
+                    function: name.text().to_owned(),
+                    mocks,
+                });
+            }
+        }
+    }
+    out
+}
+
+/// A new object of `script`, its `#[mock]` functions replacing the natives,
+/// initialized by its `OnInit` event.
+fn start(
+    vm: &mut Vm,
+    marked: &[Marked],
+    script: &str,
+) -> Result<papyrus_vm::ObjId, papyrus_vm::VmError> {
+    vm.clear_mocks();
+    let obj = vm.new_object(script)?;
+    for m in marked.iter().filter(|m| m.script.eq_ignore_ascii_case(script)) {
+        if let Some(native) = &m.mocks {
+            vm.mock(native, obj, &m.function);
+        }
+    }
+    vm.send_event(obj, "OnInit", &[])?;
+    Ok(obj)
+}
+
+/// `test --init`: writes `Assert.psc` into the first `[test] sources`
+/// directory of papyrus.toml, else `tests/`.
+fn init() -> i32 {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let vars = papyrus_project::Variables::for_command_line(&cwd);
+    let dir = papyrus_project::find_manifest(&cwd)
+        .and_then(|m| papyrus_project::load(&m, &vars).ok())
+        .and_then(|p| p.test_sources.first().cloned())
+        .unwrap_or_else(|| cwd.join("tests"));
+    let path = dir.join("Assert.psc");
+    if path.exists() {
+        eprintln!("{} already exists", path.display());
+        return 1;
+    }
+    match std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, papyrus_vm::ASSERT_PSC))
+    {
+        Ok(()) => {
+            println!("wrote {}", path.display());
+            0
+        }
+        Err(e) => {
+            eprintln!("{}: {e}", path.display());
+            1
+        }
+    }
 }
 
 fn collect(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
