@@ -4,20 +4,21 @@ import * as vscode from "vscode";
 
 import { compileEvents, runCompile } from "./compile/task";
 import { client, showAssemblyCommand } from "./decompile";
+import { isBelow, isWithin, key } from "./paths";
 import { DecompileFilesRequest } from "./protocol";
-import { state } from "./state";
+import { scriptScope, state } from "./state";
 
 /**
- * The Papyrus scripts view, an explorer of the `.psc` and `.pex` files: the
- * workspace folders, the sources of papyrus.toml and the outputs, even below
- * ignored directories such as `target`. The mode, switched by a click on the
- * first row, chooses which files the view acts on:
+ * The Papyrus explorer: the status of the language server (click: details,
+ * button: restart), then the `.psc` and `.pex` files: the workspace folders,
+ * the sources of papyrus.toml and the outputs, even below ignored directories
+ * such as `target`. The mode, switched by a click on the mode row, chooses
+ * which files the view acts on:
  *
- * - compile: the `.psc` files;
- * - decompile: the `.pex` files;
+ * - compile: the `.psc` files, decompiled ones excepted;
+ * - decompile: the `.pex` files, compiled ones included.
  *
- * outputs of builds (compiled `.pex`, decompiled `.psc`) excepted. The other
- * files stay visible, dimmed like ignored files, and open like the others;
+ * The other files stay visible, dimmed like ignored files, and open like the others;
  * files written since the last run get a dot. Below the mode, the compiler
  * (compile mode) and the output directory of the mode.
  *
@@ -32,9 +33,9 @@ import { state } from "./state";
 type Mode = "compile" | "decompile";
 type Status = "running" | "passed" | "failed";
 
-const MODE_KEY = "papyrus.scriptsView.mode";
+const MODE_KEY = "papyrus.explorerView.mode";
 /** The scheme of the rows, so that their decorations stay in this view. */
-const SCHEME = "papyrus-scripts";
+const SCHEME = "papyrus-explorer";
 
 interface FolderNode {
   kind: "folder";
@@ -48,7 +49,12 @@ interface FileNode {
   uri: vscode.Uri;
 }
 
-/** The first row: the current mode, in capitals; a click switches it. */
+/** The first row: the status of the language server. */
+interface ServerNode {
+  kind: "server";
+}
+
+/** The current mode, in capitals; a click switches it. */
 interface ModeNode {
   kind: "mode";
 }
@@ -63,29 +69,17 @@ interface OutputNode {
   kind: "output";
 }
 
-type Node = ModeNode | CompilerNode | OutputNode | FolderNode | FileNode;
+type Node = ServerNode | ModeNode | CompilerNode | OutputNode | FolderNode | FileNode;
 
-/** Path comparison key; Windows paths ignore case. */
-function key(p: string): string {
-  const n = path.normalize(p);
-  return process.platform === "win32" ? n.toLowerCase() : n;
-}
-
-function isBelow(file: string, dir: string): boolean {
-  const rel = path.relative(key(dir), key(file));
-  return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
-}
-
-function isWithin(file: string, dir: string): boolean {
-  return key(file) === key(dir) || isBelow(file, dir);
-}
+/** The one server row, so that a status update redraws only it. */
+const SERVER: ServerNode = { kind: "server" };
 
 /** The row URI of a file: same path, own scheme. */
 function rowUri(uri: vscode.Uri): vscode.Uri {
   return uri.with({ scheme: SCHEME });
 }
 
-class ScriptsProvider implements vscode.TreeDataProvider<Node>, vscode.FileDecorationProvider {
+class ExplorerProvider implements vscode.TreeDataProvider<Node>, vscode.FileDecorationProvider {
   private readonly changed = new vscode.EventEmitter<Node | undefined>();
   readonly onDidChangeTreeData = this.changed.event;
   private readonly decorationsChanged = new vscode.EventEmitter<vscode.Uri | vscode.Uri[] | undefined>();
@@ -189,13 +183,16 @@ class ScriptsProvider implements vscode.TreeDataProvider<Node>, vscode.FileDecor
   }
 
   /**
-   * Whether the current mode acts on `file`: the `.psc` files (compile) or
-   * the `.pex` files (decompile), outputs of builds excepted. The others are
-   * shown dimmed.
+   * Whether the current mode acts on `file`: the `.psc` files but the
+   * decompiled ones (compile), or the `.pex` files, compiled ones included
+   * (decompile). The others are shown dimmed.
    */
   isTarget(file: string): boolean {
-    const ext = this.mode === "compile" ? ".psc" : ".pex";
-    return file.toLowerCase().endsWith(ext) && !this.buildDirs().some((dir) => isBelow(file, dir));
+    if (this.mode === "compile") {
+      return file.toLowerCase().endsWith(".psc") && !this.buildDirs().some((dir) => isBelow(file, dir));
+    }
+    const decompiled = state.buildDirs.map((b) => b.decompile);
+    return file.toLowerCase().endsWith(".pex") && !decompiled.some((dir) => isWithin(file, dir));
   }
 
   /** The roots of the tree: the workspace folders, plus the sources and outputs outside of them. */
@@ -283,8 +280,8 @@ class ScriptsProvider implements vscode.TreeDataProvider<Node>, vscode.FileDecor
       }
       const header: Node[] =
         this.mode === "compile"
-          ? [{ kind: "mode" }, { kind: "compiler" }, { kind: "output" }]
-          : [{ kind: "mode" }, { kind: "output" }];
+          ? [SERVER, { kind: "mode" }, { kind: "compiler" }, { kind: "output" }]
+          : [SERVER, { kind: "mode" }, { kind: "output" }];
       return [...header, ...this.roots];
     }
     return node.kind === "folder" ? node.children : [];
@@ -311,14 +308,36 @@ class ScriptsProvider implements vscode.TreeDataProvider<Node>, vscode.FileDecor
     const folder = !node;
     const active = folder ? this.folderHasTargets(file.fsPath) : this.isTarget(file.fsPath);
     const fresh = !folder && this.fresh.has(key(file.fsPath));
-    if (active && !fresh) {
+    const limited = !folder && this.isLimited(file.fsPath);
+    if (active && !fresh && !limited) {
       return undefined;
     }
     return {
-      badge: fresh ? "•" : undefined,
-      tooltip: fresh ? "Written since the last run" : undefined,
-      color: active ? undefined : new vscode.ThemeColor("gitDecoration.ignoredResourceForeground"),
+      badge: fresh ? "•" : limited ? "L" : undefined,
+      tooltip: fresh
+        ? "Written since the last run"
+        : limited
+          ? "Limited: in neither [build] sources nor [test] sources of papyrus.toml"
+          : undefined,
+      color: !active
+        ? new vscode.ThemeColor("gitDecoration.ignoredResourceForeground")
+        : limited
+          ? new vscode.ThemeColor("charts.blue")
+          : undefined,
     };
+  }
+
+  /**
+   * Whether `file` is a script outside of the projects of papyrus.toml.
+   * Without papyrus.toml every script is, which the server row says.
+   */
+  private isLimited(file: string): boolean {
+    return (
+      state.hasManifest &&
+      file.toLowerCase().endsWith(".psc") &&
+      !this.buildDirs().some((dir) => isBelow(file, dir)) &&
+      scriptScope(file) === "limited"
+    );
   }
 
   private folderHasTargets(dir: string): boolean {
@@ -330,7 +349,15 @@ class ScriptsProvider implements vscode.TreeDataProvider<Node>, vscode.FileDecor
     return false;
   }
 
+  /** Redraws the server row. */
+  refreshServer(): void {
+    this.changed.fire(SERVER);
+  }
+
   getTreeItem(node: Node): vscode.TreeItem {
+    if (node.kind === "server") {
+      return serverItem();
+    }
     if (node.kind === "mode") {
       const compile = this.mode === "compile";
       const item = new vscode.TreeItem(compile ? "COMPILE MODE" : "DECOMPILE MODE");
@@ -344,7 +371,7 @@ class ScriptsProvider implements vscode.TreeDataProvider<Node>, vscode.FileDecor
         ? "Compile mode: ▶ compiles the .psc sources. Click here to switch to decompile mode."
         : "Decompile mode: ▶ decompiles the .pex files. Click here to switch to compile mode.";
       item.command = {
-        command: compile ? "papyrus.scripts.decompileMode" : "papyrus.scripts.compileMode",
+        command: compile ? "papyrus.explorer.decompileMode" : "papyrus.explorer.compileMode",
         title: "Switch mode",
       };
       return item;
@@ -366,7 +393,11 @@ class ScriptsProvider implements vscode.TreeDataProvider<Node>, vscode.FileDecor
       item.id = `${folder?.generation ?? 0}:${k}`;
       item.resourceUri = rowUri(node.uri);
       item.contextValue = this.targets(node).length > 0 ? "papyrusFolder" : "papyrusFolderOther";
-      item.iconPath = vscode.ThemeIcon.Folder;
+      // The directories of the projects stand out from the limited ones.
+      const sources = state.sources.some((d) => key(d) === k);
+      const tests = state.testSources.some((d) => key(d) === k);
+      item.iconPath = sources || tests ? new vscode.ThemeIcon("root-folder") : vscode.ThemeIcon.Folder;
+      item.description = sources ? "[build] sources" : tests ? "[test] sources" : undefined;
       item.tooltip = node.uri.fsPath;
       return item;
     }
@@ -384,7 +415,7 @@ class ScriptsProvider implements vscode.TreeDataProvider<Node>, vscode.FileDecor
       item.iconPath = vscode.ThemeIcon.File;
     }
     item.tooltip = error ?? node.uri.fsPath;
-    item.command = { command: "papyrus.scripts.open", title: "Open", arguments: [node] };
+    item.command = { command: "papyrus.explorer.open", title: "Open", arguments: [node] };
     return item;
   }
 
@@ -410,6 +441,17 @@ class ScriptsProvider implements vscode.TreeDataProvider<Node>, vscode.FileDecor
     }
     return item;
   }
+}
+
+/** The server row: what the status bar shows while the server works. */
+function serverItem(): vscode.TreeItem {
+  const { label, icon, color, tooltip } = state.server;
+  const item = new vscode.TreeItem(label);
+  item.contextValue = "papyrusServer";
+  item.iconPath = new vscode.ThemeIcon(icon, color ? new vscode.ThemeColor(color) : undefined);
+  item.tooltip = new vscode.MarkdownString(tooltip, true);
+  item.command = { command: "papyrus.showStatus", title: "Show Status" };
+  return item;
 }
 
 /** The compiler row: the one of every project, or `mixed` when they differ. */
@@ -497,16 +539,16 @@ function open(uri: vscode.Uri): void {
 }
 
 /** Registers the view and its commands. */
-export function registerScriptsView(context: vscode.ExtensionContext): void {
-  const provider = new ScriptsProvider(context.workspaceState);
-  const view = vscode.window.createTreeView("papyrus.scripts", {
+export function registerExplorerView(context: vscode.ExtensionContext): void {
+  const provider = new ExplorerProvider(context.workspaceState);
+  const view = vscode.window.createTreeView("papyrus.explorer", {
     treeDataProvider: provider,
     showCollapseAll: true,
   });
   const updateMode = () => {
-    // The section header, in capitals: the most visible text of the view.
-    view.title = provider.mode === "compile" ? "Compile" : "Decompile";
-    void vscode.commands.executeCommand("setContext", "papyrus.scriptsMode", provider.mode);
+    // Next to the title, the most visible text of the view.
+    view.description = provider.mode === "compile" ? "Compile mode" : "Decompile mode";
+    void vscode.commands.executeCommand("setContext", "papyrus.explorerMode", provider.mode);
   };
   updateMode();
 
@@ -564,6 +606,7 @@ export function registerScriptsView(context: vscode.ExtensionContext): void {
     timer = setTimeout(() => provider.refresh(), 300);
   };
   state.statusListeners.push(refreshSoon);
+  state.serverListeners.push(() => provider.refreshServer());
 
   context.subscriptions.push(
     view,
@@ -582,26 +625,26 @@ export function registerScriptsView(context: vscode.ExtensionContext): void {
         refreshSoon();
       }
     }),
-    vscode.commands.registerCommand("papyrus.scripts.compileMode", async () => {
+    vscode.commands.registerCommand("papyrus.explorer.compileMode", async () => {
       await provider.setMode("compile");
       updateMode();
     }),
-    vscode.commands.registerCommand("papyrus.scripts.decompileMode", async () => {
+    vscode.commands.registerCommand("papyrus.explorer.decompileMode", async () => {
       await provider.setMode("decompile");
       updateMode();
     }),
-    vscode.commands.registerCommand("papyrus.scripts.refresh", () => provider.refresh()),
-    vscode.commands.registerCommand("papyrus.scripts.expandAll", () => provider.setExpanded(undefined, true)),
-    vscode.commands.registerCommand("papyrus.scripts.expandFolder", (node: Node) => provider.setExpanded(node, true)),
-    vscode.commands.registerCommand("papyrus.scripts.collapseFolder", (node: Node) =>
+    vscode.commands.registerCommand("papyrus.explorer.refresh", () => provider.refresh()),
+    vscode.commands.registerCommand("papyrus.explorer.expandAll", () => provider.setExpanded(undefined, true)),
+    vscode.commands.registerCommand("papyrus.explorer.expandFolder", (node: Node) => provider.setExpanded(node, true)),
+    vscode.commands.registerCommand("papyrus.explorer.collapseFolder", (node: Node) =>
       provider.setExpanded(node, false),
     ),
     // One command per mode, so that buttons and menus say what they do; both
     // run the action of the current mode, which only shows its own.
-    ...["papyrus.scripts.compile", "papyrus.scripts.decompile"].map((id) =>
+    ...["papyrus.explorer.compile", "papyrus.explorer.decompile"].map((id) =>
       vscode.commands.registerCommand(id, (node: Node) => run(provider.targets(node), node.kind === "file")),
     ),
-    ...["papyrus.scripts.compileAll", "papyrus.scripts.decompileAll"].map((id) =>
+    ...["papyrus.explorer.compileAll", "papyrus.explorer.decompileAll"].map((id) =>
       vscode.commands.registerCommand(id, async () => {
         const roots = await provider.getChildren();
         await run(
@@ -610,13 +653,13 @@ export function registerScriptsView(context: vscode.ExtensionContext): void {
         );
       }),
     ),
-    vscode.commands.registerCommand("papyrus.scripts.open", (node: Node) => {
+    vscode.commands.registerCommand("papyrus.explorer.open", (node: Node) => {
       if (node.kind === "file") {
         open(node.uri);
       }
     }),
     // The assembly of a `.pex`, or of a `.psc` compiled in memory.
-    vscode.commands.registerCommand("papyrus.scripts.assemble", (node: Node) => {
+    vscode.commands.registerCommand("papyrus.explorer.assemble", (node: Node) => {
       if (node.kind === "file") {
         void showAssemblyCommand(node.uri);
       }

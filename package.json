@@ -126,7 +126,8 @@
       {
         "command": "papyrus.restartServer",
         "title": "Restart Language Server",
-        "category": "Papyrus"
+        "category": "Papyrus",
+        "icon": "$(debug-restart)"
       },
       {
         "command": "papyrus.showStatus",
@@ -177,71 +178,71 @@
         "title": "Switch to Compile Mode",
         "category": "Papyrus",
         "icon": "$(file-code)",
-        "command": "papyrus.scripts.compileMode"
+        "command": "papyrus.explorer.compileMode"
       },
       {
         "title": "Switch to Decompile Mode",
         "category": "Papyrus",
         "icon": "$(file-binary)",
-        "command": "papyrus.scripts.decompileMode"
+        "command": "papyrus.explorer.decompileMode"
       },
       {
         "title": "Compile All",
         "category": "Papyrus",
         "icon": "$(run-all)",
-        "command": "papyrus.scripts.compileAll"
+        "command": "papyrus.explorer.compileAll"
       },
       {
         "title": "Decompile All",
         "category": "Papyrus",
         "icon": "$(run-all)",
-        "command": "papyrus.scripts.decompileAll"
+        "command": "papyrus.explorer.decompileAll"
       },
       {
         "title": "Refresh",
         "category": "Papyrus",
         "icon": "$(refresh)",
-        "command": "papyrus.scripts.refresh"
+        "command": "papyrus.explorer.refresh"
       },
       {
         "title": "Expand All",
         "category": "Papyrus",
         "icon": "$(expand-all)",
-        "command": "papyrus.scripts.expandAll"
+        "command": "papyrus.explorer.expandAll"
       },
       {
         "title": "Expand All Below",
         "category": "Papyrus",
         "icon": "$(expand-all)",
-        "command": "papyrus.scripts.expandFolder"
+        "command": "papyrus.explorer.expandFolder"
       },
       {
         "title": "Collapse All Below",
         "category": "Papyrus",
         "icon": "$(collapse-all)",
-        "command": "papyrus.scripts.collapseFolder"
+        "command": "papyrus.explorer.collapseFolder"
       },
       {
         "title": "Compile",
         "category": "Papyrus",
         "icon": "$(play)",
-        "command": "papyrus.scripts.compile"
+        "command": "papyrus.explorer.compile"
       },
       {
         "title": "Decompile",
         "category": "Papyrus",
         "icon": "$(play)",
-        "command": "papyrus.scripts.decompile"
+        "command": "papyrus.explorer.decompile"
       },
       {
         "title": "Open",
         "category": "Papyrus",
-        "command": "papyrus.scripts.open"
+        "command": "papyrus.explorer.open"
       },
       {
         "title": "Assemble (Preview)",
         "category": "Papyrus",
-        "command": "papyrus.scripts.assemble"
+        "command": "papyrus.explorer.assemble"
       }
     ],
     "viewsContainers": {
@@ -256,8 +257,8 @@
     "views": {
       "papyrus": [
         {
-          "id": "papyrus.scripts",
-          "name": "Scripts",
+          "id": "papyrus.explorer",
+          "name": "Explorer",
           "icon": "resources/papyrus.svg"
         }
       ]
@@ -392,35 +393,35 @@
           "when": "resourceScheme == papyrus-pex"
         },
         {
-          "command": "papyrus.scripts.compile",
+          "command": "papyrus.explorer.compile",
           "when": "false"
         },
         {
-          "command": "papyrus.scripts.decompile",
+          "command": "papyrus.explorer.decompile",
           "when": "false"
         },
         {
-          "command": "papyrus.scripts.compileAll",
+          "command": "papyrus.explorer.compileAll",
           "when": "false"
         },
         {
-          "command": "papyrus.scripts.expandFolder",
+          "command": "papyrus.explorer.expandFolder",
           "when": "false"
         },
         {
-          "command": "papyrus.scripts.collapseFolder",
+          "command": "papyrus.explorer.collapseFolder",
           "when": "false"
         },
         {
-          "command": "papyrus.scripts.decompileAll",
+          "command": "papyrus.explorer.decompileAll",
           "when": "false"
         },
         {
-          "command": "papyrus.scripts.open",
+          "command": "papyrus.explorer.open",
           "when": "false"
         },
         {
-          "command": "papyrus.scripts.assemble",
+          "command": "papyrus.explorer.assemble",
           "when": "false"
         }
       ],
@@ -433,65 +434,70 @@
       ],
       "view/title": [
         {
-          "command": "papyrus.scripts.compileAll",
-          "when": "view == papyrus.scripts && papyrus.scriptsMode != decompile",
+          "command": "papyrus.explorer.compileAll",
+          "when": "view == papyrus.explorer && papyrus.explorerMode != decompile",
           "group": "navigation@2"
         },
         {
-          "command": "papyrus.scripts.decompileAll",
-          "when": "view == papyrus.scripts && papyrus.scriptsMode == decompile",
+          "command": "papyrus.explorer.decompileAll",
+          "when": "view == papyrus.explorer && papyrus.explorerMode == decompile",
           "group": "navigation@2"
         },
         {
-          "command": "papyrus.scripts.refresh",
-          "when": "view == papyrus.scripts",
+          "command": "papyrus.explorer.refresh",
+          "when": "view == papyrus.explorer",
           "group": "navigation@3"
         },
         {
-          "command": "papyrus.scripts.expandAll",
-          "when": "view == papyrus.scripts",
+          "command": "papyrus.explorer.expandAll",
+          "when": "view == papyrus.explorer",
           "group": "navigation@4"
         }
       ],
       "view/item/context": [
         {
-          "command": "papyrus.scripts.expandFolder",
-          "when": "view == papyrus.scripts && viewItem =~ /^papyrusFolder/",
+          "command": "papyrus.restartServer",
+          "when": "view == papyrus.explorer && viewItem == papyrusServer",
+          "group": "inline"
+        },
+        {
+          "command": "papyrus.explorer.expandFolder",
+          "when": "view == papyrus.explorer && viewItem =~ /^papyrusFolder/",
           "group": "inline@1"
         },
         {
-          "command": "papyrus.scripts.collapseFolder",
-          "when": "view == papyrus.scripts && viewItem =~ /^papyrusFolder/",
+          "command": "papyrus.explorer.collapseFolder",
+          "when": "view == papyrus.explorer && viewItem =~ /^papyrusFolder/",
           "group": "inline@2"
         },
         {
-          "command": "papyrus.scripts.compile",
-          "when": "view == papyrus.scripts && papyrus.scriptsMode != decompile && viewItem =~ /^papyrus(File|Folder)$/",
+          "command": "papyrus.explorer.compile",
+          "when": "view == papyrus.explorer && papyrus.explorerMode != decompile && viewItem =~ /^papyrus(File|Folder)$/",
           "group": "inline"
         },
         {
-          "command": "papyrus.scripts.decompile",
-          "when": "view == papyrus.scripts && papyrus.scriptsMode == decompile && viewItem =~ /^papyrus(File|Folder)$/",
+          "command": "papyrus.explorer.decompile",
+          "when": "view == papyrus.explorer && papyrus.explorerMode == decompile && viewItem =~ /^papyrus(File|Folder)$/",
           "group": "inline"
         },
         {
-          "command": "papyrus.scripts.compile",
-          "when": "view == papyrus.scripts && papyrus.scriptsMode != decompile && viewItem =~ /^papyrus(File|Folder)$/",
+          "command": "papyrus.explorer.compile",
+          "when": "view == papyrus.explorer && papyrus.explorerMode != decompile && viewItem =~ /^papyrus(File|Folder)$/",
           "group": "1_run"
         },
         {
-          "command": "papyrus.scripts.decompile",
-          "when": "view == papyrus.scripts && papyrus.scriptsMode == decompile && viewItem =~ /^papyrus(File|Folder)$/",
+          "command": "papyrus.explorer.decompile",
+          "when": "view == papyrus.explorer && papyrus.explorerMode == decompile && viewItem =~ /^papyrus(File|Folder)$/",
           "group": "1_run"
         },
         {
-          "command": "papyrus.scripts.open",
-          "when": "view == papyrus.scripts && viewItem =~ /^papyrusFile(Other)?$/",
+          "command": "papyrus.explorer.open",
+          "when": "view == papyrus.explorer && viewItem =~ /^papyrusFile(Other)?$/",
           "group": "1_run"
         },
         {
-          "command": "papyrus.scripts.assemble",
-          "when": "view == papyrus.scripts && viewItem =~ /^papyrusFile(Other)?$/",
+          "command": "papyrus.explorer.assemble",
+          "when": "view == papyrus.explorer && viewItem =~ /^papyrusFile(Other)?$/",
           "group": "1_run"
         }
       ]

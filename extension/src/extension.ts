@@ -6,7 +6,7 @@ import { compileAll, compileCommand, compileSelected } from "./compile/commands"
 import { compileTask, type PapyrusTaskDefinition } from "./compile/task";
 import { registerDecompiler } from "./decompile";
 import { createManifest } from "./manifest";
-import { registerScriptsView } from "./scriptsView";
+import { registerExplorerView } from "./explorerView";
 import { restartServer, startServer, stopServer } from "./server";
 import { serverPath } from "./settings";
 import { state } from "./state";
@@ -21,7 +21,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(state.output);
   createStatusBar(context);
   registerDecompiler(context);
-  registerScriptsView(context);
+  registerExplorerView(context);
 
   context.subscriptions.push(
     vscode.commands.registerCommand("papyrus.restartServer", restartServer),

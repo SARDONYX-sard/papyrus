@@ -63,6 +63,8 @@ pub(crate) struct StatusResult {
     pub(crate) problems: Vec<String>,
     /// `[build] sources` of `papyrus.toml`.
     pub(crate) sources: Vec<String>,
+    /// `[test] sources` of `papyrus.toml`.
+    pub(crate) test_sources: Vec<String>,
     /// Where compiled (`compile`) and decompiled (`decompile`) scripts go,
     /// per workspace folder: `[build] output` of `papyrus.toml`, or the
     /// default build directory.

@@ -15,6 +15,7 @@ export interface ServerStatus {
   manifest?: string | null;
   manifestError?: string | null;
   sources?: string[];
+  testSources?: string[];
   buildDirs?: BuildDirs[];
   flagsFile?: string | null;
   variables?: Record<string, string>;

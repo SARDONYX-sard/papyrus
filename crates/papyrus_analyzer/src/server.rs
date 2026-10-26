@@ -673,6 +673,12 @@ impl Server {
                 .flat_map(|p| &p.sources)
                 .map(|p| p.display().to_string())
                 .collect(),
+            test_sources: self
+                .members
+                .iter()
+                .flat_map(|p| &p.test_sources)
+                .map(|p| p.display().to_string())
+                .collect(),
         }
     }
 

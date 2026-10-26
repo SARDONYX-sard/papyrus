@@ -98,7 +98,9 @@ async function open(
   if (assembly && doc.languageId !== "papyrus-assembly") {
     doc = await vscode.languages.setTextDocumentLanguage(doc, "papyrus-assembly");
   }
-  await vscode.window.showTextDocument(doc, { preview: true, viewColumn: column });
+  // The assembly opens next to the script, in a tab of its own: its comments
+  // give the lines of the source to read along.
+  await vscode.window.showTextDocument(doc, { preview: !assembly, viewColumn: column });
 }
 
 /** `papyrus.decompile`: shows the source of a `.pex` file. */
@@ -111,7 +113,7 @@ export async function decompileCommand(arg?: vscode.Uri | { uri: vscode.Uri }): 
  * `.psc` file compiled in memory.
  */
 export async function showAssemblyCommand(arg?: vscode.Uri | { uri: vscode.Uri }): Promise<void> {
-  await open(arg, true, arg ? undefined : vscode.ViewColumn.Beside);
+  await open(arg, true, vscode.ViewColumn.Beside);
 }
 
 /**
