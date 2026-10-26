@@ -438,8 +438,9 @@ impl Server {
                 data: None,
             });
         }
-        // `▶ Run test` above `; #[test]` functions: the client runs
-        // `papyrus_analyzer run Script.Function`.
+        // `▶ Run Test | ⚙ Debug` above `; #[test]` functions: the client runs
+        // `papyrus_analyzer run Script.Function`, or debugs it with
+        // `papyrus_analyzer debug`.
         if let (Some(text), Some(script)) = (self.ws.text(file), self.ws.file(file).index.name) {
             use papyrus_parser::ast::{self, AstNode};
             let parse = papyrus_parser::parse(&text);
@@ -456,18 +457,25 @@ impl Server {
                     continue;
                 };
                 let line = lines.position(attr.target.start()).line;
-                lenses.push(CodeLens {
-                    range: lsp_types::Range::new(Position::new(line, 0), Position::new(line, 0)),
-                    command: Some(Command {
-                        title: "▶\u{fe0e} Run test".to_owned(),
-                        command: "papyrus.runTest".to_owned(),
-                        arguments: Some(vec![
-                            uri.clone(),
-                            serde_json::Value::String(format!("{}.{}", script, name.text())),
-                        ]),
-                    }),
-                    data: None,
-                });
+                let target = serde_json::Value::String(format!("{}.{}", script, name.text()));
+                // Like rust-analyzer: `▶︎ Run Test | ⚙︎ Debug`.
+                for (title, command) in [
+                    ("▶\u{fe0e} Run Test", "papyrus.runTest"),
+                    ("⚙\u{fe0e} Debug", "papyrus.debugTest"),
+                ] {
+                    lenses.push(CodeLens {
+                        range: lsp_types::Range::new(
+                            Position::new(line, 0),
+                            Position::new(line, 0),
+                        ),
+                        command: Some(Command {
+                            title: title.to_owned(),
+                            command: command.to_owned(),
+                            arguments: Some(vec![uri.clone(), target.clone()]),
+                        }),
+                        data: None,
+                    });
+                }
             }
         }
         Some(lenses)

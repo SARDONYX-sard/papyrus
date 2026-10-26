@@ -22,7 +22,8 @@
     "Programming Languages"
   ],
   "activationEvents": [
-    "workspaceContains:**/*.psc"
+    "workspaceContains:**/*.psc",
+    "onDebugResolve:papyrus"
   ],
   "main": "build/extension.cjs",
   "contributes": {
@@ -537,6 +538,61 @@
         },
         "required": [],
         "type": "papyrus"
+      }
+    ],
+    "breakpoints": [
+      {
+        "language": "papyrus"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "papyrus",
+        "label": "Papyrus VM",
+        "languages": [
+          "papyrus"
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "properties": {
+              "test": {
+                "type": "string",
+                "markdownDescription": "The `; #[test]` function to debug, `Script.Function`."
+              },
+              "run": {
+                "type": "string",
+                "markdownDescription": "The function to debug, `Script.Function`, run on a new object of `Script` (like `papyrus_analyzer run`)."
+              },
+              "args": {
+                "type": "array",
+                "description": "The arguments of `run`: Int, Float, Bool, None or String.",
+                "items": {}
+              },
+              "cwd": {
+                "type": "string",
+                "description": "The folder of papyrus.toml: its scripts and imports are compiled in memory.",
+                "default": "${workspaceFolder}"
+              },
+              "stopOnEntry": {
+                "type": "boolean",
+                "description": "Pause at the first line.",
+                "default": false
+              }
+            }
+          }
+        },
+        "configurationSnippets": [
+          {
+            "label": "Papyrus VM: Debug a test",
+            "body": {
+              "type": "papyrus",
+              "request": "launch",
+              "name": "Debug ${1:Script.Function}",
+              "test": "${1:Script.Function}",
+              "cwd": "^\"\\${workspaceFolder}\""
+            }
+          }
+        ]
       }
     ],
     "tomlValidation": [

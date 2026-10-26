@@ -7,6 +7,7 @@ mod builtin;
 mod compile;
 mod config;
 mod conv;
+mod debug;
 mod decompile;
 mod disasm;
 mod ext;
@@ -38,6 +39,7 @@ fn main() -> anyhow::Result<()> {
     // Subcommands first: their own `--help`.
     let command: Option<fn(&[String]) -> i32> = match args.first().map(String::as_str) {
         Some("compile") => Some(compile::run),
+        Some("debug") => Some(debug::run),
         Some("decompile") => Some(decompile::run),
         Some("disasm") => Some(disasm::run),
         Some("fmt") => Some(fmt::run),

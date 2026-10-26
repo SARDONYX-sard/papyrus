@@ -134,6 +134,47 @@ fn waits_send_update_events() {
 }
 
 #[test]
+fn debuggers_follow_lines_frames_and_locals() {
+    use std::{cell::RefCell, rc::Rc};
+    struct Recorder(Rc<RefCell<Vec<String>>>);
+    impl crate::Debugger for Recorder {
+        fn line(&mut self, vm: &Vm) -> bool {
+            let top = vm.stack().last().unwrap();
+            let locals: Vec<String> = top.locals.iter().map(|(n, v)| format!("{n}={v}")).collect();
+            let fields = top.this.map(|o| vm.fields(o).1.len()).unwrap_or_default();
+            self.0.borrow_mut().push(format!(
+                "{}.{}:{} depth={} [{}] fields={fields}",
+                top.script,
+                top.function,
+                top.line.unwrap(),
+                vm.stack().len(),
+                locals.join(" ")
+            ));
+            // Stop on the third line event.
+            self.0.borrow().len() < 6
+        }
+    }
+    let src = "ScriptName T extends Form\nInt Property Count = 1 Auto\nInt Function Twice(Int aiValue)\n    Return aiValue * 2\nEndFunction\nInt Function Run()\n    Int total = Twice(Count)\n    total += 1\n    Return total\nEndFunction\n";
+    let mut vm = vm(&[("T", src)]);
+    let events = Rc::new(RefCell::new(Vec::new()));
+    vm.set_debugger(Recorder(events.clone()));
+    let obj = vm.new_object("T").unwrap();
+    assert_eq!(vm.call(obj, "Run", &[]).unwrap().as_int(), 3);
+    assert_eq!(
+        *events.borrow(),
+        [
+            "T.Run:7 depth=1 [total=0] fields=1",
+            "T.Twice:4 depth=2 [aiValue=1] fields=1",
+            "T.Run:8 depth=1 [total=2] fields=1",
+            "T.Run:9 depth=1 [total=3] fields=1",
+        ]
+    );
+    // `false` stops the run.
+    events.borrow_mut().extend(["".to_owned(), "".to_owned()]);
+    assert_eq!(vm.call(obj, "Run", &[]).unwrap_err(), crate::VmError::Stopped);
+}
+
+#[test]
 fn errors_of_events_stop_the_wait() {
     let src = "ScriptName T extends Form\nEvent OnUpdate()\n    While True\n    EndWhile\nEndEvent\nFunction Run()\n    RegisterForSingleUpdate(1.0)\n    Utility.Wait(2.0)\n    Debug.Trace(\"after\")\nEndFunction\n";
     let mut vm = vm(&[("T", src)]);

@@ -66,9 +66,35 @@ pub struct NativeCall {
     pub implemented: bool,
 }
 
+/// A function running, for debuggers ([`Vm::stack`]).
+#[derive(Clone, Debug)]
+pub struct StackFrame {
+    /// The script defining the function, as declared.
+    pub script: String,
+    /// The function, as declared.
+    pub function: String,
+    /// The source line running, when the script has debug info.
+    pub line: Option<u32>,
+    /// `Self`, for non-global functions.
+    pub this: Option<ObjId>,
+    /// The parameters and locals, as declared, as of the last line event or
+    /// call of the function.
+    pub locals: Vec<(String, Value)>,
+}
+
+/// Follows a run line by line, like a debugger: set with
+/// [`Vm::set_debugger`].
+pub trait Debugger {
+    /// A line starts running: the top of [`Vm::stack`]. Returns `false` to
+    /// stop the run ([`VmError::Stopped`]).
+    fn line(&mut self, vm: &Vm) -> bool;
+}
+
 /// An error of the machine itself, which stops the run.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VmError {
+    /// The debugger stopped the run.
+    Stopped,
     /// No script of that name.
     UnknownScript(String),
     /// No function of that name.
@@ -82,6 +108,7 @@ pub enum VmError {
 impl std::fmt::Display for VmError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            VmError::Stopped => f.write_str("stopped by the debugger"),
             VmError::UnknownScript(s) => write!(f, "unknown script `{s}`"),
             VmError::UnknownFunction(s) => write!(f, "unknown function `{s}`"),
             VmError::StepLimit => f.write_str("too many instructions (endless loop?)"),
@@ -146,6 +173,9 @@ pub struct Vm {
     /// An error of an event sent by a native, which stops the run when the
     /// native returns.
     abort: Option<VmError>,
+    debugger: Option<Box<dyn Debugger>>,
+    /// The functions running, kept with a debugger only.
+    stack: Vec<StackFrame>,
 }
 
 impl Vm {
@@ -167,6 +197,8 @@ impl Vm {
             depth: 0,
             timers: Vec::new(),
             abort: None,
+            debugger: None,
+            stack: Vec::new(),
         };
         natives::register_builtins(&mut vm);
         vm
@@ -246,6 +278,95 @@ impl Vm {
     /// The current state of an object.
     pub fn state_of(&self, obj: ObjId) -> &str {
         &self.objects[obj.0].state
+    }
+
+    /// Follows the runs with `debugger`.
+    pub fn set_debugger(&mut self, debugger: impl Debugger + 'static) {
+        self.debugger = Some(Box::new(debugger));
+    }
+
+    /// The functions running, the innermost last; empty without debugger.
+    pub fn stack(&self) -> &[StackFrame] {
+        &self.stack
+    }
+
+    /// The script of an object as declared, and the values of its auto
+    /// properties and variables as declared, for debuggers. Scripts are
+    /// taken from the cache: the ones of objects are loaded.
+    pub fn fields(&self, obj: ObjId) -> (String, Vec<(String, Value)>) {
+        let object = &self.objects[obj.0];
+        let mut chain = Vec::new();
+        let mut next = Some(object.script.clone());
+        while let Some(name) = next.take() {
+            let Some(Some(s)) = self.scripts.get(&name) else { break };
+            next = s.parent.clone();
+            chain.push(s.clone());
+        }
+        let script = chain.first().map_or_else(|| object.script.clone(), |s| s.name.clone());
+        let mut fields = Vec::new();
+        for s in &chain {
+            let mut properties: Vec<_> = s.properties.values().collect();
+            properties.sort_by(|a, b| a.name.cmp(&b.name));
+            for p in properties {
+                if let Some(var) = &p.auto_var {
+                    fields
+                        .push((p.name.clone(), object.vars.get(var).cloned().unwrap_or_default()));
+                }
+            }
+            for (var, _, _) in &s.variables {
+                if var.starts_with("::") {
+                    continue;
+                }
+                let name = s.variable_names.get(var).cloned().unwrap_or_else(|| var.clone());
+                fields.push((name, object.vars.get(var).cloned().unwrap_or_default()));
+            }
+        }
+        (script, fields)
+    }
+
+    /// The parameters and locals of a frame, as declared.
+    fn locals_of(func: &Func, frame: &Frame) -> Vec<(String, Value)> {
+        (func.params.iter().chain(&func.locals))
+            .filter(|(name, _)| !name.starts_with("::"))
+            .map(|(name, _)| {
+                let shown = func.names.get(name).cloned().unwrap_or_else(|| name.clone());
+                (shown, frame.locals.get(name).cloned().unwrap_or_default())
+            })
+            .collect()
+    }
+
+    /// Before instruction `pc`: with a debugger, sends the line events and
+    /// keeps the locals of the frame for the calls it makes.
+    fn trace(&mut self, func: &Func, frame: &Frame, pc: usize) -> Result<(), VmError> {
+        if self.debugger.is_none() {
+            return Ok(());
+        }
+        let line = func.lines.get(pc).copied();
+        let calls = matches!(
+            func.code[pc].op,
+            OpCode::CallMethod
+                | OpCode::CallParent
+                | OpCode::CallStatic
+                | OpCode::PropGet
+                | OpCode::PropSet
+        );
+        let Some(top) = self.stack.last_mut() else { return Ok(()) };
+        let new_line = line.is_some() && line != top.line;
+        if !new_line && !calls {
+            return Ok(());
+        }
+        top.locals = Vm::locals_of(func, frame);
+        if new_line {
+            top.line = line;
+            if let Some(mut debugger) = self.debugger.take() {
+                let go_on = debugger.line(self);
+                self.debugger = Some(debugger);
+                if !go_on {
+                    return Err(VmError::Stopped);
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Calls the function or event `name` of `obj`.
@@ -364,9 +485,23 @@ impl Vm {
             frame.locals.insert(name.clone(), Value::default_of(ty));
             frame.types.insert(name.clone(), ty.clone());
         }
+        let traced = self.debugger.is_some();
+        if traced {
+            let script = self.script(script).map_or_else(|| script.to_owned(), |s| s.name.clone());
+            self.stack.push(StackFrame {
+                script,
+                function: func.name.clone(),
+                line: None,
+                this,
+                locals: Vm::locals_of(&func, &frame),
+            });
+        }
         self.depth += 1;
         let result = self.run(&func, &mut frame);
         self.depth -= 1;
+        if traced {
+            self.stack.pop();
+        }
         result
     }
 
@@ -436,6 +571,7 @@ impl Vm {
                 return Err(VmError::StepLimit);
             }
             self.step_limit -= 1;
+            self.trace(func, frame, pc)?;
             let a = &inst.args;
             let arg = |vm: &Vm, frame: &Frame, i: usize| vm.read(frame, &a[i]);
             let mut next = pc + 1;

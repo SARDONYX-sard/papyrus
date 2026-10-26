@@ -40,7 +40,7 @@ options:
   -h, --help   print this help";
 
 /// Compiles the scripts of the workspace when the machine loads them.
-struct Compiled {
+pub(crate) struct Compiled {
     ws: Workspace,
     imports: Vec<PathBuf>,
 }
@@ -69,7 +69,7 @@ impl ScriptLoader for Compiled {
 
 /// The loader of the scripts below the current directory, their imports and
 /// the built-in `PapyrusAnalyzer`, which every script of the run sees.
-fn loader(scripts: &[PathBuf]) -> Compiled {
+pub(crate) fn loader(scripts: &[PathBuf]) -> Compiled {
     let (mut ws, imports) = crate::fmt::workspace_with_imports(scripts);
     let cwd = std::env::current_dir().unwrap_or_default();
     crate::builtin::install(&mut ws, &[cwd]);
@@ -84,7 +84,7 @@ fn loader(scripts: &[PathBuf]) -> Compiled {
 }
 
 /// An argument from the command line.
-fn parse_arg(arg: &str) -> Value {
+pub(crate) fn parse_arg(arg: &str) -> Value {
     if let Ok(i) = arg.parse() {
         return Value::Int(i);
     }
@@ -178,13 +178,7 @@ pub(crate) fn test(args: &[String]) -> i32 {
         vm.output.clear();
         vm.errors.clear();
         let result = start(&mut vm, &marked, script).and_then(|obj| vm.call(obj, function, &[]));
-        let problem = match &result {
-            Err(e) => Some(e.to_string()),
-            Ok(_) if !vm.errors.is_empty() => Some(vm.errors.join("; ")),
-            Ok(Value::Bool(false)) => Some("returned False".to_owned()),
-            Ok(_) => None,
-        };
-        match problem {
+        match problem(&vm, &result) {
             None => println!("ok    {script}.{function}"),
             Some(why) => {
                 failed += 1;
@@ -199,8 +193,19 @@ pub(crate) fn test(args: &[String]) -> i32 {
     i32::from(failed > 0)
 }
 
+/// Why a test failed: an error of the machine, errors the game would log
+/// (failed assertions among them), or `False` returned.
+pub(crate) fn problem(vm: &Vm, result: &Result<Value, papyrus_vm::VmError>) -> Option<String> {
+    match result {
+        Err(e) => Some(e.to_string()),
+        Ok(_) if !vm.errors.is_empty() => Some(vm.errors.join("; ")),
+        Ok(Value::Bool(false)) => Some("returned False".to_owned()),
+        Ok(_) => None,
+    }
+}
+
 /// A function marked `; #[test]` or `; #[mock(Script.Function)]`.
-struct Marked {
+pub(crate) struct Marked {
     script: String,
     function: String,
     /// The native a mock replaces; `None` for a test.
@@ -208,7 +213,7 @@ struct Marked {
 }
 
 /// The `#[test]` and `#[mock]` functions of `scripts`.
-fn marked_functions(scripts: &[PathBuf]) -> Vec<Marked> {
+pub(crate) fn marked_functions(scripts: &[PathBuf]) -> Vec<Marked> {
     use papyrus_parser::ast::{self, AstNode};
     let mut out = Vec::new();
     for path in scripts {
@@ -243,7 +248,7 @@ fn marked_functions(scripts: &[PathBuf]) -> Vec<Marked> {
 
 /// A new object of `script`, its `#[mock]` functions replacing the natives,
 /// initialized by its `OnInit` event.
-fn start(
+pub(crate) fn start(
     vm: &mut Vm,
     marked: &[Marked],
     script: &str,
@@ -259,7 +264,7 @@ fn start(
     Ok(obj)
 }
 
-fn collect(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
+pub(crate) fn collect(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for entry in entries.flatten() {
         let path = entry.path();
