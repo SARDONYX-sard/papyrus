@@ -1,23 +1,25 @@
 [package]
-name = "papyrus_decompiler"
-version = "0.0.0"
-description = "Decompiler of compiled Papyrus scripts (.pex) to source."
-authors.workspace = true
-edition.workspace = true
-license.workspace = true
+name                   = "papyrus_decompiler"
+version                = "0.0.0"
+authors.workspace      = true
+edition.workspace      = true
 rust-version.workspace = true
+description            = "Decompiler of compiled Papyrus scripts (.pex) to source."
+license.workspace      = true
 
 [lib]
 doctest = false
 
 [dependencies]
 papyrus_pex.workspace = true
+
 rustc-hash.workspace = true
 
 [dev-dependencies]
-expect-test.workspace = true
-papyrus_compiler = { workspace = true, default-features = false }
+papyrus_compiler      = { workspace = true, default-features = false }
 papyrus_ide.workspace = true
+
+expect-test.workspace = true
 
 [lints]
 workspace = true

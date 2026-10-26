@@ -1,25 +1,26 @@
 [workspace]
-members = ["crates/*"]
+resolver        = "3"
+members         = ["crates/*"]
 default-members = ["crates/papyrus_analyzer"]
-resolver = "3"
 
 [workspace.package]
+authors      = ["SARDONYX"]
+edition      = "2024"
+license      = "MIT OR Apache-2.0"
+organization = ["SARDONYX"]
+repository   = "https://github.com/SARDONYX-sard/papyrus"
 rust-version = "1.96"
-edition = "2024"
-license = "MIT OR Apache-2.0"
-authors = ["SARDONYX"]
-repository = "https://github.com/SARDONYX-sard/papyrus"
 
 [profile.dev]
 debug = 1
 
 [profile.dev.package]
 # These speed up local tests.
-rustc-hash.opt-level = 3
-text-size.opt-level = 3
-serde.opt-level = 3
-serde_json.opt-level = 3
 dissimilar.opt-level = 3
+rustc-hash.opt-level = 3
+serde.opt-level      = 3
+serde_json.opt-level = 3
+text-size.opt-level  = 3
 
 [profile.release]
 # Set this to 1 or 2 to get more useful backtraces in debugger.
@@ -27,103 +28,98 @@ debug = 0
 
 # Used by the release workflow.
 [profile.release-lto]
-inherits = "release"
-lto = true
+inherits      = "release"
+lto           = true
 codegen-units = 1
 
 [profile.dev-rel]
 inherits = "release"
-debug = 2
+debug    = 2
 
 [workspace.dependencies]
-# local crates
-papyrus_compiler = { path = "./crates/papyrus_compiler", version = "0.0.0" }
+papyrus_compiler   = { path = "./crates/papyrus_compiler", version = "0.0.0" }
 papyrus_decompiler = { path = "./crates/papyrus_decompiler", version = "0.0.0" }
-papyrus_fmt = { path = "./crates/papyrus_fmt", version = "0.0.0" }
-papyrus_ide = { path = "./crates/papyrus_ide", version = "0.0.0" }
-papyrus_intern = { path = "./crates/papyrus_intern", version = "0.0.0" }
-papyrus_lint = { path = "./crates/papyrus_lint", version = "0.0.0" }
-papyrus_lexer = { path = "./crates/papyrus_lexer", version = "0.0.0" }
-papyrus_pex = { path = "./crates/papyrus_pex", version = "0.1.0" }
-papyrus_parser = { path = "./crates/papyrus_parser", version = "0.0.0" }
-papyrus_project = { path = "./crates/papyrus_project", version = "0.0.0" }
-papyrus_vm = { path = "./crates/papyrus_vm", version = "0.0.0" }
-skyrim_data_dir = { path = "./crates/skyrim_data_dir", version = "0.1.0" }
+papyrus_fmt        = { path = "./crates/papyrus_fmt", version = "0.0.0" }
+papyrus_ide        = { path = "./crates/papyrus_ide", version = "0.0.0" }
+papyrus_intern     = { path = "./crates/papyrus_intern", version = "0.0.0" }
+papyrus_lexer      = { path = "./crates/papyrus_lexer", version = "0.0.0" }
+papyrus_lint       = { path = "./crates/papyrus_lint", version = "0.0.0" }
+papyrus_parser     = { path = "./crates/papyrus_parser", version = "0.0.0" }
+papyrus_pex        = { path = "./crates/papyrus_pex", version = "0.1.0" }
+papyrus_project    = { path = "./crates/papyrus_project", version = "0.0.0" }
+papyrus_vm         = { path = "./crates/papyrus_vm", version = "0.0.0" }
+skyrim_data_dir    = { path = "./crates/skyrim_data_dir", version = "0.1.0" }
 
-# non-local crates
 annotate-snippets = "0.12.17"
-anyhow = "1.0.98"
-bitflags = "2.13.2"
-camino = "1.2.2"
-crossbeam-channel = "0.5.15"
-expect-test = "1.5.1"
-itertools = "0.15.0"
-libc = "0.2.172"
-rayon = "1.12.0"
-serde_json = "1.0.140"
-rustc-hash = "2.1.1"
-text-size = "1.1.1"
-toml = "1.1.2"
-tracing = { version = "0.1.41", default-features = false, features = ["std"] }
+anyhow            = "1.0.104"
+bitflags          = "2.13.2"
+camino            = "1.2.2"
+crossbeam-channel = "0.5.17"
+expect-test       = "1.5.1"
+itertools         = "0.15.0"
+libc              = "0.2.172"
+rayon             = "1.12.0"
+rustc-hash        = "2.1.1"
+serde_json        = "1.0.154"
+text-size         = "1.1.1"
+toml              = "1.1.2"
+tracing           = { version = "0.1.41", default-features = false, features = ["std"] }
 
 [workspace.lints.rust]
 # remember to update RUSTFLAGS in ci.yml if you add something here
 
-elided_lifetimes_in_paths = "warn"
+elided_lifetimes_in_paths      = "warn"
 explicit_outlives_requirements = "warn"
-unsafe_op_in_unsafe_fn = "warn"
-unexpected_cfgs = { level = "warn", check-cfg = [
-  'cfg(bootstrap)',
-  "cfg(no_salsa_async_drops)",
-] }
-unused_extern_crates = "warn"
-unused_lifetimes = "warn"
-unreachable_pub = "warn"
+unexpected_cfgs                = { level = "warn", check-cfg = ['cfg(bootstrap)', "cfg(no_salsa_async_drops)"] }
+unreachable_pub                = "warn"
+unsafe_op_in_unsafe_fn         = "warn"
+unused_extern_crates           = "warn"
+unused_lifetimes               = "warn"
 
 [workspace.lints.clippy]
 ## lint groups
-complexity = { level = "warn", priority = -1 }
+complexity  = { level = "warn", priority = -1 }
 correctness = { level = "deny", priority = -1 }
-perf = { level = "deny", priority = -1 }
+perf        = { level = "deny", priority = -1 }
 restriction = { level = "allow", priority = -1 }
-style = { level = "warn", priority = -1 }
-suspicious = { level = "warn", priority = -1 }
+style       = { level = "warn", priority = -1 }
+suspicious  = { level = "warn", priority = -1 }
 
-## allow following lints
-too_long_first_doc_paragraph = "allow"
-# subjective
-single_match = "allow"
-# () makes a fine error in most cases
-result_unit_err = "allow"
-# We don't expose public APIs that matter like this
-len_without_is_empty = "allow"
-# We have macros that rely on this currently
-enum_variant_names = "allow"
-# Builder pattern disagrees
-new_ret_no_self = "allow"
-# Has a bunch of false positives
-useless_asref = "allow"
 # Has false positives
 assigning_clones = "allow"
-# Does not work with macros
-vec_init_then_push = "allow"
+# We have macros that rely on this currently
+enum_variant_names = "allow"
+# We don't expose public APIs that matter like this
+len_without_is_empty = "allow"
 # Our tests have a lot of these
 literal_string_with_formatting_args = "allow"
+# Builder pattern disagrees
+new_ret_no_self = "allow"
+# () makes a fine error in most cases
+result_unit_err = "allow"
+# subjective
+single_match = "allow"
+## allow following lints
+too_long_first_doc_paragraph = "allow"
 # This lint has been empowered but now also triggers on cases where its invalid to do so
 # due to it ignoring move analysis
 unnecessary_map_or = "allow"
+# Has a bunch of false positives
+useless_asref = "allow"
+# Does not work with macros
+vec_init_then_push = "allow"
 
 ## Following lints should be tackled at some point
-too_many_arguments = "allow"
-type_complexity = "allow"
+too_many_arguments    = "allow"
+type_complexity       = "allow"
 wrong_self_convention = "allow"
 
 ## warn at following lints
 # CI raises these to deny
-dbg_macro = "warn"
-todo = "warn"
-print_stdout = "warn"
+dbg_macro    = "warn"
 print_stderr = "warn"
+print_stdout = "warn"
+todo         = "warn"
 
-rc_buffer = "warn"
+rc_buffer     = "warn"
 str_to_string = "warn"

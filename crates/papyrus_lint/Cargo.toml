@@ -1,18 +1,19 @@
 [package]
-name = "papyrus_lint"
-version = "0.0.0"
-description = "Linter for the Papyrus scripting language, with automatic fixes."
-authors.workspace = true
-edition.workspace = true
-license.workspace = true
+name                   = "papyrus_lint"
+version                = "0.0.0"
+authors.workspace      = true
+edition.workspace      = true
 rust-version.workspace = true
+description            = "Linter for the Papyrus scripting language, with automatic fixes."
+license.workspace      = true
 
 [lib]
 doctest = false
 
 [dependencies]
-papyrus_ide.workspace = true
+papyrus_ide.workspace    = true
 papyrus_parser.workspace = true
+
 rustc-hash.workspace = true
 
 [lints]

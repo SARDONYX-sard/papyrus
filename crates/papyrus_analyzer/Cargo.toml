@@ -1,37 +1,37 @@
 [package]
-name = "papyrus_analyzer"
-version = "0.1.0"
-description = "Language server for the Papyrus scripting language."
-authors.workspace = true
-edition.workspace = true
-license.workspace = true
+name                   = "papyrus_analyzer"
+version                = "0.1.0"
+authors.workspace      = true
+edition.workspace      = true
 rust-version.workspace = true
+description            = "Language server for the Papyrus scripting language."
+license.workspace      = true
 
 [[bin]]
 name = "papyrus_analyzer"
 path = "src/main.rs"
 
 [dependencies]
-papyrus_compiler.workspace = true
+papyrus_compiler.workspace   = true
 papyrus_decompiler.workspace = true
-papyrus_fmt.workspace = true
-papyrus_ide.workspace = true
-papyrus_lint.workspace = true
-papyrus_parser.workspace = true
-papyrus_pex.workspace = true
-papyrus_project.workspace = true
-papyrus_vm.workspace = true
+papyrus_fmt.workspace        = true
+papyrus_ide.workspace        = true
+papyrus_lint.workspace       = true
+papyrus_parser.workspace     = true
+papyrus_pex.workspace        = true
+papyrus_project.workspace    = true
+papyrus_vm.workspace         = true
 
-anyhow.workspace = true
+anyhow.workspace            = true
 crossbeam-channel.workspace = true
-lsp-server = "0.8.0"
-lsp-types = "0.97"
-log = "0.4"
-rayon.workspace = true
-rustc-hash.workspace = true
-env_logger = "0.11"
-serde = { version = "1", features = ["derive"] }
-serde_json.workspace = true
+lsp-server                  = "0.10.0"
+lsp-types                   = "0.97"
+log                         = "0.4"
+rayon.workspace             = true
+rustc-hash.workspace        = true
+env_logger                  = "0.11"
+serde                       = { version = "1", features = ["derive"] }
+serde_json.workspace        = true
 
 [lints]
 workspace = true
