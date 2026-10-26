@@ -26,34 +26,71 @@ use papyrus_parser::attrs::attributes;
 
 use crate::{Group, LINTS, is_known_name};
 
-/// The attributes: path, completion detail and hover documentation.
-const ATTRIBUTES: &[(&str, &str, &str)] = &[
-    (
-        "allow",
-        "allow lints: `allow(unused_local, style)`",
-        "Allows the listed lints (lints, groups or `all`; none: every lint).",
-    ),
-    (
-        "fmt::skip",
-        "keep the code as written by the formatter",
-        "Keeps the code as written: the formatter leaves it alone.",
-    ),
-    (
-        "test",
-        "a test: `papyrus_analyzer test` runs it, it fails on errors or `False`",
-        "A test, run by `papyrus_analyzer test`, ▶ Run Test or ⚙ Debug on a new object of \
-         the script, after its `OnInit`. It fails when a `PapyrusAnalyzer.Assert*` fails, when \
-         the game would log an error (a call on `None`...) or when it returns \
-         `False`.",
-    ),
-    (
-        "mock",
-        "in a test script: this function replaces a native, `mock(Game.GetPlayer)`",
-        "In a test script: this function runs instead of the native \
-         `mock(Script.Function)` in the tests of the script. With one more \
-         parameter than the native, the first one is the object the native is \
-         called on.",
-    ),
+/// An attribute: its completion detail, and its hover with an example.
+struct AttributeDoc {
+    path: &'static str,
+    /// The completion detail.
+    detail: &'static str,
+    doc: &'static str,
+    /// Papyrus code using it.
+    example: &'static str,
+}
+
+/// The attributes.
+const ATTRIBUTES: &[AttributeDoc] = &[
+    AttributeDoc {
+        path: "allow",
+        detail: "allow lints: `allow(unused_local, style)`",
+        doc: "Allows the listed lints (lints, groups or `all`; none: every lint): on the \
+              next declaration or statement, on its line after code, or in the whole \
+              file as `#![allow]`. Text after `]` is a reason, ignored.",
+        example: "; #![allow(style)] the whole file\n\n\
+                  ; #[allow(unused_local)] the whole function\n\
+                  Function F()\n\
+                  \x20   Int unused = 1\n\
+                  \x20   Int b = 2 ; #[allow(unused_local)] this line only\n\
+                  EndFunction",
+    },
+    AttributeDoc {
+        path: "fmt::skip",
+        detail: "keep the code as written by the formatter",
+        doc: "Keeps the code as written: the formatter leaves the next declaration or \
+              statement alone, or the whole file as `#![fmt::skip]`.",
+        example: "; #[fmt::skip] aligned by hand\n\
+                  Float[] matrix = New Float[9]\n\n\
+                  ; #![fmt::skip] the whole file: not formatted",
+    },
+    AttributeDoc {
+        path: "test",
+        detail: "a test: `papyrus_analyzer test` runs it, it fails on errors or `False`",
+        doc: "A test, run by `papyrus_analyzer test`, ▶ Run Test or ⚙ Debug on a new object \
+              of the script, after its `OnInit`. It fails when a `PapyrusAnalyzer.Assert*` \
+              fails, when the game would log an error (a call on `None`...) or when it \
+              returns `False`.",
+        example: "ScriptName MyQuestTests extends MyQuest\n\
+                  Import PapyrusAnalyzer\n\n\
+                  ; #[test]\n\
+                  Function CountsKills()\n\
+                  \x20   RecordKill()\n\
+                  \x20   AssertIntEq(Kills, 1, \"one kill\")\n\
+                  EndFunction",
+    },
+    AttributeDoc {
+        path: "mock",
+        detail: "in a test script: this function replaces a native, `mock(Game.GetPlayer)`",
+        doc: "In a test script: this function runs instead of the native \
+              `mock(Script.Function)` in the tests of the script; its signature must \
+              match the native's. With one more parameter than the native, the first \
+              one is the object the native is called on.",
+        example: "; #[mock(Utility.RandomInt)]\n\
+                  Int Function FixedRoll(Int aiMin, Int aiMax)\n\
+                  \x20   Return 4\n\
+                  EndFunction\n\n\
+                  ; #[mock(Actor.GetActorValue)] the actor first\n\
+                  Float Function FakeValue(Actor akSelf, String asName)\n\
+                  \x20   Return 100.0\n\
+                  EndFunction",
+    },
 ];
 
 /// The file of the script `name`.
@@ -247,8 +284,9 @@ pub(crate) fn check_attributes(
             check_mock(ws, file, text, &a, &mut out);
             continue;
         }
-        if !ATTRIBUTES.iter().any(|(p, ..)| a.path.eq_ignore_ascii_case(p)) {
-            let expected: Vec<String> = ATTRIBUTES.iter().map(|(p, ..)| format!("`{p}`")).collect();
+        if !ATTRIBUTES.iter().any(|d| a.path.eq_ignore_ascii_case(d.path)) {
+            let expected: Vec<String> =
+                ATTRIBUTES.iter().map(|d| format!("`{}`", d.path)).collect();
             out.push(Diagnostic::warning(
                 range_of(text, a.path),
                 "unknown-attribute",
@@ -362,7 +400,7 @@ pub fn attribute_hover(
     }
     // The attribute itself.
     let path_range = range_of(text, attr.path);
-    let (_, _, what) = ATTRIBUTES.iter().find(|(p, ..)| attr.path.eq_ignore_ascii_case(p))?;
+    let doc = ATTRIBUTES.iter().find(|d| attr.path.eq_ignore_ascii_case(d.path))?;
     let range = if path_range.contains_inclusive(offset) {
         path_range
     } else {
@@ -378,8 +416,8 @@ pub fn attribute_hover(
     Some((
         range,
         format!(
-            "```papyrus\n{}\n```\n*attribute `{syntax}`*\n\n{what}\n\nApplies to {scope}.",
-            attr.path
+            "```papyrus\n{}\n```\n*attribute `{syntax}`*\n\n{}\n\nApplies to {scope}.\n\nExample:\n\n```papyrus\n{}\n```",
+            attr.path, doc.doc, doc.example
         ),
     ))
 }
@@ -464,7 +502,7 @@ pub fn attribute_completions(
     let replace = TextRange::new(TextSize::new((at - word_len) as u32), offset);
     let before = &body[..body.len() - word_len];
     let items = if before.is_empty() {
-        ATTRIBUTES.iter().map(|(p, d, _)| (p.to_string(), d.to_string())).collect()
+        ATTRIBUTES.iter().map(|d| (d.path.to_owned(), d.detail.to_owned())).collect()
     } else if before.trim_start().to_ascii_lowercase().starts_with("allow(")
         && before.trim_end().ends_with(['(', ','])
     {
@@ -609,6 +647,7 @@ mod tests {
         let (word, md) = hover("mock").unwrap();
         assert_eq!(word, "mock");
         assert!(md.contains("runs instead of the native"), "{md}");
+        assert!(md.contains("Example:\n\n```papyrus\n; #[mock(Utility.RandomInt)]"), "{md}");
         let (word, md) = hover("Utility.").unwrap();
         assert_eq!(word, "Utility.RandomInt");
         assert!(
