@@ -143,6 +143,9 @@
         "complexity": { "$ref": "#/properties/lints/definitions/level", "description": "Code that could be simpler (default: warn)." },
         "style": { "$ref": "#/properties/lints/definitions/level", "description": "Code that does not follow conventions (default: warn)." },
         "pedantic": { "$ref": "#/properties/lints/definitions/level", "description": "Lints that are often too strict (default: allow)." },
+        "index-out-of-bounds": { "$ref": "#/properties/lints/definitions/level", "description": "correctness: a constant index outside of an array of known length (`New Int[4]`, then `a[4]`)." },
+        "unchecked-cast": { "$ref": "#/properties/lints/definitions/level", "description": "pedantic: the result of a cast between objects used without checking None." },
+        "unchecked-call-result": { "$ref": "#/properties/lints/definitions/level", "description": "pedantic: an object returned by a call used without checking None." },
         "unused-local": { "$ref": "#/properties/lints/definitions/level", "description": "suspicious: a local variable whose value is never read." },
         "unreachable-code": { "$ref": "#/properties/lints/definitions/level", "description": "suspicious: statements after a Return." },
         "bool-literal-comparison": { "$ref": "#/properties/lints/definitions/level", "description": "complexity: a comparison with True or False." }
