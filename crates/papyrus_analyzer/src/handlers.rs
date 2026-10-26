@@ -561,12 +561,7 @@ impl Server {
     pub(crate) fn formatting(&mut self, params: DocumentFormattingParams) -> Option<Vec<TextEdit>> {
         let file = self.file(&params.text_document.uri).ok()?;
         let data = self.ws.file(file);
-        // Like rust-analyzer with libraries: imported scripts (the game
-        // sources...) and files outside of the workspace folders are not ours
-        // to reformat.
-        let own = data.origin == papyrus_ide::Origin::Workspace
-            && self.roots.iter().any(|r| data.path.starts_with(r));
-        if !own {
+        if !self.is_editable(&data.path) {
             log::info!("{}: not formatted, not a script of the workspace", data.path.display());
             return None;
         }
@@ -673,6 +668,10 @@ impl Server {
         use lsp_types::{CodeActionKind, CodeActionOrCommand, NumberOrString};
 
         let file = self.file(&params.text_document.uri).ok()?;
+        // Code actions edit the file: none for imported scripts.
+        if !self.is_editable(&self.ws.file(file).path) {
+            return None;
+        }
         let lines = Lines::of(&self.ws, file)?;
         let range = lines.text_range(params.range);
         let mut assists = papyrus_ide::assists::assists(&self.ws, file, range);
@@ -734,10 +733,35 @@ impl Server {
     ) -> Result<Option<lsp_types::PrepareRenameResponse>, String> {
         let Some((file, lines, offset)) = self.position(&params) else { return Ok(None) };
         let (range, placeholder) = papyrus_ide::prepare_rename(&self.ws, file, offset)?;
+        // Every file the rename would change must be ours.
+        let edit = papyrus_ide::rename(&self.ws, file, offset, &placeholder)?;
+        self.check_editable(&edit)?;
         Ok(Some(lsp_types::PrepareRenameResponse::RangeWithPlaceholder {
             range: lines.range(range),
             placeholder,
         }))
+    }
+
+    /// Refuses a rename changing a file that is not ours (an imported script,
+    /// the flags file of the game...).
+    fn check_editable(&self, edit: &papyrus_ide::RenameEdit) -> Result<(), String> {
+        let paths = edit
+            .ranges
+            .iter()
+            .filter_map(|(nav, _)| match nav {
+                papyrus_ide::NavFile::Script(f) => Some(self.ws.file(*f).path.clone()),
+                papyrus_ide::NavFile::Flags => self.ws.flags().path.clone(),
+            })
+            .chain(edit.file_renames.iter().map(|(f, _)| self.ws.file(*f).path.clone()));
+        for path in paths {
+            if !self.is_editable(&path) {
+                return Err(format!(
+                    "cannot rename: it would change {}, which is not a script of the workspace",
+                    path.display()
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// `textDocument/rename`.
@@ -755,6 +779,7 @@ impl Server {
             return Ok(None);
         };
         let edit = papyrus_ide::rename(&self.ws, file, offset, &params.new_name)?;
+        self.check_editable(&edit)?;
         let mut cache = FxHashMap::default();
         // Edits grouped by document, in order.
         let mut by_uri: Vec<(lsp_types::Uri, Vec<TextEdit>)> = Vec::new();

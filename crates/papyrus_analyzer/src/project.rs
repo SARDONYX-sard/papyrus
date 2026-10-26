@@ -96,6 +96,33 @@ impl Server {
             .collect()
     }
 
+    /// Whether the server may change `path` (format, rename, code actions):
+    /// a file of the workspace folders, outside of the import directories.
+    /// Like rust-analyzer with libraries, imported scripts (the game sources
+    /// above all) are never changed, even when they are open.
+    pub(crate) fn is_editable(&self, path: &Path) -> bool {
+        // Windows paths ignore case, and drives come as `d:` or `D:`.
+        let norm = |p: &Path| {
+            let s = p.to_string_lossy().replace('\\', "/").to_ascii_lowercase();
+            if s.ends_with('/') { s } else { format!("{s}/") }
+        };
+        let file = norm(path);
+        let below = |dir: &Path| file.starts_with(&norm(dir));
+        let configured =
+            self.config.import_directories.iter().filter_map(|d| self.expand_setting(d));
+        let game = match self.members.is_empty() {
+            true => self.skyrim_dir().map(|(d, _)| papyrus_project::game_script_dirs(&d)),
+            false => None,
+        };
+        let mut libraries = self
+            .members
+            .iter()
+            .flat_map(|m| m.imports.iter().cloned())
+            .chain(configured)
+            .chain(game.into_iter().flatten());
+        self.roots.iter().any(|r| below(r)) && !libraries.any(|d| below(&d))
+    }
+
     /// The project whose sources contain `path`, the innermost one.
     pub(crate) fn member_for(&self, path: &Path) -> Option<&Project> {
         innermost(&self.members, path)
