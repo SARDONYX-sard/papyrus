@@ -22,8 +22,8 @@ fn arg(args: &[Value], i: usize) -> Value {
     args.get(i).cloned().unwrap_or_default()
 }
 
-fn text(args: &[Value], i: usize) -> String {
-    arg(args, i).to_string()
+fn text(vm: &Vm, args: &[Value], i: usize) -> String {
+    vm.text(&arg(args, i))
 }
 
 fn random(vm: &mut Vm) -> u64 {
@@ -127,7 +127,7 @@ pub(crate) fn register_builtins(vm: &mut Vm) {
     register_asserts(vm);
     for name in ["Trace", "Notification", "MessageBox", "TraceStack"] {
         vm.register_native("Debug", name, |vm, _, args| {
-            vm.output.push(text(args, 0));
+            vm.output.push(text(vm, args, 0));
             Value::None
         });
     }
@@ -197,18 +197,19 @@ pub(crate) fn register_builtins(vm: &mut Vm) {
         Value::Float(vm.clock / GAME_HOUR / 24.0)
     });
 
-    vm.register_native("StringUtil", "GetLength", |_, _, args| {
-        Value::Int(text(args, 0).chars().count() as i32)
+    vm.register_native("StringUtil", "GetLength", |vm, _, args| {
+        Value::Int(text(vm, args, 0).chars().count() as i32)
     });
-    vm.register_native("StringUtil", "Substring", |_, _, args| {
-        let s: Vec<char> = text(args, 0).chars().collect();
+    vm.register_native("StringUtil", "Substring", |vm, _, args| {
+        let s: Vec<char> = text(vm, args, 0).chars().collect();
         let start = arg(args, 1).as_int().clamp(0, s.len() as i32) as usize;
         let len = arg(args, 2).as_int();
         let end = if len <= 0 { s.len() } else { (start + len as usize).min(s.len()) };
         Value::Str(Rc::from(s[start..end].iter().collect::<String>()))
     });
-    vm.register_native("StringUtil", "Find", |_, _, args| {
-        let (s, needle) = (text(args, 0).to_ascii_lowercase(), text(args, 1).to_ascii_lowercase());
+    vm.register_native("StringUtil", "Find", |vm, _, args| {
+        let (s, needle) =
+            (text(vm, args, 0).to_ascii_lowercase(), text(vm, args, 1).to_ascii_lowercase());
         let start = arg(args, 2).as_int().max(0) as usize;
         let found = s.get(start..).and_then(|rest| rest.find(&needle)).map(|i| (i + start) as i32);
         Value::Int(found.unwrap_or(-1))

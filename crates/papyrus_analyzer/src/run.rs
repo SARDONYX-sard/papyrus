@@ -138,10 +138,10 @@ pub(crate) fn run(args: &[String]) -> i32 {
             }
             // Like `test`: errors or `False` fail, the exit code says so.
             if !vm.errors.is_empty() || matches!(v, Value::Bool(false)) {
-                println!("FAIL  {script}.{function}");
+                println!("{}  {script}.{function}", paint(RED, "FAIL"));
                 1
             } else {
-                println!("ok    {script}.{function}");
+                println!("{}    {script}.{function}", paint(GREEN, "ok"));
                 0
             }
         }
@@ -179,18 +179,32 @@ pub(crate) fn test(args: &[String]) -> i32 {
         vm.errors.clear();
         let result = start(&mut vm, &marked, script).and_then(|obj| vm.call(obj, function, &[]));
         match problem(&vm, &result) {
-            None => println!("ok    {script}.{function}"),
+            None => println!("{}    {script}.{function}", paint(GREEN, "ok")),
             Some(why) => {
                 failed += 1;
-                println!("FAIL  {script}.{function}: {why}");
+                println!("{}  {script}.{function}: {why}", paint(RED, "FAIL"));
                 for line in &vm.output {
                     println!("        {line}");
                 }
             }
         }
     }
-    println!("{} passed, {failed} failed", tests.len() - failed);
+    let passed = paint(GREEN, &format!("{} passed", tests.len() - failed));
+    let failures = format!("{failed} failed");
+    let failures = if failed > 0 { paint(RED, &failures) } else { failures };
+    println!("{passed}, {failures}");
     i32::from(failed > 0)
+}
+
+const GREEN: &str = "32";
+const RED: &str = "1;31";
+
+/// `text` in the color `sgr` (an ANSI code) when stdout is a terminal and
+/// `NO_COLOR` is not set.
+fn paint(sgr: &str, text: &str) -> String {
+    use std::io::IsTerminal;
+    let color = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
+    if color { format!("\x1b[{sgr}m{text}\x1b[0m") } else { text.to_owned() }
 }
 
 /// Why a test failed: an error of the machine, errors the game would log

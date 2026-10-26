@@ -63,6 +63,14 @@ Function SumsAnArray()
     AssertIntEq(total, 100) ; watch: Count, Self.Count / 4, label + "!", values
 EndFunction
 
+; #[test] ▶ Run Test shows the Debug.Trace lines: objects as strings, like the game
+Function ObjectsAsStrings()
+    Form nothing
+    Debug.Trace("Self: " + Self) ; watch: Self As String, "x" + Self
+    Debug.Trace("None: " + nothing)
+    AssertStringEq(nothing as String, "None")
+EndFunction
+
 ; #[test]
 Function ScalesAFloat()
     Float half = 0.5

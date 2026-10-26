@@ -324,6 +324,19 @@ impl Vm {
         (script, fields)
     }
 
+    /// `value` as `String` casts it, like the game: objects as
+    /// `[Script < (FF000003)>]` (no editor ID; the form ID of a reference
+    /// created at run time).
+    pub fn text(&self, value: &Value) -> String {
+        match value {
+            Value::Object(obj) => {
+                let (script, _) = self.fields(*obj);
+                format!("[{script} < ({:08X})>]", 0xFF00_0000 | obj.0 as u32)
+            }
+            other => other.to_string(),
+        }
+    }
+
     /// The parameters and locals of a frame, as declared.
     fn locals_of(func: &Func, frame: &Frame) -> Vec<(String, Value)> {
         (func.params.iter().chain(&func.locals))
@@ -704,7 +717,8 @@ impl Vm {
                     });
                 }
                 OpCode::StrCat => {
-                    let v = format!("{}{}", arg(self, frame, 1), arg(self, frame, 2));
+                    let (x, y) = (arg(self, frame, 1), arg(self, frame, 2));
+                    let v = format!("{}{}", self.text(&x), self.text(&y));
                     self.write(frame, &a[0], Value::Str(Rc::from(v)));
                 }
                 OpCode::PropGet => {
@@ -914,7 +928,7 @@ fn cast(vm: &mut Vm, value: Value, ty: &str) -> Value {
         "bool" => Value::Bool(value.truthy()),
         "string" => match value {
             Value::Str(s) => Value::Str(s),
-            other => Value::Str(Rc::from(other.to_string())),
+            other => Value::Str(Rc::from(vm.text(&other))),
         },
         "var" | "none" => value,
         _ => match value {

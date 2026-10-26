@@ -175,6 +175,16 @@ fn debuggers_follow_lines_frames_and_locals() {
 }
 
 #[test]
+fn objects_as_strings_like_the_game() {
+    let src = "ScriptName T extends Form\nFunction Show(Form akOther)\n    Debug.Trace(\"self: \" + Self)\n    Debug.Trace(akOther as String)\n    Debug.Trace(\"none: \" + (None as Form))\nEndFunction\n";
+    let mut vm = vm(&[("T", src)]);
+    let obj = vm.new_object("T").unwrap();
+    let other = vm.new_object("Actor").unwrap();
+    vm.call(obj, "Show", &[Value::Object(other)]).unwrap();
+    assert_eq!(vm.output, ["self: [T < (FF000000)>]", "[Actor < (FF000001)>]", "none: None"]);
+}
+
+#[test]
 fn errors_of_events_stop_the_wait() {
     let src = "ScriptName T extends Form\nEvent OnUpdate()\n    While True\n    EndWhile\nEndEvent\nFunction Run()\n    RegisterForSingleUpdate(1.0)\n    Utility.Wait(2.0)\n    Debug.Trace(\"after\")\nEndFunction\n";
     let mut vm = vm(&[("T", src)]);

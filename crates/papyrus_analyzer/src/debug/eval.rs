@@ -82,7 +82,7 @@ impl Eval<'_> {
             Expr::Cast(c) => {
                 let value = self.expr(c.expr().ok_or_else(missing)?)?;
                 let ty = c.ty().ok_or_else(missing)?;
-                cast(value, ty.base_text(), ty.is_array())
+                cast(self.vm, value, ty.base_text(), ty.is_array())
             }
             Expr::Call(_) => Err("calls are not evaluated: they would run code".to_owned()),
             Expr::New(_) => Err("`New` is not evaluated".to_owned()),
@@ -146,7 +146,9 @@ impl Eval<'_> {
             SyntaxKind::LTEQ => Value::Bool(lhs.compare(&rhs) != Ordering::Greater),
             SyntaxKind::GT => Value::Bool(lhs.compare(&rhs) == Ordering::Greater),
             SyntaxKind::GTEQ => Value::Bool(lhs.compare(&rhs) != Ordering::Less),
-            SyntaxKind::PLUS if strings => Value::Str(Rc::from(format!("{lhs}{rhs}"))),
+            SyntaxKind::PLUS if strings => {
+                Value::Str(Rc::from(format!("{}{}", self.vm.text(&lhs), self.vm.text(&rhs))))
+            }
             SyntaxKind::PLUS | SyntaxKind::MINUS | SyntaxKind::STAR | SyntaxKind::SLASH
                 if floats =>
             {
@@ -216,7 +218,7 @@ fn literal(l: ast::Literal<'_>) -> Result<Value, String> {
 }
 
 /// `value As ty`, between primitives.
-fn cast(value: Value, ty: &str, array: bool) -> Result<Value, String> {
+fn cast(vm: &Vm, value: Value, ty: &str, array: bool) -> Result<Value, String> {
     if array {
         return Err("casts to arrays are not evaluated".to_owned());
     }
@@ -226,7 +228,7 @@ fn cast(value: Value, ty: &str, array: bool) -> Result<Value, String> {
         "bool" => Value::Bool(value.truthy()),
         "string" => match value {
             Value::Str(s) => Value::Str(s),
-            other => Value::Str(Rc::from(other.to_string())),
+            other => Value::Str(Rc::from(vm.text(&other))),
         },
         _ => return Err(format!("casts to `{ty}` are not evaluated")),
     })
