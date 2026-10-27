@@ -24,6 +24,15 @@ pub(crate) struct RestartParams {
     pub(crate) settings: Option<serde_json::Value>,
 }
 
+/// `papyrus/statusChanged`: the projects changed (papyrus.toml created,
+/// edited or deleted); the client asks for [`Status`] again.
+pub(crate) enum StatusChanged {}
+
+impl lsp_types::notification::Notification for StatusChanged {
+    type Params = ();
+    const METHOD: &'static str = "papyrus/statusChanged";
+}
+
 /// `papyrus/status`: what the server currently knows.
 pub(crate) enum Status {}
 

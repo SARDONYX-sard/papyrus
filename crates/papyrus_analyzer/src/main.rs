@@ -70,7 +70,7 @@ fn main() -> anyhow::Result<()> {
     let (id, params) = connection.initialize_start()?;
     let init: InitializeParams = serde_json::from_value(params)?;
     let result = InitializeResult {
-        capabilities: capabilities(),
+        capabilities: capabilities(&init),
         server_info: Some(ServerInfo {
             name: "papyrus_analyzer".to_owned(),
             version: Some(env!("CARGO_PKG_VERSION").to_owned()),
@@ -85,7 +85,17 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn capabilities() -> ServerCapabilities {
+/// Whether the client registers formatting dynamically: then the server
+/// does it for scripts only, not for papyrus.toml and the flags file (it
+/// would show up among the formatters of TOML).
+pub(crate) fn dynamic_formatting(init: &InitializeParams) -> bool {
+    (init.capabilities.text_document.as_ref())
+        .and_then(|t| t.formatting.as_ref())
+        .and_then(|f| f.dynamic_registration)
+        .unwrap_or(false)
+}
+
+fn capabilities(init: &InitializeParams) -> ServerCapabilities {
     ServerCapabilities {
         text_document_sync: Some(TextDocumentSyncCapability::Options(TextDocumentSyncOptions {
             open_close: Some(true),
@@ -118,7 +128,8 @@ fn capabilities() -> ServerCapabilities {
         workspace_symbol_provider: Some(OneOf::Left(true)),
         folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
         code_lens_provider: Some(lsp_types::CodeLensOptions { resolve_provider: Some(false) }),
-        document_formatting_provider: Some(OneOf::Left(true)),
+        // Registered for scripts once initialized, see `dynamic_formatting`.
+        document_formatting_provider: (!dynamic_formatting(init)).then_some(OneOf::Left(true)),
         inlay_hint_provider: Some(OneOf::Left(true)),
         completion_provider: Some(CompletionOptions {
             resolve_provider: Some(true),

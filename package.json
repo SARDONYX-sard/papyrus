@@ -22,7 +22,7 @@
     "Programming Languages"
   ],
   "activationEvents": [
-    "workspaceContains:**/*.psc",
+    "workspaceContains:papyrus.toml",
     "onDebugResolve:papyrus"
   ],
   "main": "build/extension.cjs",
@@ -154,6 +154,21 @@
       {
         "title": "Create papyrus.toml",
         "command": "papyrus.createManifest",
+        "category": "Papyrus"
+      },
+      {
+        "title": "Format Project",
+        "command": "papyrus.formatProject",
+        "category": "Papyrus"
+      },
+      {
+        "title": "Lint Project",
+        "command": "papyrus.lintProject",
+        "category": "Papyrus"
+      },
+      {
+        "title": "Lint Project: Fix All",
+        "command": "papyrus.fixProject",
         "category": "Papyrus"
       },
       {
@@ -391,6 +406,18 @@
           "when": "!papyrus.hasManifest"
         },
         {
+          "command": "papyrus.formatProject",
+          "when": "papyrus.hasManifest"
+        },
+        {
+          "command": "papyrus.lintProject",
+          "when": "papyrus.hasManifest"
+        },
+        {
+          "command": "papyrus.fixProject",
+          "when": "papyrus.hasManifest"
+        },
+        {
           "command": "papyrus.decompile",
           "when": "resourceScheme == papyrus-pex"
         },
@@ -443,6 +470,11 @@
         }
       ],
       "view/title": [
+        {
+          "command": "papyrus.compileSelected",
+          "when": "view == papyrus.explorer && papyrus.explorerMode != decompile",
+          "group": "navigation@1"
+        },
         {
           "command": "papyrus.explorer.compileAll",
           "when": "view == papyrus.explorer && papyrus.explorerMode != decompile",

@@ -55,6 +55,8 @@ flowchart LR
 
 Test scripts (`[test] sources`) are never compiled: their button runs their tests instead.
 
+With a `papyrus.toml`: `Papyrus: Format Project` · `Papyrus: Lint Project` · `Papyrus: Lint Project: Fix All` run `fmt` / `lint` / `lint --fix` on all its `[build]` and `[test] sources`, in a terminal.
+
 Header rows: `Compiler:` built-in | `[compiler] path` · `Output:` the output directory of the mode (click → reveal).
 
 ## `papyrus.toml`

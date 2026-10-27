@@ -3,7 +3,7 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import { LanguageClient, type LanguageClientOptions, type ServerOptions, State } from "vscode-languageclient/node";
 
-import { RestartRequest } from "./protocol";
+import { RestartRequest, StatusChangedNotification } from "./protocol";
 import { serverArgs, serverPath, settings } from "./settings";
 import { log, state } from "./state";
 import { refreshStatus, showStopped, updateStatus } from "./statusBar";
@@ -47,12 +47,9 @@ export async function startServer(context: vscode.ExtensionContext): Promise<voi
         showStopped();
       }
     }),
-    vscode.workspace.onDidSaveTextDocument((doc) => {
-      // The server reloads `papyrus.toml` on save; refresh the compile button.
-      if (["papyrus.toml", "papyrus.local.toml"].includes(path.basename(doc.fileName).toLowerCase())) {
-        setTimeout(() => void refreshStatus(), 300);
-      }
-    }),
+    // The server reloaded papyrus.toml (created, saved, deleted): the mode,
+    // the sources and the explorer follow.
+    client.onNotification(StatusChangedNotification, () => void refreshStatus()),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration("papyrus") && client.isRunning()) {
         void client.sendNotification("workspace/didChangeConfiguration", { settings: settings() });

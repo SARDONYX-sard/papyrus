@@ -65,6 +65,8 @@ pub(crate) struct Server {
     cli: CliOptions,
     pub(crate) roots: Vec<PathBuf>,
     pub(crate) caps: ClientCapabilities,
+    /// Formatting is registered for scripts only, see [`crate::dynamic_formatting`].
+    dynamic_formatting: bool,
     /// The first project of `members`.
     pub(crate) project: Option<papyrus_project::Project>,
     /// The projects of the loaded `papyrus.toml`: its members for a
@@ -172,6 +174,7 @@ impl Server {
             cli,
             roots,
             caps: init.capabilities.clone(),
+            dynamic_formatting: crate::dynamic_formatting(init),
             project: None,
             members: Vec::new(),
             manifest: None,
@@ -200,6 +203,19 @@ impl Server {
 
     /// Runs until the client asks for shutdown.
     pub(crate) fn run(mut self, connection: &Connection) -> anyhow::Result<()> {
+        if self.dynamic_formatting {
+            // Scripts only: the other documents (papyrus.toml) keep the
+            // formatters of their language.
+            self.request_client::<request::RegisterCapability>(lsp_types::RegistrationParams {
+                registrations: vec![lsp_types::Registration {
+                    id: "papyrus-formatting".to_owned(),
+                    method: "textDocument/formatting".to_owned(),
+                    register_options: Some(serde_json::json!({
+                        "documentSelector": [{ "language": "papyrus" }],
+                    })),
+                }],
+            });
+        }
         self.load_project();
         self.start_indexing();
         loop {

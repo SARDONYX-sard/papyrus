@@ -1,4 +1,4 @@
-import { RequestType, RequestType0 } from "vscode-languageclient/node";
+import { NotificationType0, RequestType, RequestType0 } from "vscode-languageclient/node";
 
 /** Result of the `papyrus/status` and `papyrus/restart` requests. */
 export interface ServerStatus {
@@ -55,6 +55,9 @@ export const RestartRequest = new RequestType<{ settings?: unknown }, ServerStat
 
 /** `papyrus/status`: what the server currently knows. */
 export const StatusRequest = new RequestType0<ServerStatus, void>("papyrus/status");
+
+/** `papyrus/statusChanged`: the projects changed; ask `papyrus/status` again. */
+export const StatusChangedNotification = new NotificationType0("papyrus/statusChanged");
 
 /** `papyrus/syntaxTree`: a debug dump of the syntax tree of a document. */
 export const SyntaxTreeRequest = new RequestType<{ textDocument: { uri: string } }, string, void>(

@@ -11,6 +11,7 @@ import { state } from "./state";
 import { createStatusBar } from "./statusBar";
 import { showStatus } from "./statusCommand";
 import { showSyntaxTree } from "./syntaxTree";
+import { formatProject, lintProject } from "./project";
 import { showReferences } from "./references";
 import { projectDir, runServerTask } from "./tests";
 
@@ -31,6 +32,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand("papyrus.compileAll", compileAll),
     vscode.commands.registerCommand("papyrus.compileSelected", compileSelected),
     vscode.commands.registerCommand("papyrus.createManifest", createManifest),
+    vscode.commands.registerCommand("papyrus.formatProject", formatProject),
+    vscode.commands.registerCommand("papyrus.lintProject", () => lintProject(false)),
+    vscode.commands.registerCommand("papyrus.fixProject", () => lintProject(true)),
     // The `▶ Run Test` code lens: `papyrus_analyzer run Script.Function` in a
     // terminal, from the folder of the papyrus.toml of the script.
     vscode.commands.registerCommand("papyrus.runTest", async (uri: string, target: string) => {

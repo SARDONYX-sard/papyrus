@@ -4,8 +4,6 @@ import { type ServerStatus, StatusRequest } from "./protocol";
 import { runningClient, type ServerSummary, scriptScope, state } from "./state";
 
 let statusItem: vscode.StatusBarItem;
-/** `$(run-all) Compile…`: compiles the scripts picked with a quick pick. */
-let compileItem: vscode.StatusBarItem;
 /** `$(info) Limited`: the active script is not part of a project. */
 let fileItem: vscode.StatusBarItem;
 
@@ -13,16 +11,11 @@ let fileItem: vscode.StatusBarItem;
 export function createStatusBar(context: vscode.ExtensionContext): void {
   statusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 0);
   statusItem.command = "papyrus.showStatus";
-  compileItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, -1);
-  compileItem.command = "papyrus.compileSelected";
-  compileItem.text = "$(run-all) Compile…";
-  compileItem.tooltip = "Papyrus: pick the scripts to compile together";
   fileItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, -2);
   fileItem.text = "$(info) Limited";
   fileItem.color = new vscode.ThemeColor("charts.blue");
   context.subscriptions.push(
     statusItem,
-    compileItem,
     fileItem,
     vscode.window.onDidChangeActiveTextEditor(updateFileItem),
   );
@@ -100,8 +93,6 @@ export function updateStatus(status: ServerStatus): void {
   }
   updateFileItem();
   void vscode.commands.executeCommand("setContext", "papyrus.hasManifest", state.hasManifest);
-  // Without papyrus.toml, the built-in compiler still compiles.
-  compileItem.show();
 
   // Red for errors, yellow for warnings, blue without papyrus.toml (limited
   // mode: the built-in compiler with the editor settings), green when
@@ -127,7 +118,14 @@ export function updateStatus(status: ServerStatus): void {
   const more = activities.length > 1 ? ` +${activities.length - 1}` : "";
   const label =
     activities.length > 0 ? `Papyrus: ${activities[0].short}${more}` : `Papyrus${mode}: ${status.files} scripts`;
-  statusItem.text = activities.length > 0 ? `$(sync~spin) ${label}` : `$(${icon}) Papyrus${mode}: ${status.files}`;
+  // The progress of the indexing has its own status bar item, from the
+  // server (`$/progress`, with the count): this one leaves it out.
+  const barActivities = activities.filter((a) => a.short !== "indexing");
+  const barMore = barActivities.length > 1 ? ` +${barActivities.length - 1}` : "";
+  statusItem.text =
+    barActivities.length > 0
+      ? `$(sync~spin) Papyrus: ${barActivities[0].short}${barMore}`
+      : `$(${icon}) Papyrus${mode}: ${status.files}`;
   statusItem.backgroundColor =
     health === "error"
       ? new vscode.ThemeColor("statusBarItem.errorBackground")
@@ -152,7 +150,7 @@ export function updateStatus(status: ServerStatus): void {
   statusItem.tooltip = new vscode.MarkdownString(tooltip, true);
   // The status bar shows the work in progress and the errors; the explorer
   // always shows the status.
-  if (activities.length > 0 || health === "error") {
+  if (barActivities.length > 0 || health === "error") {
     statusItem.show();
   } else {
     statusItem.hide();

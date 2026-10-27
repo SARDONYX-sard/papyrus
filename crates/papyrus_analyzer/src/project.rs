@@ -264,6 +264,7 @@ impl Server {
             self.publish_manifest_problems(&PathBuf::new(), Err(Vec::new()));
             self.ws.set_scopes(&[]);
             self.install_builtins();
+            self.notify::<crate::ext::StatusChanged>(());
             return;
         };
         let result =
@@ -288,6 +289,8 @@ impl Server {
         let scopes = self.scopes();
         self.ws.set_scopes(&scopes);
         self.install_builtins();
+        // The client shows the mode (limited or not) and the sources.
+        self.notify::<crate::ext::StatusChanged>(());
     }
 
     /// Adds the built-in `PapyrusAnalyzer` script, seen by the test sources
