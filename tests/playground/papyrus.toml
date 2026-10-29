@@ -1,4 +1,4 @@
-"$schema" = "../../schemas/papyrus.schema.json"
+"$schema" = "https://raw.githubusercontent.com/SARDONYX-sard/papyrus_analyzer/refs/tags/0.0.1-dev.6c38773/schemas/papyrus.schema.json"
 
 [package]
 name    = "MyMod"

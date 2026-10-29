@@ -1,10 +1,10 @@
 [package]
-name = "papyrus_ide"
-version = "0.0.0"
-description = "IDE features (index, name resolution, completion, ...) for Papyrus."
-authors.workspace = true
-edition.workspace = true
-license.workspace = true
+name                   = "papyrus_ide"
+version                = "0.0.0"
+description            = "IDE features (index, name resolution, completion, ...) for Papyrus."
+authors.workspace      = true
+edition.workspace      = true
+license.workspace      = true
 rust-version.workspace = true
 
 [lib]
@@ -12,9 +12,9 @@ doctest = false
 
 [dependencies]
 papyrus_intern.workspace = true
-papyrus_lexer.workspace = true
+papyrus_lexer.workspace  = true
 papyrus_parser.workspace = true
-rustc-hash.workspace = true
+rustc-hash.workspace     = true
 
 [lints]
 workspace = true

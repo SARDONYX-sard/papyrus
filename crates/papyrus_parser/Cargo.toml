@@ -1,11 +1,11 @@
 [package]
-name = "papyrus_parser"
-version = "0.0.0"
-description = "Resilient parser and lossless syntax tree for the Papyrus scripting language."
-repository.workspace = true
-authors.workspace = true
-edition.workspace = true
-license.workspace = true
+name                   = "papyrus_parser"
+version                = "0.0.0"
+description            = "Resilient parser and lossless syntax tree for the Papyrus scripting language."
+repository.workspace   = true
+authors.workspace      = true
+edition.workspace      = true
+license.workspace      = true
 rust-version.workspace = true
 
 [lib]
@@ -13,7 +13,7 @@ doctest = false
 
 [dependencies]
 papyrus_lexer.workspace = true
-text-size.workspace = true
+text-size.workspace     = true
 
 [dev-dependencies]
 expect-test.workspace = true

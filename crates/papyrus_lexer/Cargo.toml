@@ -1,10 +1,10 @@
 [package]
-name = "papyrus_lexer"
-version = "0.0.0"
-description = "Zero-copy lexer for the Papyrus scripting language."
-authors.workspace = true
-edition.workspace = true
-license.workspace = true
+name                   = "papyrus_lexer"
+version                = "0.0.0"
+description            = "Zero-copy lexer for the Papyrus scripting language."
+authors.workspace      = true
+edition.workspace      = true
+license.workspace      = true
 rust-version.workspace = true
 
 [lib]

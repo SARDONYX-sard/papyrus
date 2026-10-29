@@ -1,22 +1,22 @@
 [package]
-name = "papyrus_project"
-version = "0.0.0"
-description = "`papyrus.toml` project manifest: sources, imports, flags and compiler invocation."
-authors.workspace = true
-edition.workspace = true
-license.workspace = true
+name                   = "papyrus_project"
+version                = "0.0.0"
+description            = "`papyrus.toml` project manifest: sources, imports, flags and compiler invocation."
+authors.workspace      = true
+edition.workspace      = true
+license.workspace      = true
 rust-version.workspace = true
 
 [lib]
 doctest = false
 
 [dependencies]
-papyrus_fmt.workspace = true
-papyrus_lexer.workspace = true
-papyrus_lint.workspace = true
-serde = { version = "1", features = ["derive"] }
-toml.workspace = true
+papyrus_fmt.workspace     = true
+papyrus_lexer.workspace   = true
+papyrus_lint.workspace    = true
+serde                     = { version = "1", features = ["derive"] }
 skyrim_data_dir.workspace = true
+toml.workspace            = true
 
 [lints]
 workspace = true

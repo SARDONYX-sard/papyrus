@@ -1,10 +1,10 @@
 [package]
-name = "papyrus_intern"
-version = "0.0.0"
-description = "Global string interner for Papyrus identifiers."
-authors.workspace = true
-edition.workspace = true
-license.workspace = true
+name                   = "papyrus_intern"
+version                = "0.0.0"
+description            = "Global string interner for Papyrus identifiers."
+authors.workspace      = true
+edition.workspace      = true
+license.workspace      = true
 rust-version.workspace = true
 
 [lib]
