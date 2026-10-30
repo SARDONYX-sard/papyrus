@@ -7,7 +7,7 @@
 
 use std::fmt::{self, Write as _};
 
-use papyrus_intern::Name;
+use papyrus_intern::{Name, Symbol};
 use papyrus_parser::{
     SyntaxKind, SyntaxNode, SyntaxToken, TextRange,
     ast::{self, AstNode},
@@ -309,6 +309,9 @@ pub struct ScriptIndex {
     pub members: Box<[Member]>,
     /// Ranges of the script documentation comments.
     pub docs: Box<[TextRange]>,
+    /// The identifiers and keywords of the text, as sorted [`Name::key`]s:
+    /// see [`ScriptIndex::mentions`].
+    pub words: Box<[Symbol]>,
 }
 
 impl ScriptIndex {
@@ -324,7 +327,22 @@ impl ScriptIndex {
 
         index.imports = imports.into_boxed_slice();
         index.members = members.into_boxed_slice();
+        let mut words: Vec<Symbol> = file
+            .syntax()
+            .descendant_tokens()
+            .filter(|t| t.kind() == SyntaxKind::IDENT || t.kind().is_keyword())
+            .map(|t| Name::new(t.text()).key())
+            .collect();
+        words.sort_unstable();
+        words.dedup();
+        index.words = words.into_boxed_slice();
         index
+    }
+
+    /// Whether the file may refer to `name`: an identifier or keyword of its
+    /// text is spelled so. Searches skip the other files without reading them.
+    pub fn mentions(&self, name: Name) -> bool {
+        self.words.binary_search(&name.key()).is_ok()
     }
 
     /// Script name as written, or an empty string.

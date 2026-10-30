@@ -164,7 +164,9 @@ pub(crate) fn find_references(
     }
 
     let needle = name.as_str().to_ascii_lowercase();
-    let files: Vec<FileId> = ws.files().map(|(id, _)| id).collect();
+    // Only the files whose index has the name: the others are not read.
+    let files: Vec<FileId> =
+        ws.files().filter(|(_, f)| f.index.mentions(name)).map(|(id, _)| id).collect();
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).min(16);
     let chunk = files.len().div_ceil(threads).max(1);
 
