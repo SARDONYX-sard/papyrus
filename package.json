@@ -16,7 +16,7 @@
     "url": "https://github.com/SARDONYX-sard/papyrus"
   },
   "engines": {
-    "vscode": "^1.125.0"
+    "vscode": "^1.91.0"
   },
   "categories": [
     "Programming Languages"
@@ -665,6 +665,10 @@
     "build:server": "cargo build --release",
     "release": "npm run compile && npm run build:server && node ./tasks.cjs build",
     "package": "npm run build:server && node ./tasks.cjs build --vsix",
+    "release:major": "node ./tasks.cjs release major",
+    "release:minor": "node ./tasks.cjs release minor",
+    "release:patch": "node ./tasks.cjs release patch",
+    "release:current": "node ./tasks.cjs release current",
     "tag": "node ./tasks.cjs tag",
     "check": "tsc -p ./extension",
     "compile:debug": "vite build --config extension/vite.config.ts --mode development",
@@ -673,7 +677,7 @@
   },
   "devDependencies": {
     "@types/node": "^26.1.1",
-    "@types/vscode": "^1.125.0",
+    "@types/vscode": "~1.91.0",
     "@vscode/vsce": "^4.0.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.5",

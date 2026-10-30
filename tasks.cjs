@@ -89,7 +89,96 @@ function tag(args) {
   console.log(`pushed ${name}`);
 }
 
+/** The manifest of the server crate, whose version is the release version. */
+const CRATE_MANIFEST = path.join(__dirname, "crates", "papyrus_analyzer", "Cargo.toml");
+
+/** `[major, minor, patch]` of a `x.y.z` version. */
+const parseVersion = (v) => {
+  const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(v);
+  if (!m) throw new Error(`not a x.y.z version: ${v}`);
+  return m.slice(1).map(Number);
+};
+const compareVersions = (a, b) => {
+  const [x, y] = [parseVersion(a), parseVersion(b)];
+  return x[0] - y[0] || x[1] - y[1] || x[2] - y[2];
+};
+
+/**
+ * Bumps the version of the extension (package.json, package-lock.json) and
+ * of the server crate (crates/papyrus_analyzer/Cargo.toml) to the same new
+ * version, updates only the workspace crates in Cargo.lock, then commits and
+ * tags the new version; `current` only tags the current version. With
+ * `--sign`, the commit (`-S`) and the tag (`-s`) are signed. Nothing is pushed.
+ */
+function release(args) {
+  const level = args[0];
+  if (!["major", "minor", "patch", "current"].includes(level)) {
+    throw new Error("usage: node tasks.cjs release <major|minor|patch|current> [--sign]");
+  }
+  const sign = args.includes("--sign");
+  const npmVersion = JSON.parse(fs.readFileSync(path.join(__dirname, "package.json"), "utf8")).version;
+  const manifest = fs.readFileSync(CRATE_MANIFEST, "utf8");
+  // `version    = "x.y.z"`: the alignment before the value is kept.
+  const crateLine = /^(version\s*=\s*)"([^"]+)"/m;
+  const crateVersion = crateLine.exec(manifest)?.[2];
+  if (!crateVersion) throw new Error(`no version in ${CRATE_MANIFEST}`);
+
+  // `git tag` signs with `-s` (`-S` is the switch of `git commit` only).
+  const tagFlags = sign ? ["-s"] : ["--annotate"];
+  if (level === "current") {
+    // The VSIX and the server of the release must say the same version.
+    if (npmVersion !== crateVersion) {
+      throw new Error(
+        `package.json ${npmVersion} and the crate ${crateVersion} differ: release a new version (major, minor or patch)`,
+      );
+    }
+    if (git("tag", "--list", npmVersion)) throw new Error(`the tag ${npmVersion} exists already`);
+    git("tag", ...tagFlags, "-m", `build: release ${npmVersion}`, npmVersion);
+    console.log(`tagged ${npmVersion}; push with: git push origin ${npmVersion}`);
+    return;
+  }
+
+  const files = ["package.json", "package-lock.json", "crates/papyrus_analyzer/Cargo.toml", "Cargo.lock"];
+  // Only these files are committed: they must not hold other changes.
+  const dirty = git("status", "--porcelain", "--", ...files);
+  if (dirty) throw new Error(`commit or stash the changes of these files first:\n${dirty}`);
+  // The two are released together; the newer one counts.
+  const old = compareVersions(npmVersion, crateVersion) >= 0 ? npmVersion : crateVersion;
+  const [major, minor, patch] = parseVersion(old);
+  const next = {
+    major: `${major + 1}.0.0`,
+    minor: `${major}.${minor + 1}.0`,
+    patch: `${major}.${minor}.${patch + 1}`,
+  }[level];
+  if (git("tag", "--list", next)) throw new Error(`the tag ${next} exists already`);
+  console.log(`${old} -> ${next} (package.json ${npmVersion}, crate ${crateVersion})`);
+
+  // package.json and package-lock.json, without npm's own commit and tag.
+  run(`npm version ${next} --no-git-tag-version --allow-same-version`);
+  fs.writeFileSync(CRATE_MANIFEST, manifest.replace(crateLine, (_, key) => `${key}"${next}"`));
+  // Only the workspace members: the versions of the dependencies stay.
+  run("cargo update --workspace");
+
+  git("add", "--", ...files);
+  const message = `build: bump up to ${old} -> ${next}`;
+  git("commit", ...(sign ? ["-S"] : []), "-m", message);
+  git("tag", ...tagFlags, "-m", message, next);
+  console.log(`committed and tagged ${next}; push with: git push origin HEAD ${next}`);
+}
+
 const TASKS = {
+  release: {
+    usage: "<major|minor|patch|current> [--sign]",
+    help: `major, minor, patch: bumps the version of package.json and of the papyrus_analyzer
+crate (from the newer of the two, so that they agree), updates the workspace
+crates in Cargo.lock, and makes a commit "build: bump up to <old> -> <new>" and
+an annotated tag <new> with the same message.
+current: only tags HEAD with the current version (package.json and the crate
+must agree).
+Nothing is pushed.
+  --sign  sign the commit (git commit -S) and the tag (git tag -s)`,
+    run: release,
+  },
   build: {
     usage: "[--vsix] [--target <rust triple>] [--profile <name>] [--binary <path>]",
     help: `Copies the server next to the extension in build/.
@@ -131,4 +220,9 @@ if (!task) {
   help();
   process.exit(1);
 }
-task.run(args);
+Promise.resolve()
+  .then(() => task.run(args))
+  .catch((e) => {
+    console.error(e instanceof Error ? e.message : e);
+    process.exit(1);
+  });
