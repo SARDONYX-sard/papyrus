@@ -17,18 +17,18 @@ flowchart LR
     pex --> disasm["papyrus_pex (read · write · disasm)"]
 ```
 
-| Crate | Role |
-| --- | --- |
-| `papyrus_intern` | case-insensitive string interner |
-| `papyrus_lexer` / `papyrus_parser` | zero-copy lexer, resilient LL parser |
-| `papyrus_ide` | workspace, name resolution, types, IDE features, assists |
-| `papyrus_lint` | lints and their fixes |
-| `papyrus_fmt` | formatter |
-| `papyrus_compiler` | compiler and its CLI |
-| `papyrus_pex` | `.pex` model, reader, writer, disassembler, `pexdiff` |
-| `papyrus_decompiler` | decompiler |
-| `papyrus_project` | `papyrus.toml` |
-| `papyrus_analyzer` | language server and the `papyrus_analyzer` CLI |
+| Crate                              | Role                                                     |
+| ---------------------------------- | -------------------------------------------------------- |
+| `papyrus_intern`                   | case-insensitive string interner                         |
+| `papyrus_lexer` / `papyrus_parser` | zero-copy lexer, resilient LL parser                     |
+| `papyrus_ide`                      | workspace, name resolution, types, IDE features, assists |
+| `papyrus_lint`                     | lints and their fixes                                    |
+| `papyrus_fmt`                      | formatter                                                |
+| `papyrus_compiler`                 | compiler and its CLI                                     |
+| `papyrus_pex`                      | `.pex` model, reader, writer, disassembler, `pexdiff`    |
+| `papyrus_decompiler`               | decompiler                                               |
+| `papyrus_project`                  | `papyrus.toml`                                           |
+| `papyrus_analyzer`                 | language server and the `papyrus_analyzer` CLI           |
 
 The VS Code extension lives in `extension/`; `schemas/papyrus.schema.json` is the schema of `papyrus.toml`.
 
@@ -36,12 +36,12 @@ The VS Code extension lives in `extension/`; `schemas/papyrus.schema.json` is th
 
 One file per feature, plus one line in a list:
 
-| Add | Where |
-| --- | --- |
-| lint (+ fix) | `crates/papyrus_lint/src/lints/` → `LINTS` |
-| assist | `crates/papyrus_ide/src/assists/` → `HANDLERS` |
-| snippet | `crates/papyrus_ide/src/features/snippets/*.psc` → `SNIPPETS` |
-| keyword docs | `crates/papyrus_ide/src/features/keyword_docs/*.md` |
+| Add          | Where                                                         |
+| ------------ | ------------------------------------------------------------- |
+| lint (+ fix) | `crates/papyrus_lint/src/lints/` → `LINTS`                    |
+| assist       | `crates/papyrus_ide/src/assists/` → `HANDLERS`                |
+| snippet      | `crates/papyrus_ide/src/features/snippets/*.psc` → `SNIPPETS` |
+| keyword docs | `crates/papyrus_ide/src/features/keyword_docs/*.md`           |
 
 Tests (`cargo test`):
 
@@ -50,12 +50,12 @@ Tests (`cargo test`):
 
 `tests/`:
 
-| Path | What | Who changes it |
-| --- | --- | --- |
-| `tests/corpus` | scripts compiled by the official compiler (git submodule) | read-only |
-| `tests/fmt` | `input.psc` → `expected.psc`, the formatter fixture | the tests |
-| `tests/playground` | a project (`papyrus.toml`, `src/`) to try the extension and the CLI on; `src/Base.psc` and `src/Child.psc` (compiler features, `Parent`), `src/Lints.psc` (each lint and the attributes, silenced by its first line), `tests/ChildTests.psc` (tests, mocks, events, watch expressions of the debugger) | anyone, any time — no test reads it |
-| `tests/playground/src/Scratch.psc` | an empty script to play with | free to edit |
+| Path                               | What                                                                                                                                                                                                                                                                                                   | Who changes it                      |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------- |
+| `tests/corpus`                     | scripts compiled by the official compiler (git submodule)                                                                                                                                                                                                                                              | read-only                           |
+| `tests/fmt`                        | `input.psc` → `expected.psc`, the formatter fixture                                                                                                                                                                                                                                                    | the tests                           |
+| `tests/playground`                 | a project (`papyrus.toml`, `src/`) to try the extension and the CLI on; `src/Base.psc` and `src/Child.psc` (compiler features, `Parent`), `src/Lints.psc` (each lint and the attributes, silenced by its first line), `tests/ChildTests.psc` (tests, mocks, events, watch expressions of the debugger) | anyone, any time — no test reads it |
+| `tests/playground/src/Scratch.psc` | an empty script to play with                                                                                                                                                                                                                                                                           | free to edit                        |
 
 ## Building the extension
 
@@ -70,6 +70,8 @@ Tests (`cargo test`):
 - `node tasks.cjs build` — copies the server next to the extension.
 - `node tasks.cjs build --vsix --target <triple>` — builds `build/papyrus-analyzer-<platform>.vsix`.
 - `npm run tag -- [-m <message>]` — tags HEAD as `<version>-dev.<short sha>` (signed, annotated) and pushes the tag, which releases it.
+- `npm run release:<major|minor|patch> [-- --sign]` — bumps package.json and the `papyrus_analyzer` crate to the same version (from the newer of the two; the alignment of `version   =` is kept), updates the workspace crates in `Cargo.lock`, commits `build: bump up to <old> -> <new>` and tags `<new>`. `--sign` signs the commit (`git commit -S`) and the tag (`git tag -s`). Nothing is pushed.
+- `npm run release:current [-- --sign]` — only tags HEAD with the current version (package.json and the crate must agree).
 
 ## CI
 

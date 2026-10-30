@@ -280,7 +280,8 @@
         {
           "id": "papyrus.explorer",
           "name": "Explorer",
-          "icon": "resources/papyrus.svg"
+          "icon": "resources/papyrus.svg",
+          "when": "config.papyrus.explorer.show == always || papyrus.hasScripts"
         }
       ]
     },
@@ -362,6 +363,19 @@
           "type": "boolean",
           "default": true,
           "markdownDescription": "Show `overrides Quest` after functions and events replacing one of a parent script, and `event of Form` after events the game sends. Click the script name to go to the replaced declaration."
+        },
+        "papyrus.explorer.show": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "always"
+          ],
+          "enumDescriptions": [
+            "Only in workspaces with Papyrus: a `papyrus.toml`, or `.psc` / `.pex` files (found once the extension starts: on opening a script or with a `papyrus.toml`).",
+            "In every workspace."
+          ],
+          "default": "auto",
+          "markdownDescription": "When the Papyrus view shows up in the activity bar. `auto` keeps its icon away from repositories without Papyrus."
         }
       }
     },

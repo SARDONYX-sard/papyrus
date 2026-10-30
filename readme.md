@@ -44,7 +44,7 @@ papyrus_compiler MyQuest -i=Source -o=Scripts -f=TESV_Papyrus_Flags.flg   # Papy
 
 The [releases](https://github.com/SARDONYX-sard/papyrus_analyzer/releases) have `papyrus_analyzer` (zip on Windows, tar.gz on Linux and macOS) and the VS Code extension (`.vsix`).
 
-VS Code: the **Papyrus** view of the activity bar shows `.psc` and `.pex` together and compiles | decompiles in one click.
+VS Code (1.91+, also Cursor, Antigravity...): the **Papyrus** view of the activity bar shows `.psc` and `.pex` together and compiles | decompiles in one click. It shows up in workspaces with Papyrus only (a `papyrus.toml`, or `.psc` / `.pex` files once a script is open); `"papyrus.explorer.show": "always"` shows it everywhere. The extension starts with a `papyrus.toml` at the root or on opening a script: other repositories are not searched.
 
 ```mermaid
 flowchart LR
@@ -57,7 +57,7 @@ Test scripts (`[test] sources`) are never compiled: their button runs their test
 
 With a `papyrus.toml`: `Papyrus: Format Project` · `Papyrus: Lint Project` · `Papyrus: Lint Project: Fix All` run `fmt` / `lint` / `lint --fix` on all its `[build]` and `[test] sources`, in a terminal.
 
-Header rows: `Compiler:` built-in | `[compiler] path` · `Output:` the output directory of the mode (click → reveal).
+Header rows: `Compiler:` built-in | `[compiler] path` · `Output:` the output directory of the mode (click → reveal). Title bar: _Compile Selected Scripts…_ (a quick pick), compile | decompile all, refresh, expand all.
 
 ## `papyrus.toml`
 
@@ -209,14 +209,14 @@ papyrus_analyzer lint -D warnings -A style --fix Scripts/Source
 
 Rust-like attributes, in comments:
 
-| Attribute                    | Applies to                                                                                 |
-| ---------------------------- | ------------------------------------------------------------------------------------------ |
-| `; #[allow(names)]`          | the next declaration \| statement (a whole `Function`, `If`...), on the line above it      |
-| `; #![allow(names)]`         | the whole file — before the code, at the top                                               |
-| `; #[fmt::skip]`             | same as `#[allow]` — kept as written                                                       |
-| `; #![fmt::skip]`            | the whole file, not formatted — before the code, at the top                                |
-| `; #[test]`                  | the next function: a test, see [Tests](#tests)                                             |
-| `; #[mock(Script.Function)]` | the next function: replaces the native in the tests of its script                          |
+| Attribute                    | Applies to                                                                            |
+| ---------------------------- | ------------------------------------------------------------------------------------- |
+| `; #[allow(names)]`          | the next declaration \| statement (a whole `Function`, `If`...), on the line above it |
+| `; #![allow(names)]`         | the whole file — before the code, at the top                                          |
+| `; #[fmt::skip]`             | same as `#[allow]` — kept as written                                                  |
+| `; #![fmt::skip]`            | the whole file, not formatted — before the code, at the top                           |
+| `; #[test]`                  | the next function: a test, see [Tests](#tests)                                        |
+| `; #[mock(Script.Function)]` | the next function: replaces the native in the tests of its script                     |
 
 Attributes have completion, hover and go to definition (the mocked native); unknown ones are reported. Like in Rust, they go before what they apply to: after code on its line, or `#![...]` below the code, an attribute applies to nothing (`misplaced-attribute`, with a quick fix moving it).
 
@@ -256,10 +256,15 @@ EndFunction
 - `PapyrusAnalyzer`: `AssertIntEq` · `AssertFloatEq` · `AssertStringEq` · `AssertBoolEq` · `AssertTrue` · `AssertFalse` · `AssertNone` · `AssertNotNone` · `Fail`. A project script of the same name wins.
 - Natives: `Debug.Trace` prints, `Math` · `StringUtil` · `Utility.Random*` (seeded) work, the others return their default value and are listed. `#[mock]` replaces one; its signature is checked.
 - Events: `Utility.Wait` advances the clock and sends the `OnUpdate` (`RegisterForUpdate`...) that are due; other events are called like functions.
+- Objects as strings read like in the game: `"" + Self` → `[MyQuestTests < (FF000000)>]`, `None` → `None`.
 
 ```sh
-papyrus_analyzer test
+papyrus_analyzer test                      # every test
+papyrus_analyzer test tests/MyQuestTests.psc   # the tests of a file | folder
+papyrus_analyzer test kills                # the tests whose Script.Function contains it
 ```
+
+The report reads like `cargo test`: a line per test, the output (`Debug.Trace`) and the errors of the failures, then `test result: ok. 3 passed; 0 failed; 0 filtered out; finished in 1.38s` (`ok`/`FAILED` in color on a terminal, unless `NO_COLOR` is set). `papyrus_analyzer run Script.Function` (▶︎ Run Test) prints one test the same way, with its native calls.
 
 VS Code: `▶︎ Run Test` | `⚙︎ Debug` above each test. The debugger (`papyrus_analyzer debug`, launch type `papyrus`) has breakpoints, steps, the call stack, the variables (locals, `Self`) and watch expressions: Papyrus expressions without calls, like `values[i] * 2` or `Self.Count > 3`.
 
